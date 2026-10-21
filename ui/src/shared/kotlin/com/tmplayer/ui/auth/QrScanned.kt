@@ -6,6 +6,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.semantics.Role
+import com.tmplayer.ui.theme.collectIsFocusVisibleAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -118,6 +125,103 @@ fun QrScannedVeil(scanned: Boolean, modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * True once [link] has been on screen for [QR_STALE_MS] without a new one. TDLib renews the code
+ * by itself before it runs out (a login token lasts about 30 seconds), so a code that has not
+ * changed in that time is one TDLib could not renew, most often for want of a line: it no longer
+ * signs anybody in and must not be left looking usable.
+ */
+@Composable
+fun rememberQrExpired(link: String): Boolean {
+    var expired by remember(link) { mutableStateOf(false) }
+    LaunchedEffect(link) {
+        delay(QR_STALE_MS)
+        expired = true
+    }
+    return expired
+}
+
+/**
+ * Over a code that has run out ([rememberQrExpired]): the code fades under the same white veil as
+ * [QrScannedVeil], with "This code has expired" and a button for a new one ([onRefresh]), which has
+ * the focus on a television so one press of the remote does it.
+ */
+@Composable
+fun QrExpiredVeil(expired: Boolean, onRefresh: () -> Unit, modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
+    AnimatedVisibility(expired, modifier = modifier, enter = fadeIn(tween(VEIL_MS)), exit = fadeOut(tween(VEIL_MS))) {
+        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.White.copy(alpha = 0.9f))
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(s.loginQrExpired, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFF111111))
+                QrRefreshButton(onRefresh, Modifier.focusRequester(focus), onWhite = true)
+            }
+        }
+        if (!com.tmplayer.ui.components.isTouch()) LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    }
+}
+
+/**
+ * "Get a new code": a small pill that spins while the new code is asked for, so the press shows
+ * even before TDLib answers. [onWhite] for the veil over the plate, else the theme's colours.
+ */
+@Composable
+fun QrRefreshButton(onRefresh: () -> Unit, modifier: Modifier = Modifier, onWhite: Boolean = false) {
+    val s = LocalStrings.current
+    val interactions = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val focused by interactions.collectIsFocusVisibleAsState()
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(busy) {
+        if (busy) {
+            delay(REFRESH_SPIN_MS)
+            busy = false
+        }
+    }
+    val fill = when {
+        focused -> com.tmplayer.ui.theme.Tone.focusFill
+        onWhite -> Color(0xFF111111)
+        else -> com.tmplayer.ui.theme.Tone.surfaceHigh
+    }
+    val ink = when {
+        focused -> com.tmplayer.ui.theme.Tone.onFocusFill
+        onWhite -> Color.White
+        else -> com.tmplayer.ui.theme.Tone.text
+    }
+    androidx.compose.foundation.layout.Row(
+        modifier
+            .height(44.dp)
+            .clip(CircleShape)
+            .background(fill)
+            .clickable(interactionSource = interactions, indication = androidx.compose.foundation.LocalIndication.current, role = Role.Button) {
+                if (!busy) {
+                    busy = true
+                    onRefresh()
+                }
+            }
+            .padding(horizontal = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (busy) {
+            androidx.compose.material3.CircularProgressIndicator(color = ink, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+        } else {
+            Icon(TmIcons.Refresh, contentDescription = null, tint = ink, modifier = Modifier.size(20.dp))
+        }
+        Text(s.loginQrRefresh, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
+    }
+}
+
+/** A login token lasts about 30 seconds and TDLib renews it before then; past this it could not. */
+const val QR_STALE_MS = 45_000L
+
+private const val REFRESH_SPIN_MS = 4_000L
 
 /** Long enough to read "Scanned", short enough not to hold up the sign in. */
 const val SCANNED_HOLD_MS = 1_400L

@@ -103,6 +103,7 @@ fun LoginScreen(
     onResendCode: () -> Unit = {},
     onSubmitEmailAddress: (String) -> Unit = {},
     onSubmitEmailCode: (String) -> Unit = {},
+    onRefreshQr: () -> Unit = {},
 ) {
     val s = LocalStrings.current
     // "Change number" on the code pane. TDLib is happy to be told a different number while it is
@@ -128,6 +129,7 @@ fun LoginScreen(
             link = state.link,
             scanned = state.scanned,
             onUsePhone = { onChooseMethod(SignInMethod.Phone) },
+            onRefresh = onRefreshQr,
         )
         is AuthState.Phone -> PhonePane(
             state = state,
@@ -730,7 +732,7 @@ private fun PaneHeader(onBack: () -> Unit) {
  * it. On a phone it was reached from the number pane, so Back goes there.
  */
 @Composable
-private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit) {
+private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit, onRefresh: () -> Unit) {
     val s = LocalStrings.current
     if (isTouch()) BackHandler(onBack = onUsePhone) else ExitOnBack()
 
@@ -768,6 +770,9 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit) {
                 )
             }
             com.tmplayer.ui.auth.QrScannedVeil(scanned, Modifier.matchParentSize())
+            // A code TDLib could not renew (no line) is veiled, never left looking usable.
+            val expired = com.tmplayer.ui.auth.rememberQrExpired(link)
+            com.tmplayer.ui.auth.QrExpiredVeil(expired && !scanned, onRefresh, Modifier.matchParentSize())
         }
     }
 
@@ -799,6 +804,7 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit) {
             TmSecondaryButton(onClick = onUsePhone, modifier = Modifier.paneAction()) {
                 Text(s.loginUsePhone)
             }
+            com.tmplayer.ui.auth.QrRefreshButton(onRefresh)
         }
         return
     }
@@ -814,7 +820,10 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             // On a remote this is the only focusable thing on the pane, so it is also what gives
             // the D-pad somewhere to be. Without it the screen takes no input at all.
-            TmSecondaryButton(onClick = onUsePhone) { Text(s.loginUsePhone) }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TmSecondaryButton(onClick = onUsePhone) { Text(s.loginUsePhone) }
+                com.tmplayer.ui.auth.QrRefreshButton(onRefresh)
+            }
         }
     }
 }

@@ -735,6 +735,13 @@ object Td {
      * account or cannot remember the password has nothing to press. Logging out here throws away
      * an attempt rather than an account, since nobody is signed in yet.
      */
+    /**
+     * A new QR code on request ("Get a new code"). TDLib takes requestQrCodeAuthentication only
+     * from its first question, not while a code is up, so the sign in starts over with the QR
+     * method kept, which asks for a fresh code at once.
+     */
+    suspend fun refreshQrCode() = restartSignIn(SignInMethod.Qr)
+
     suspend fun restartSignIn(next: SignInMethod = SignInMethod.Undecided) {
         method = next
         methodAfterRestart = next

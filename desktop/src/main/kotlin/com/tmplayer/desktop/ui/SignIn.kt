@@ -145,6 +145,8 @@ private fun QrPane(link: String, scanned: Boolean) {
                 Image(rendered, contentDescription = s.signinQrLabel, modifier = Modifier.fillMaxSize().padding(16.dp))
             }
             com.tmplayer.ui.auth.QrScannedVeil(scanned, Modifier.matchParentSize())
+            val expired = com.tmplayer.ui.auth.rememberQrExpired(link)
+            com.tmplayer.ui.auth.QrExpiredVeil(expired && !scanned, { scope.launch { Td.refreshQrCode() } }, Modifier.matchParentSize())
         }
     }
     // The same three numbered steps and the note the phone and the TV show, rather than one long
@@ -160,8 +162,11 @@ private fun QrPane(link: String, scanned: Boolean) {
         Text(s.loginQrNote, style = MaterialTheme.typography.bodySmall, color = Tone.muted)
     }
     val usePhone: @Composable () -> Unit = {
-        TextButton(onClick = { scope.launch { Td.chooseSignInMethod(SignInMethod.Phone) } }) {
-            Text(s.signinUsePhone)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { scope.launch { Td.chooseSignInMethod(SignInMethod.Phone) } }) {
+                Text(s.signinUsePhone)
+            }
+            com.tmplayer.ui.auth.QrRefreshButton({ scope.launch { Td.refreshQrCode() } })
         }
     }
 

@@ -1323,6 +1323,10 @@ private fun Root() {
                             signInError = null
                             scope.launch { Td.chooseSignInMethod(method) }
                         },
+                        onRefreshQr = {
+                            signInError = null
+                            scope.launch { Td.refreshQrCode() }
+                        },
                         onSubmitPhoneNumber = { number ->
                             signInError = null
                             scope.launch { signInError = Td.submitPhoneNumber(number) }
