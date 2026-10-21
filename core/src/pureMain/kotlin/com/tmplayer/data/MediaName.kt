@@ -358,7 +358,8 @@ object MediaName {
                     number = number,
                     at = it.range.first,
                     // A second code straight after the first, the file's last episode.
-                    last = it.groupValues.getOrNull(3)?.toIntOrNull()?.takeIf { last -> number != null && last > number },
+                    last = (it.groupValues.getOrNull(3)?.toIntOrNull() ?: it.groupValues.getOrNull(4)?.toIntOrNull())
+                        ?.takeIf { last -> number != null && last > number },
                 )
             }
 
@@ -598,6 +599,8 @@ object MediaName {
         "marathi" to "mr", "bengali" to "bn", "punjabi" to "pa", "english" to "en", "korean" to "ko",
         "japanese" to "ja", "chinese" to "zh", "spanish" to "es", "french" to "fr", "russian" to "ru",
         "german" to "de", "italian" to "it", "turkish" to "tr", "arabic" to "ar",
+        // "Hindi-Japan": how a dubbed anime's release names its original audio.
+        "japan" to "ja",
         // The short forms a multi-audio release lists: "Tam + Tel + Hin".
         "tam" to "ta", "tel" to "te", "hin" to "hi", "mal" to "ml", "eng" to "en",
     )
@@ -629,7 +632,8 @@ object MediaName {
      * the first of them, which is the one it opens on, and its last ([ParsedName.lastEpisode]).
      */
     private val PAIRED_EPISODE = listOf(
-        Regex("""\bs(\d{1,2})[\s.-]?e(\d{1,3})(?:-?e(\d{1,3}))?\b""", RegexOption.IGNORE_CASE),
+        // "S01E01-06" as well, the range a season split in two files writes (not "S01E05-720p").
+        Regex("""\bs(\d{1,2})[\s.-]?e(\d{1,3})(?:-?e(\d{1,3})|-(\d{1,3})(?![\dpPiI]))?\b""", RegexOption.IGNORE_CASE),
         Regex("""\b(\d{1,2})x(\d{1,3})\b""", RegexOption.IGNORE_CASE),
         Regex("""\bseason\s?(\d{1,2})\s?episode\s?(\d{1,3})\b""", RegexOption.IGNORE_CASE),
     )

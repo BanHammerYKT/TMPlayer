@@ -225,7 +225,7 @@ class OnlineMetadata(
     }
 
     private suspend fun tmdbLookup(key: String, query: MetaQuery, lang: String): Outcome {
-        val film = query.kind == MetaKind.Film
+        var film = query.kind == MetaKind.Film
         // The match as the English search gave it, when that is where it was found.
         var inEnglish: MetaCandidate? = null
         var candidate: MetaCandidate = if (query.tmdbId != null) {
@@ -238,15 +238,25 @@ class OnlineMetadata(
             // file named in English matches neither. So a search that finds nothing in the UI
             // language is asked once more in English.
             var found: MetaCandidate? = null
-            for (searchLang in listOf(lang, ENGLISH).distinct()) {
-                when (val outcome = tmdbSearch(key, query, searchLang)) {
-                    is SearchOutcome.Found -> {
-                        found = outcome.candidate
-                        if (searchLang != lang) inEnglish = outcome.candidate
-                        break
+            // A name with no episode code is asked as a film first; a series posted whole or by
+            // season with no S01E01 in its name ("Scam 1992 Complete Hindi") is found as a show
+            // once no film matches. The year or the file's length still has to back it
+            // ([MetaConfidence]) before it is shown.
+            for (asFilm in if (film) listOf(true, false) else listOf(false)) {
+                for (searchLang in listOf(lang, ENGLISH).distinct()) {
+                    when (val outcome = tmdbSearch(key, query, searchLang, asFilm)) {
+                        is SearchOutcome.Found -> {
+                            found = outcome.candidate
+                            if (searchLang != lang) inEnglish = outcome.candidate
+                            break
+                        }
+                        is SearchOutcome.Stopped -> return outcome.outcome
+                        SearchOutcome.None -> Unit
                     }
-                    is SearchOutcome.Stopped -> return outcome.outcome
-                    SearchOutcome.None -> Unit
+                }
+                if (found != null) {
+                    film = asFilm
+                    break
                 }
             }
             found ?: return Outcome.Nothing
@@ -307,21 +317,20 @@ class OnlineMetadata(
     }
 
     /** TMDB's search in [searchLang] for the title that [MetaMatch] takes, with the year and then without it. */
-    private suspend fun tmdbSearch(key: String, query: MetaQuery, searchLang: String): SearchOutcome {
-        val film = query.kind == MetaKind.Film
+    private suspend fun tmdbSearch(key: String, query: MetaQuery, searchLang: String, film: Boolean = query.kind == MetaKind.Film): SearchOutcome {
         suspend fun search(year: Int?): MetaReply<List<MetaCandidate>> = retrying {
             if (film) tmdb.searchMovie(key, query.title, year, searchLang) else tmdb.searchTv(key, query.title, year, searchLang)
         }
         val first = search(query.year)
         trouble(MetaProvider.Tmdb, first, key)?.let { return SearchOutcome.Stopped(it) }
-        var found = (first as MetaReply.Ok).value.firstOrNull { MetaMatch.accepts(query.title, query.year, it.names, it.year, show = !film) }
+        var found = MetaPick.best(query, (first as MetaReply.Ok).value, show = !film)
         // A year one off (a festival date, a late release) is filtered out by TMDB's own year,
         // so ask once more without it and let the match allow the difference. So is a show's
         // later season, whose file names carry the season's year rather than the premiere's.
         if (found == null && query.year != null) {
             val again = search(null)
             trouble(MetaProvider.Tmdb, again, key)?.let { return SearchOutcome.Stopped(it) }
-            found = (again as MetaReply.Ok).value.firstOrNull { MetaMatch.accepts(query.title, query.year, it.names, it.year, show = !film) }
+            found = MetaPick.best(query, (again as MetaReply.Ok).value, show = !film)
         }
         return found?.let { SearchOutcome.Found(it) } ?: SearchOutcome.None
     }
