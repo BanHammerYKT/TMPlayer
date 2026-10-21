@@ -20,6 +20,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
@@ -271,3 +276,78 @@ fun MetaCredit(info: MetaInfo, modifier: Modifier = Modifier) {
         modifier = modifier,
     )
 }
+
+/**
+ * A film's or show's name for the Home carousel: its title logo from TMDB where it has one (the
+ * name drawn as a picture on a clear ground, [OnlineMetadata.logo]), else [text], the name set in
+ * type. The text stands until the logo is decoded, then the logo fades in over it; a logo already
+ * known and decoded shows on the first frame. The picture is never the only way to the name: the
+ * carousel page carries the title as its description, so a screen reader still says it.
+ *
+ * @param maxWidth the widest the logo may be; it keeps its own shape inside [maxWidth] by
+ *   [maxHeight], set at the start (or the centre, by [alignment]) of that box.
+ */
+@Composable
+fun TitleArt(
+    meta: MetaInfo?,
+    maxWidth: androidx.compose.ui.unit.Dp,
+    maxHeight: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+    alignment: Alignment = Alignment.BottomStart,
+    text: @Composable () -> Unit,
+) {
+    val online = OnlineMetadata.current
+    val settings = online?.settings?.collectAsState()?.value
+    val logoUrl by produceState(
+        meta?.let { info -> online?.peekLogo(info)?.url },
+        meta, settings?.enabled,
+    ) {
+        if (value == null && meta != null && online != null && settings?.enabled == true) {
+            value = withContext(Dispatchers.IO) { runCatching { online.logo(meta) }.getOrNull() }
+        }
+    }
+    val url = logoUrl
+    var logo by remember(url) { mutableStateOf(url?.let { Thumbnails.peekOnline(it, LOGO_PIXELS) }) }
+    LaunchedEffect(url) {
+        if (url == null || logo != null || online == null) return@LaunchedEffect
+        logo = Thumbnails.online(url, LOGO_PIXELS, alpha = true) { online.image(url) }
+    }
+    val shown = logo
+    androidx.compose.animation.Crossfade(targetState = shown, animationSpec = com.tmplayer.ui.theme.Motion.standard(), modifier = modifier, label = "titleArt") { picture ->
+        if (picture == null) {
+            text()
+        } else {
+            val ratio = picture.width.toFloat() / picture.height.coerceAtLeast(1)
+            // Logos are drawn for dark grounds, white or bright as a rule: over a light theme's
+            // page they get a soft dark glow behind them, or a white one would vanish.
+            val light = Tone.background.luminance() > 0.5f
+            Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
+            Box(Modifier.sizeIn(maxWidth = maxWidth, maxHeight = maxHeight), contentAlignment = alignment) {
+                Image(
+                    picture,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    alignment = alignment,
+                    filterQuality = Thumbnails.drawFilter,
+                    modifier = Modifier
+                        .aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio)
+                        .then(
+                            if (!light) Modifier else Modifier.drawBehind {
+                                drawRect(
+                                    androidx.compose.ui.graphics.Brush.radialGradient(
+                                        listOf(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f), androidx.compose.ui.graphics.Color.Transparent),
+                                        center = center,
+                                        radius = size.maxDimension * 0.6f,
+                                    ),
+                                )
+                            },
+                        ),
+                )
+            }
+            }
+        }
+    }
+}
+
+/** The width a title logo is decoded at: about 300 dp at a television's density. */
+private const val LOGO_PIXELS = 500

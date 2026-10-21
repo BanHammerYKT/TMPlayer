@@ -650,31 +650,38 @@ private fun PrefetchHomeArt(rows: List<HomeRow>) {
                 is HomeRow.Across -> row.entries
                 else -> emptyList()
             }
-            entries.take(PREFETCH_PER_ROW).map { entry ->
+            // The carousel's pages want their title logos too.
+            val logo = row is HomeRow.Recent
+            entries.take(if (logo) com.tmplayer.data.HomeFeatured.LIMIT else PREFETCH_PER_ROW).map { entry ->
                 when (entry) {
-                    is com.tmplayer.data.ShelfEntry.File -> entry.item to false
-                    is com.tmplayer.data.ShelfEntry.Show -> entry.series.cover to true
+                    is com.tmplayer.data.ShelfEntry.File -> Ahead(entry.item, show = false, logo = logo)
+                    is com.tmplayer.data.ShelfEntry.Show -> Ahead(entry.series.cover, show = true, logo = logo)
                 }
             }
-        }.distinctBy { it.first.id }
+        }.distinctBy { it.item.id }
     }
     LaunchedEffect(items) {
         val gate = Semaphore(PREFETCH_PARALLEL)
         kotlinx.coroutines.coroutineScope {
-            items.forEach { (item, show) ->
+            items.forEach { (item, show, logo) ->
                 launch(Dispatchers.IO) {
                     gate.withPermit {
                         val query = com.tmplayer.online.MetaQuery.of(item.nameForParsing, item.caption)
                             ?.let { if (show) it.showOnly() else it } ?: return@withPermit
-                        if (online.peek(query) != null) return@withPermit
-                        val info = (online.lookup(query) as? com.tmplayer.online.MetaResult.Found)?.info ?: return@withPermit
-                        info.posterUrl?.let { runCatching { online.image(it) } }
+                        val known = (online.peek(query) as? com.tmplayer.online.MetaResult.Found)?.info
+                        if (known != null && !logo) return@withPermit
+                        val info = known ?: (online.lookup(query) as? com.tmplayer.online.MetaResult.Found)?.info ?: return@withPermit
+                        if (known == null) info.posterUrl?.let { runCatching { online.image(it) } }
+                        if (logo && online.peekLogo(info) == null) runCatching { online.logo(info)?.let { online.image(it) } }
                     }
                 }
             }
         }
     }
 }
+
+/** A tile looked up ahead: a show by its name alone, and the carousel's with its title logo. */
+private data class Ahead(val item: com.tmplayer.data.MediaItem, val show: Boolean, val logo: Boolean)
 
 /** Tiles per row whose posters are looked up ahead: a phone's screen width and a little more. */
 private const val PREFETCH_PER_ROW = 4

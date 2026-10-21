@@ -373,13 +373,16 @@ private fun FeaturedPage(
                 .widthIn(max = WORDS_WIDTH),
             verticalArrangement = Arrangement.spacedBy(WORDS_GAP),
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
-                color = Tone.text,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // The title's logo where TMDB has one, the name in type until then and otherwise.
+            com.tmplayer.ui.online.TitleArt(meta, maxWidth = DESKTOP_LOGO_MAX_WIDTH, maxHeight = DESKTOP_LOGO_MAX_HEIGHT) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = Tone.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -521,3 +524,7 @@ private val WORDS_GAP = 8.dp
 
 /** How long the carousel waits for its ranked order before showing the picks without it. */
 private const val RANK_WAIT_MS = 1_200L
+
+/** The most a title logo takes over the desktop's carousel. */
+private val DESKTOP_LOGO_MAX_WIDTH = 420.dp
+private val DESKTOP_LOGO_MAX_HEIGHT = 130.dp

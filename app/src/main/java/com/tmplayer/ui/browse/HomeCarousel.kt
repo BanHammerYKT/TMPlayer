@@ -241,18 +241,27 @@ private fun FeaturedPage(
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))),
         )
         // The name alone, close over the buttons; the facts are only in the page's description.
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = Tone.text,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
+        // The title's logo where TMDB has one, the name in type until then and otherwise.
+        com.tmplayer.ui.online.TitleArt(
+            meta,
+            maxWidth = LOGO_MAX_WIDTH,
+            maxHeight = LOGO_MAX_HEIGHT,
+            alignment = Alignment.BottomCenter,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(start = start, end = end, bottom = footRoom + TEXT_GAP),
-        )
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = Tone.text,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -405,3 +414,7 @@ private val TOP_SCRIM = 72.dp
 private val TEXT_GAP = 10.dp
 
 private const val SEPARATOR = "  ·  "
+
+/** The most a title logo takes over the phone's carousel: about two lines of the name. */
+private val LOGO_MAX_WIDTH = 260.dp
+private val LOGO_MAX_HEIGHT = 84.dp
