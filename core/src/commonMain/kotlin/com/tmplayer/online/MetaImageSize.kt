@@ -23,6 +23,24 @@ object MetaImageSize {
         return url
     }
 
+    /**
+     * A small copy of [url] to show blurred while the copy for the slot loads: TMDB's `w92` for a
+     * poster or a logo, `w300` for a backdrop or a still. A few kilobytes, so it lands in one
+     * round trip. Null when [url] is not TMDB's, or is already that small: other providers name
+     * one size, and fetching it twice would only cost.
+     */
+    fun tiny(url: String): String? {
+        val match = TMDB.matchEntire(url) ?: return null
+        val (head, size, tail) = match.destructured
+        val small = when (size) {
+            "w780", "w1280", "original" -> if (tail.endsWith(".svg")) return null else "w300"
+            "w300" -> return null
+            "w92" -> return null
+            else -> "w92"
+        }
+        return "$head$small$tail"
+    }
+
     private fun tmdb(url: String, pixels: Int): String? {
         val match = TMDB.matchEntire(url) ?: return null
         val (head, size, tail) = match.destructured
@@ -49,7 +67,7 @@ object MetaImageSize {
         return "$head$next$tail"
     }
 
-    private val TMDB = Regex("""(https://image\.tmdb\.org/t/p/)(w\d+)(/.+)""")
+    private val TMDB = Regex("""(https://image\.tmdb\.org/t/p/)(w\d+|original)(/.+)""")
     private val TVMAZE = Regex("""(https://static\.tvmaze\.com/uploads/images/)(medium_portrait|medium_landscape)(/.+)""")
     private val ANILIST = Regex("""(https://s4\.anilist\.co/file/anilistcdn/media/[a-z]+/cover/)(medium|large)(/.+)""")
 

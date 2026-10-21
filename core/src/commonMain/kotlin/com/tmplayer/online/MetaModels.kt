@@ -233,3 +233,6 @@ object MetaMatch {
         }
     }
 }
+
+/** What is known of a title's logo: its address, or null for a title that has none. */
+data class LogoAnswer(val url: String?)

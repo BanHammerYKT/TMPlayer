@@ -63,9 +63,20 @@ object UrlConnectionTransport : HttpTransport {
                 .filterKeys { it != null }
                 .mapValues { it.value.firstOrNull().orEmpty() }
             HttpResponse(code, headers, body)
-        } finally {
+        } catch (e: IOException) {
+            // Only a connection that failed is torn down. One read to its end goes back to the
+            // JDK's keep-alive pool, so the next poster from the same host skips the TCP and TLS
+            // handshakes: disconnecting after every answer cost one to three hundred milliseconds a
+            // picture, which is most of a Home row's wait on a phone's connection.
             connection.disconnect()
+            throw e
         }
+    }
+
+    init {
+        // Room for the posters fetched side by side ([OnlineMetadata.IMAGE_PARALLEL]) to keep
+        // their connections between screens; the JDK keeps five per host otherwise.
+        if (System.getProperty("http.maxConnections") == null) System.setProperty("http.maxConnections", "8")
     }
 
     private fun read(input: InputStream): ByteArray {

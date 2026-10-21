@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.net.URI
 import java.security.MessageDigest
@@ -45,7 +46,13 @@ class OnlineMetadata(
     private val tmdb = TmdbApi(http, RateLimiter(TmdbApi.GAP_MS, now, sleep), userAgent)
     private val tvmaze = TvMazeApi(http, RateLimiter(TvMazeApi.GAP_MS, now, sleep), userAgent)
     private val anilist = AniListApi(http, RateLimiter(AniListApi.GAP_MS, now, sleep), userAgent)
-    private val imageLimiter = RateLimiter(IMAGE_GAP_MS, now, sleep)
+    /**
+     * Pictures fetched side by side. They come from the providers' image CDNs, which carry no
+     * request limit of their own, so they are not queued behind one another as the API calls are:
+     * a row of ten posters spaced 50 ms apart, each over a fresh connection, was most of the wait
+     * for Home's posters (2026-10-21).
+     */
+    private val imageGate = kotlinx.coroutines.sync.Semaphore(IMAGE_PARALLEL)
     private val skipApi = SkipTimesApi(
         http,
         RateLimiter(SkipTimesApi.INTRO_GAP_MS, now, sleep),
@@ -656,14 +663,72 @@ class OnlineMetadata(
         if (!url.startsWith("https://") || host !in IMAGE_HOSTS) return null
         return lockFor("image|$url").withLock {
             cache.image(url)?.let { return@withLock it }
-            imageLimiter.acquire()
-            val response = try {
-                http.send(HttpRequest("GET", url, mapOf("User-Agent" to userAgent)))
-            } catch (e: java.io.IOException) {
-                return@withLock null
-            }
+            val response = imageGate.withPermit {
+                try {
+                    http.send(HttpRequest("GET", url, mapOf("User-Agent" to userAgent)))
+                } catch (e: java.io.IOException) {
+                    null
+                }
+            } ?: return@withLock null
             if (response.code !in 200..299 || response.body.isEmpty()) return@withLock null
             cache.putImage(url, response.body)
+        }
+    }
+
+    /** Whether the picture at [url] is on this device already: a screen then shows it sharp at once, with no small copy first. */
+    fun hasImage(url: String): Boolean = cache.image(url) != null
+
+    // ---- title logos --------------------------------------------------------------------------
+
+    private val logoMemory = object : LinkedHashMap<String, LogoAnswer>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, LogoAnswer>?) = size > MEMORY_ENTRIES
+    }
+
+    private fun logoKey(info: MetaInfo, lang: String): String =
+        listOf("logo", info.provider.name, info.kind.name, info.id, lang).joinToString("|")
+
+    /**
+     * What is known of [info]'s title logo without asking anyone: a [LogoAnswer] (its url may be
+     * null, meaning the title has none), or null when it has not been looked up yet.
+     */
+    fun peekLogo(info: MetaInfo): LogoAnswer? {
+        if (!store.now.enabled || info.provider != MetaProvider.Tmdb) return LogoAnswer(null)
+        return synchronized(logoMemory) { logoMemory[logoKey(info, tmdbLanguage())] }
+    }
+
+    /**
+     * The address of [info]'s title logo, the film's or show's name drawn as a picture with a
+     * clear ground (TMDB's `logos`), for the Home carousel to set in place of the name: in the UI
+     * language, else English, else one with no words, PNG only, since an SVG would not decode.
+     * One call per title, kept with the answers ([MetadataCache.logo]), a title with none
+     * included. Null while off, for TVmaze and AniList (who have no logos), or when TMDB could
+     * not be asked.
+     */
+    suspend fun logo(info: MetaInfo): String? {
+        peekLogo(info)?.let { return it.url }
+        val lang = tmdbLanguage()
+        val key = logoKey(info, lang)
+        cache.logo(key)?.let { stored ->
+            synchronized(logoMemory) { logoMemory[key] = stored }
+            return stored.url
+        }
+        return lockFor(key).withLock {
+            synchronized(logoMemory) { logoMemory[key] }?.let { return@withLock it.url }
+            if (paused(MetaProvider.Tmdb)) return@withLock null
+            val s = store.now
+            if (!tmdbUsable(s)) return@withLock null
+            val apiKey = activeKey(s)
+            val ui = lang.substringBefore('-').lowercase()
+            val languages = listOf(ui, "en", "null").distinct()
+            val reply = retrying { tmdb.logos(apiKey, info.kind == MetaKind.Film, info.id, languages) }
+            val answer = when (trouble(MetaProvider.Tmdb, reply, apiKey)) {
+                null -> LogoAnswer(MetaRules.logo((reply as MetaReply.Ok).value, ui)?.let { tmdb.logoUrl(it) })
+                Outcome.Nothing -> LogoAnswer(null)
+                else -> return@withLock null
+            }
+            cache.putLogo(key, answer)
+            synchronized(logoMemory) { logoMemory[key] = answer }
+            answer.url
         }
     }
 
@@ -685,6 +750,7 @@ class OnlineMetadata(
         synchronized(memory) { memory.clear() }
         synchronized(extrasMemory) { extrasMemory.clear() }
         synchronized(seasonMemory) { seasonMemory.clear() }
+        synchronized(logoMemory) { logoMemory.clear() }
     }
 
     companion object {
@@ -695,7 +761,8 @@ class OnlineMetadata(
         const val ENGLISH = "en-US"
         const val REFUSED_RETRY_MS = 24L * 60 * 60 * 1000
         const val RETRY_MS = 1_000L
-        const val IMAGE_GAP_MS = 50L
+        /** Pictures fetched at once: a row's worth on screen, and few enough to leave the video its line. */
+        const val IMAGE_PARALLEL = 6
         private const val MEMORY_ENTRIES = 600
 
         /** A few detail pages' worth: each holds a cast list and a recommendation list. */
