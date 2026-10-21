@@ -421,6 +421,36 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** When this player was created, for the timing log when the press is not known. */
     private var openedAt = 0L
 
+    /** Whether this video's picture tracks were looked at yet ([pictureUnplayable]). */
+    private var pictureChecked = false
+
+    /**
+     * True, with the failure sheet up, when the video has a picture and this device can decode none
+     * of it: no decoder for the format at all (VC-1, an HEVC profile, AV1 on an older chip).
+     *
+     * Media3 raises no error for that: its track selector leaves an unsupported video track out and
+     * plays the rest, so the film played as sound over a black screen with nothing to say why. Now
+     * it stops and says the format is not playable here, with Open in another app where the chat
+     * allows it ([showError], not retryable). A track Media3 chose to leave out for another reason,
+     * while one is playable, is not this case; nor is a picture that is only cover art.
+     */
+    private fun pictureUnplayable(tracks: Tracks): Boolean {
+        if (pictureChecked || isAudio) return false
+        val video = tracks.groups.filter { group ->
+            group.type == C.TRACK_TYPE_VIDEO &&
+                (0 until group.length).none { group.getTrackFormat(it).sampleMimeType?.startsWith("image/") == true }
+        }
+        if (video.isEmpty()) return false
+        pictureChecked = true
+        if (video.any { it.isSelected }) return false
+        if (video.any { group -> (0 until group.length).any { group.isTrackSupported(it, true) } }) return false
+        val format = video.first().getTrackFormat(0)
+        Log.w("TMPlayer", "No decoder for the picture: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
+        player?.pause()
+        showError(if (format.height >= UHD_HEIGHT) L.playerErrorUhd(format.height.toString()) else L.playerErrorFormat, retryable = false)
+        return true
+    }
+
     /** The last error Media3 reported, for "Copy details" on the failure sheet. */
     private var lastPlaybackError: PlaybackException? = null
 
@@ -2637,6 +2667,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         offeredSkip = null
         hideSkipPill()
         creditsSkipped = false
+        pictureChecked = false
         hideNextUp()
         nextUpShown = false
         nextUpDismissed = false
@@ -2689,6 +2720,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
          * a phone, and the file's defaults on a series being watched for the first time.
          */
         override fun onTracksChanged(tracks: Tracks) {
+            if (pictureUnplayable(tracks)) return
             restoreResumeTracks(tracks)
             applySettingsSubtitles(tracks)
             rememberTracks(tracks)
@@ -6585,10 +6617,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         player?.release()
         player = null
         // Only once the player, and the reads it had waiting, are gone: a read that asked TDLib
-        // again after [stopDownload] would otherwise have asked for the rest of the film unbounded.
-        // That late request is stopped here too.
-        // The same for "Save mobile data": a late read must not ask for the rest of the film.
-        if (letGoOfStreamBounds()) stopDownload()
+        // again after [stopDownload] would otherwise have asked for the rest of the film unbounded,
+        // and went on fetching with nobody watching. Asked again whatever the stream's bounds (it
+        // used to be only for Low storage mode and "Save mobile data"); the byte window refuses
+        // any request once closed as well (TdByteWindow.shut).
+        letGoOfStreamBounds()
+        stopDownload()
         super.onDestroy()
     }
 

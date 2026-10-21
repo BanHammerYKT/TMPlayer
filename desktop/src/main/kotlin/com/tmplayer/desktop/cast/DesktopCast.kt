@@ -141,6 +141,7 @@ class SwitchingEngine(val local: PlaybackEngine) : PlaybackEngine {
 
     override suspend fun open(data: MediaData, startAtMs: Long, prefs: OpenPrefs) = active.open(data, startAtMs, prefs)
     override fun play() = active.play()
+    override suspend fun previewFrame(positionMs: Long, width: Int, height: Int) = active.previewFrame(positionMs, width, height)
     override fun pause() = active.pause()
     override fun stop() = active.stop()
     override fun togglePlay() = active.togglePlay()
