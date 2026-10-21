@@ -1285,6 +1285,8 @@
     "trailer_on_youtube": "Watch on YouTube",
     "trailer_qr": "QR code for the trailer on YouTube",
     "trailer_scan": "No app here can play YouTube. Scan this with your phone to watch the trailer",
+    "trailer_scan_phone": "Scan this with your phone to watch it there.",
+    "trailer_unavailable": "This trailer can't play inside the app",
     "turn_on": "Show poster and overview",
     "turn_on_detail": "Looks videos up by name on TMDB, TVmaze and AniList. Change it in Settings"
   },

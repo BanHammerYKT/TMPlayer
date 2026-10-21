@@ -146,14 +146,18 @@ fun MetaFactsLines(extras: MetaExtras?, modifier: Modifier = Modifier, maxLines:
 // ---- the trailer ------------------------------------------------------------------------------
 
 /**
- * Opens trailers: in the app's own player where the platform has one ([playing], drawn by
- * [TrailerHost]), else in the YouTube app or the browser. Remembers the one nothing on this device
- * could open, so its QR code can be shown in its place (a television without YouTube).
+ * Opens trailers. On a television the YouTube app comes first where there is one ([appFirst]):
+ * it is made for the remote and plays every trailer, where YouTube's embedded player in a WebView
+ * is at its weakest on a TV (no remote keys, codecs the chip decodes badly, trailers not allowed
+ * embedded). Otherwise, and on a phone, the app's own player where the platform has one
+ * ([playing], drawn by [TrailerHost]), else the YouTube app or the browser. Remembers the one
+ * nothing on this device could open, so its QR code can be shown in its place.
  */
 @Stable
 class TrailerLauncher internal constructor(
     private val opener: (MetaTrailer) -> Boolean,
     private val inApp: Boolean,
+    private val appFirst: ((MetaTrailer) -> Boolean)? = null,
 ) {
     var unopened by mutableStateOf<MetaTrailer?>(null)
         private set
@@ -163,8 +167,9 @@ class TrailerLauncher internal constructor(
         private set
 
     fun open(trailer: MetaTrailer) {
+        unopened = null
+        if (appFirst?.invoke(trailer) == true) return
         if (inApp) {
-            unopened = null
             playing = trailer
         } else {
             openElsewhere(trailer)
@@ -177,6 +182,7 @@ class TrailerLauncher internal constructor(
         unopened = if (opener(trailer)) null else trailer
     }
 
+    /** Closes the in-app player. */
     fun close() {
         playing = null
     }
@@ -186,19 +192,25 @@ class TrailerLauncher internal constructor(
 fun rememberTrailerLauncher(): TrailerLauncher {
     val opener = rememberTrailerOpener()
     val inApp = rememberInAppTrailers()
-    return remember(opener, inApp) { TrailerLauncher(opener, inApp) }
+    val appFirst = rememberTrailerAppFirst()
+    return remember(opener, inApp, appFirst) { TrailerLauncher(opener, inApp, appFirst) }
 }
 
 /** The in-app trailer player, while [launcher] has one playing. Place it once beside the trailer button. */
 @Composable
 fun TrailerHost(launcher: TrailerLauncher) {
     val trailer = launcher.playing ?: return
-    TrailerPlayer(trailer, onClose = launcher::close, onOpenElsewhere = { launcher.openElsewhere(trailer) })
+    TrailerPlayer(
+        trailer,
+        onClose = launcher::close,
+        onOpenElsewhere = { launcher.openElsewhere(trailer) },
+        fallback = { TrailerQr(trailer, text = LocalStrings.current.metadataTrailerScanPhone) },
+    )
 }
 
 /** The trailer's YouTube link as a QR code on a white plate, with a sentence saying what it is for. */
 @Composable
-fun TrailerQr(trailer: MetaTrailer, modifier: Modifier = Modifier) {
+fun TrailerQr(trailer: MetaTrailer, modifier: Modifier = Modifier, text: String? = null) {
     val s = LocalStrings.current
     val bitmap: ImageBitmap? by produceState<ImageBitmap?>(null, trailer.key) {
         value = withContext(Dispatchers.Default) { QrCode.render(trailer.watchUrl, QR_PIXELS) }
@@ -210,7 +222,7 @@ fun TrailerQr(trailer: MetaTrailer, modifier: Modifier = Modifier) {
         ) {
             bitmap?.let { Image(it, contentDescription = s.metadataTrailerQr, modifier = Modifier.fillMaxSize().padding(8.dp)) }
         }
-        Text(s.metadataTrailerScan, style = MaterialTheme.typography.bodyMedium, color = Tone.text, modifier = Modifier.weight(1f))
+        Text(text ?: s.metadataTrailerScan, style = MaterialTheme.typography.bodyMedium, color = Tone.text, modifier = Modifier.weight(1f))
     }
 }
 
