@@ -110,7 +110,14 @@
         if (this.engine === engine) fn(e);
       });
       on('playing', () => {
+        // A movi resume first plays a moment from 0 under the opening card; it has started once
+        // its jump has landed.
+        if (!(engine.resumeAt > 0)) this.started = true;
+      });
+      on('tmresumed', () => {
         this.started = true;
+        this.applyPrefs();
+        this.send();
       });
       if (engine.kind === 'movi') {
         // movi's own buffering state, debounced by its spinnerdelay; its readyState drops during
@@ -233,7 +240,9 @@
         type: 'state',
         engine: e ? e.kind + (e.software ? '-sw' : '') : '',
         opened: !!(m && m.readyState >= 1),
-        pos: this.time(),
+        // The resume point while a movi resume plays its silent moment from 0, so the place the
+        // viewer left is never saved over with that moment.
+        pos: e && e.resumeAt > 0 ? e.resumeAt : this.time(),
         dur: this.duration(),
         buf: this.buffered(),
         playing: this.want,
@@ -306,7 +315,7 @@
     setMuted(on) {
       const m = this.media();
       this.muted = !!on;
-      if (m) m.muted = this.muted;
+      if (m && !(this.engine && this.engine.resumeAt > 0)) m.muted = this.muted;
     }
 
     setShape(shape) {
@@ -342,7 +351,10 @@
       const m = this.media();
       if (!m) return;
       if (this.volume != null) m.volume = this.volume;
-      if (this.muted != null) m.muted = this.muted;
+      // Silent while a movi resume plays its moment from 0 (MoviEngine.load); its own sound once
+      // the jump has landed (tmresumed).
+      if (this.engine.resumeAt > 0) m.muted = true;
+      else if (this.muted != null) m.muted = this.muted;
       if (this.speed) m.playbackRate = this.speed;
       if (this.engine.kind === 'movi') {
         m.stableVolume = !!this.stable;

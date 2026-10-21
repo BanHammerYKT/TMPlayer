@@ -22,6 +22,12 @@
 // are serialized: TDLib ends a waiting download when another with different bounds arrives.
 // Only the reads the player waits on take that queue; read-ahead never waits and never points
 // TDLib anywhere, so it can neither hold a waiting read up nor drag the window back.
+//
+// The playhead's download is the one only real seeks move, as in the apps (TdByteWindow). A read
+// far from where playback reads (an index, MKV Cues, a step of a seek's search through the file)
+// is a probe: TDLib is pointed at just the 2 MiB around it, so it fetches only what the probe
+// needs, and goes back to the playhead's window once the probes stop. Reads that carry on past a
+// probe's end are a real seek, and the playhead's window follows them.
 (function () {
   'use strict';
 
@@ -31,6 +37,10 @@
   // How far ahead of the read TDLib downloads. Smaller on phones, whose storage and memory are
   // tighter; the window moves on as playback does, so this is not a ceiling on what plays.
   const WINDOW = (mobile ? 24 : 64) * 1024 * 1024;
+  const PROBE = 2 * 1024 * 1024;
+  const FAR = 4 * 1024 * 1024;
+  // How long after the last probe the download goes back to the playhead.
+  const BACK_MS = 400;
   const MIN_READ = 256 * 1024;
   const WAIT_MS = 30000;
   // How long a read waits for TDLib's next file update before it asks again.
@@ -40,6 +50,9 @@
   const queues = new Map();
   const windows = new Map();
   const sizes = new Map();
+  // Where playback reads, per file, and the timer that points TDLib back there after probes.
+  const heads = new Map();
+  const backTimers = new Map();
   const waiters = new Map();
   const listeners = new Set();
   // The last few hundred streaming decisions, for the playback details panel and the tests.
@@ -134,18 +147,55 @@
     }
   }
 
-  async function pointAt(fileId, offset, size, priority) {
-    const limit = size > 0 ? Math.min(WINDOW, size - offset) : WINDOW;
-    trace('point', fileId, offset, limit);
-    windows.set(fileId, { start: offset, end: offset + limit });
+  async function pointAt(fileId, offset, size, priority, probe) {
+    const span = probe ? PROBE : WINDOW;
+    const limit = size > 0 ? Math.min(span, size - offset) : span;
+    trace(probe ? 'probe' : 'point', fileId, offset, limit);
+    windows.set(fileId, { start: offset, end: offset + limit, probe: !!probe });
     await call({
       '@type': 'downloadFile', file_id: fileId, priority: priority || 32,
       offset: offset, limit: limit, synchronous: false,
     });
   }
 
+  /**
+   * Points TDLib where a waiting read needs it: the playhead's window, a probe around a far read,
+   * or, for reads carrying on past a probe, the playhead's window moved there (a real seek).
+   */
+  async function aim(fileId, offset, want, size) {
+    clearTimeout(backTimers.get(fileId));
+    const w = windows.get(fileId);
+    const head = heads.get(fileId);
+    if (w && w.probe && offset >= w.start && offset < w.end + FAR) {
+      if (offset + want <= w.end - MIN_READ && offset + want <= w.end) return;
+      heads.set(fileId, offset);
+      return pointAt(fileId, offset, size, 32, false);
+    }
+    if (head != null && Math.abs(offset - head) > FAR) {
+      // From the MiB the read starts in, so the read sits in the probe's first half.
+      return pointAt(fileId, Math.floor(offset / (PROBE / 2)) * (PROBE / 2), size, 32, true);
+    }
+    heads.set(fileId, offset);
+    return pointAt(fileId, offset, size, 32, false);
+  }
+
+  /** After the last probe, the download goes back to the playhead rather than sitting idle. */
+  function backSoon(fileId, size) {
+    const w = windows.get(fileId);
+    const head = heads.get(fileId);
+    if (!w || !w.probe || head == null) return;
+    clearTimeout(backTimers.get(fileId));
+    backTimers.set(fileId, setTimeout(() => {
+      backTimers.delete(fileId);
+      const now = windows.get(fileId);
+      if (now && now.probe && queues.size === 0) pointAt(fileId, head, size, 32, false).catch(() => {});
+    }, BACK_MS));
+  }
+
   function covered(fileId, offset, need) {
     const w = windows.get(fileId);
+    // A probe's window covers only its own stretch, and is never moved on.
+    if (w && w.probe) return offset >= w.start && offset + need <= w.end;
     // Move the window on once the reads are past its middle, so TDLib keeps ahead of them.
     return w && offset >= w.start && offset + need <= w.end && offset - w.start < (w.end - w.start) / 2;
   }
@@ -182,7 +232,7 @@
         trace('prefix', fileId, offset, have);
         if (have >= want) break;
         if (!covered(fileId, offset, want)) {
-          await pointAt(fileId, offset, size, 32);
+          await aim(fileId, offset, want, size);
           quiet = 0;
         }
         const updated = await waitFile(fileId, POLL_MS);
@@ -191,10 +241,18 @@
           have = count;
           break;
         }
-        // TDLib can end a download on its own (a cancelled or replaced request, a dropped
-        // connection) while the window here still says it is coming: after a few quiet seconds
-        // with nothing downloading, it is pointed at the bytes again.
-        if (!updated || !updated.local || !updated.local.is_downloading_active) {
+        // TDLib can end or move a download on its own (a cancelled or replaced request, a
+        // warm-up, a dropped connection) while the window here still says it is coming. Its
+        // updates say where it really is: when that is not where this read needs it, the window
+        // is forgotten and the next turn points TDLib at the bytes again.
+        const w = windows.get(fileId);
+        const at = updated && updated.local ? updated.local.download_offset : null;
+        if (w && updated && updated.local && updated.local.is_downloading_active && at != null &&
+            (at > offset || at + WINDOW < offset)) {
+          trace('moved', fileId, at, offset);
+          windows.delete(fileId);
+          quiet = 0;
+        } else if (!updated || !updated.local || !updated.local.is_downloading_active) {
           if (++quiet >= 3) {
             const now = await file(fileId);
             if (!now.local || !now.local.is_downloading_active) windows.delete(fileId);
@@ -208,9 +266,20 @@
           throw new Error('stopped loading');
         }
       }
-      // Keep TDLib ahead of the reader even when the bytes were already there.
-      if (!covered(fileId, offset + count, MIN_READ) && size > 0 && offset + count < size) {
-        pointAt(fileId, offset, size, 32).catch(() => {});
+      const w = windows.get(fileId);
+      const head = heads.get(fileId);
+      if (w && w.probe && head != null && Math.abs(offset - head) > FAR) {
+        // A probe answered: back to the playhead once no more come. Reads that carry on past
+        // its end move the playhead there instead (aim), as a real seek does.
+        backSoon(fileId, size);
+      } else {
+        // The playhead moves with the reads near it; a far read served from the disk is a probe
+        // too and leaves it where it is.
+        if (head == null || Math.abs(offset - head) <= FAR) heads.set(fileId, offset + count);
+        // Keep TDLib ahead of the reader even when the bytes were already there.
+        if (!covered(fileId, offset + count, MIN_READ) && size > 0 && offset + count < size) {
+          pointAt(fileId, offset, size, 32, false).catch(() => {});
+        }
       }
     }
     const n = Math.min(have, count);
@@ -251,6 +320,14 @@
             windows.clear();
           }
           if (type === 'updateFile') onFile(update.file);
+          if (type === 'updateAuthorizationState' &&
+              update.authorization_state['@type'] === 'authorizationStateReady') {
+            // The sign in is kept against the browser clearing the site's storage. The videos
+            // themselves are never written to it (tdweb/sparse-fs.js, memory only).
+            try {
+              if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+            } catch (e) {}
+          }
           let text;
           try {
             text = JSON.stringify(update, replacer);
@@ -355,6 +432,8 @@
     stop(fileId) {
       windows.delete(fileId);
       sizes.delete(fileId);
+      heads.delete(fileId);
+      clearTimeout(backTimers.get(fileId));
       return call({ '@type': 'cancelDownloadFile', file_id: fileId, only_if_pending: false }).catch(() => {});
     },
 

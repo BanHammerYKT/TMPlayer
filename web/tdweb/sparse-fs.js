@@ -5,7 +5,8 @@
 // near the end of a large video kills the tab, and on an iPhone far sooner. This module replaces
 // the file nodes under the files directory with sparse ones:
 //
-//  - On the Origin Private File System (OPFS) where the browser has it, through
+//  - (Off since 2026-10-21, see DISK and prepare: the app keeps videos in memory only.)
+//    On the Origin Private File System (OPFS) where the browser has it, through
 //    FileSystemSyncAccessHandle in this worker: each part is written at its own offset, nothing
 //    is held in memory, and what was downloaded survives a reload, so a video played before
 //    opens from the disk, as the apps' watch cache does. Files live flat under
@@ -24,6 +25,9 @@ self.TmSparse = (function () {
   const mobile = /iPhone|iPad|iPod|Android/.test(self.navigator && self.navigator.userAgent || '');
   const MEMORY_BUDGET = (mobile ? 48 : 192) * CHUNK;
   const EIO = 29;
+  // The disk (OPFS) mode below is kept for a build that wants it again; the browser app runs in
+  // memory only (prepare).
+  const DISK = false;
 
   let FS = null;
   let MEMFS = null;
@@ -46,6 +50,21 @@ self.TmSparse = (function () {
   }
 
   async function prepare(fsPromiseResult) {
+    // Low storage, always (user, 2026-10-21): in the browser the videos live in memory only, up to
+    // MEMORY_BUDGET, and nothing of them is written to the disk. A site that fills its quota has
+    // everything it stored cleared at once by the browser, the sign in with it, and an iPhone's
+    // storage is small; what a disk copy bought (a video reopened after a reload starting from
+    // the disk) the head and tail warm-up nearly gives anyway. Parts an earlier version wrote to
+    // the Origin Private File System are removed; TDLib fetches such a file afresh when asked.
+    if (!DISK) {
+      try {
+        if (self.navigator && navigator.storage && navigator.storage.getDirectory) {
+          const top = await navigator.storage.getDirectory();
+          await top.removeEntry('tdweb-files', { recursive: true }).catch(() => {});
+        }
+      } catch (e) {}
+      return;
+    }
     try {
       if (!self.navigator || !navigator.storage || !navigator.storage.getDirectory) return;
       const top = await navigator.storage.getDirectory();

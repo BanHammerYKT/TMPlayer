@@ -306,7 +306,21 @@
 
     load(spec) {
       this.spec = spec;
-      if (spec.startSec > 0) this.el.setAttribute('startat', String(spec.startSec));
+      // A resume plays from 0, silent and under the opening card, and jumps once it is playing.
+      // movi checks its index before the first seek, and FFmpeg reads a Matroska's Cues only
+      // during that first seek: a seek straight to the resume point found no index and
+      // binary-searched the file, a cold read through TDLib per step, while a seek after the
+      // opening one is a single jump. (Opening paused instead reads lazily and is slower still.)
+      this.resumeAt = spec.startSec > 0 ? spec.startSec : 0;
+      if (this.resumeAt > 0) {
+        this.el.addEventListener('playing', () => {
+          this.el.addEventListener('seeked', () => {
+            this.resumeAt = 0;
+            this.el.dispatchEvent(new Event('tmresumed'));
+          }, { once: true });
+          this.el.currentTime = this.resumeAt;
+        }, { once: true });
+      }
       this.el.sourceAdapter = new window.TgSource(spec.source, 'tg:' + spec.key);
     }
 
