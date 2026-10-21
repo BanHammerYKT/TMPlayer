@@ -79,7 +79,7 @@ class PlayerLoaderRenderTest {
                             phase = Phase.Loading("Starting"),
                             item = item,
                             downloaded = 0f,
-                            bufferedMs = 0,
+                            bufferedMs = { 0 },
                             isDownload = false,
                             onBack = {},
                             thumbnailOverride = art("promo_bbb_backdrop"),

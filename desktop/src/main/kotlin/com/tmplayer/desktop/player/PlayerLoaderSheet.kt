@@ -69,7 +69,8 @@ internal fun BoxScope.LoaderSheet(
     phase: Phase,
     item: MediaItem,
     downloaded: Float?,
-    bufferedMs: Long,
+    /** Read live, by the wait's loop and the bar while the sheet is up, not by the caller. */
+    bufferedMs: () -> Long,
     isDownload: Boolean,
     onBack: () -> Unit,
     /** The picture to use without metadata; the fixture passes one, the app reads the thumbnail. */
@@ -115,13 +116,14 @@ internal fun BoxScope.LoaderSheet(
         val started = System.currentTimeMillis()
         var lastAt = started
         var lastFraction = fraction
-        var lastBuffered = buffered
+        var lastBuffered = buffered()
         while (true) {
             val now = System.currentTimeMillis()
-            if (fraction != lastFraction || buffered > lastBuffered) {
+            val bufferedNow = buffered()
+            if (fraction != lastFraction || bufferedNow > lastBuffered) {
                 lastAt = now
                 lastFraction = fraction
-                lastBuffered = buffered
+                lastBuffered = bufferedNow
             }
             stalled = OpeningStall.stalled(opening = true, local = (fraction ?: 0f) >= 1f, lastProgressAtMs = lastAt, nowMs = now)
             fraction?.let { meter.sample((it * item.sizeBytes).toLong(), now) }
@@ -149,7 +151,13 @@ internal fun BoxScope.LoaderSheet(
     val status = if (routine) s.playerLoaderStarting else shown.message
     // A whole-file download before playing counts the file; anything else counts the buffer.
     val wholeFile = shown.message.startsWith(s.playerDownloadingWholeVideo)
-    val progress = if (wholeFile) downloaded ?: 0f else (bufferedMs / BUFFER_TARGET_MS.toFloat()).coerceIn(0f, 1f)
+    // The buffer is read only while the sheet is up; fading out, it keeps the last figure.
+    val lastProgress = remember { floatArrayOf(0f) }
+    val progress = when {
+        wholeFile -> downloaded ?: 0f
+        loading != null -> (bufferedMs() / BUFFER_TARGET_MS.toFloat()).coerceIn(0f, 1f).also { lastProgress[0] = it }
+        else -> lastProgress[0]
+    }
 
     AnimatedVisibility(loading != null, Modifier.matchParentSize(), enter = fadeIn(tween(0)), exit = fadeOut(tween(250))) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -189,7 +197,8 @@ internal fun BoxScope.LoaderSheet(
 @Composable
 internal fun BoxScope.PlaybackStall(
     buffering: Boolean,
-    bufferedMs: Long,
+    /** Read live by the wait's loop, so the caller does not recompose on every tick. */
+    bufferedMs: () -> Long,
     downloaded: Float?,
     onRetry: () -> Unit,
     onDownloadFirst: (() -> Unit)?,
@@ -205,13 +214,14 @@ internal fun BoxScope.PlaybackStall(
         if (!buffering) return@LaunchedEffect
         var lastAt = System.currentTimeMillis()
         var lastFraction = fraction
-        var lastBuffered = buffered
+        var lastBuffered = buffered()
         while (true) {
             val now = System.currentTimeMillis()
-            if (fraction != lastFraction || buffered > lastBuffered) {
+            val bufferedNow = buffered()
+            if (fraction != lastFraction || bufferedNow > lastBuffered) {
                 lastAt = now
                 lastFraction = fraction
-                lastBuffered = buffered
+                lastBuffered = bufferedNow
             }
             stalled = OpeningStall.stalled(opening = true, local = (fraction ?: 0f) >= 1f, lastProgressAtMs = lastAt, nowMs = now)
             delay(TICK_MS)

@@ -867,7 +867,7 @@ internal fun MediaTile(
         },
         subtitle = buildString {
             // A poster leads with the film's year and leaves the quality to the chip on its art.
-            if (poster || row) MediaName.parse(item.nameForParsing, item.caption).year?.let { append(it).append("  ·  ") }
+            if (poster || row) item.parsedName.year?.let { append(it).append("  ·  ") }
             if (!poster && item.durationSec > 0) append(MediaMapper.formatDuration(item.durationSec)).append("  ·  ")
             append(if (item.versions.size > 1) s.detailVersions(item.versions.size) else com.tmplayer.data.SplitPieces.sizeFact(item, MediaMapper.formatSize(item.sizeBytes)))
             if (!poster || row) item.qualityTags.firstOrNull()?.let { append("  ·  ").append(it) }
@@ -972,8 +972,11 @@ internal fun Poster(
             state.openPlayer(item, startFromBeginning = false)
         }
     }
-    val downloads by OfflineDownloads.active.collectAsState()
-    val download = downloads[item.fileId]
+    // This poster's own entry only, as the phone's tile reads it: the map changes with every
+    // download's progress, and reading all of it recomposed every poster on the page each time.
+    val downloads = OfflineDownloads.active.collectAsState()
+    val downloadNow by remember(item.fileId) { androidx.compose.runtime.derivedStateOf { downloads.value[item.fileId] } }
+    val download = downloadNow
     val record = LocalDownloadIndex.current[item.id]
     val selected = selection?.isSelected(item.id) == true
     val details: (() -> Unit)? = onDetails?.let { open -> { open { runCatching { requester.requestFocus() } } } }

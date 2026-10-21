@@ -37,7 +37,12 @@ object ChatAudio {
             if (local != null && local >= 0) return local
             return td.getChatMessageCount(chatId, null, filter, false).valueOrNull?.count?.coerceAtLeast(0) ?: 0
         }
-        one(SearchMessagesFilterAudio()) + one(SearchMessagesFilterVoiceNote())
+        // Side by side: either may be a round trip to the server, and neither waits on the other.
+        coroutineScope {
+            val audio = async { one(SearchMessagesFilterAudio()) }
+            val voice = async { one(SearchMessagesFilterVoiceNote()) }
+            audio.await() + voice.await()
+        }
     }
 
     /** The next page after [after], or the first with null. */

@@ -727,8 +727,11 @@ private suspend fun dropUnfinished(state: ShellState, fileId: Int) {
 /** How many downloads are coming down or moving, for the badge on the side bar and the rail. */
 @Composable
 internal fun rememberDownloadsInFlight(): Int {
-    val active by OfflineDownloads.active.collectAsState()
-    return active.values.count { it.busy }
+    // The count only: the map changes with every download's progress, and reading it here
+    // recomposed the whole bar each time, where the count changes as a download starts or ends.
+    val active = OfflineDownloads.active.collectAsState()
+    val inFlight by remember(active) { androidx.compose.runtime.derivedStateOf { active.value.values.count { it.busy } } }
+    return inFlight
 }
 
 /**
