@@ -420,6 +420,32 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** When this player was created, for the timing log when the press is not known. */
     private var openedAt = 0L
 
+    /** The last error Media3 reported, for "Copy details" on the failure sheet. */
+    private var lastPlaybackError: PlaybackException? = null
+
+    /**
+     * What "Copy details" puts on the clipboard: what the sheet says, the file, the device and the
+     * error underneath, plain text a report or a forum post can carry. Nothing about the account.
+     */
+    private fun errorDetails(): String = buildString {
+        appendLine("TMPlayer ${com.tmplayer.BuildConfig.VERSION_NAME} (${com.tmplayer.BuildConfig.VERSION_CODE})")
+        appendLine("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})${if (FormFactor.isTv(this@PlayerActivity)) ", TV" else ""}")
+        appendLine("${statusTitle.text}: ${statusText.text}")
+        appendLine("File: ${mediaFileName.ifBlank { "?" }}, ${mediaMime.ifBlank { "?" }}, ${fileSizeBytes} bytes, ${durationSec} s, ${if (downloadedFile != null) "downloaded" else "streamed"}")
+        player?.videoFormat?.let { appendLine("Video: ${it.sampleMimeType} ${it.codecs.orEmpty()} ${it.width}x${it.height}") }
+        player?.audioFormat?.let { appendLine("Audio: ${it.sampleMimeType} ${it.codecs.orEmpty()} ${it.channelCount} ch ${it.sampleRate} Hz") }
+        lastPlaybackError?.let { e ->
+            appendLine("Error: ${e.errorCodeName} (${e.errorCode})")
+            var cause: Throwable? = e
+            var depth = 0
+            while (cause != null && depth < 4) {
+                appendLine("  ${cause.javaClass.simpleName}: ${cause.message.orEmpty().take(300)}")
+                cause = cause.cause
+                depth++
+            }
+        }
+    }
+
     /** When the latest seek began, for its "seek to ready" log; 0 when none is pending. */
     private var seekStartedAt = 0L
 
@@ -771,7 +797,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusReload?.text = L.commonReload
         statusOpenWith?.text = L.playerOpenInAnotherApp
         statusBack?.text = L.playerGoBack
-        statusLogs = PlayerErrorSheet.addSendLogs(statusOpenWith)
+        statusLogs = PlayerErrorSheet.addSendLogs(statusOpenWith, ::errorDetails)
         statusName = findViewById(R.id.status_name)
         loaderHost = PlayerLoaderHost(
             root = findViewById(R.id.player_root),
@@ -2769,6 +2795,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            lastPlaybackError = error
             // A file TDLib cannot size is a stale id, not a slow network: retrying the same id
             // only spins for a minute, while asking for the message again fixes it in a second.
             if (staleFileId(error) && resourceAgain(error, sameId = { if (!recoverFrom(error)) showError(friendlyError(error), retryable = !isHopeless(error)) })) return
@@ -5938,6 +5965,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             val line = if (isRealDownload()) L.playerDownloadingRate(figure) else L.playerCachingRate(figure)
             // Telegram's own cap on an account without Premium (CP83): said, nothing offered.
             if (Td.speedLimitedNow()) "$line\n${L.playerSpeedLimited}" else line
+        } else if (slow && !downloadComplete) {
+            // Nothing measurable arriving yet: said quietly, long before the stall sheet's minute.
+            L.connectSlowTitle
         } else {
             null
         }

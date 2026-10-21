@@ -128,6 +128,9 @@ internal fun BoxScope.LoaderSheet(
                 val line = if (real) s.playerDownloadingRate(figure) else s.playerCachingRate(figure)
                 // Telegram's own cap on an account without Premium (CP83): said, nothing offered.
                 if (com.tmplayer.data.Td.speedLimitedNow()) line + "\n" + s.playerSpeedLimited else line
+            } else if (now - started > SLOW_MS && (fraction ?: 0f) < 1f) {
+                // Nothing measurable arriving yet: said quietly, long before the stall sheet.
+                s.connectSlowTitle
             } else {
                 null
             }
