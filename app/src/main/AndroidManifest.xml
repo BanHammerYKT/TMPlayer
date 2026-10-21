@@ -144,19 +144,6 @@
             android:theme="@style/Theme.TMPlayer.Player" />
 
         <!--
-          The session lives in the player activity, which is the only thing that can play anything;
-          PlaybackService only holds it while background audio keeps the sound going unseen. The receiver is what the platform routes headset
-          and Bluetooth transport buttons through.
-        -->
-        <receiver
-            android:name="androidx.media3.session.MediaButtonReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MEDIA_BUTTON" />
-            </intent-filter>
-        </receiver>
-
-        <!--
           The pictures on the TV home screen channels, for the launcher (another app) to read.
           Exported because which app the launcher is cannot be known to grant it a URI; it serves
           only copies of those pictures, read only, from one directory. See TvArtProvider.
@@ -189,7 +176,9 @@
         <!--
           Background audio on a phone: holds the player activity's own media session while the
           player is out of sight. No MediaSessionService intent filter, so neither another app nor
-          the media button receiver can start it with no video behind it.
+          a media button can start it with no video behind it. There is no MediaButtonReceiver
+          either: the live session takes headset and Bluetooth buttons itself, and a button pressed
+          after it closed found no service to start and crashed the app (Media3 throws).
         -->
         <service
             android:name=".player.PlaybackService"
