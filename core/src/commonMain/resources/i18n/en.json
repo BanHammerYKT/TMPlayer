@@ -2787,6 +2787,7 @@
     "yesterday_phrase": "Watched yesterday"
   },
   "web": {
+    "beta": "Beta",
     "chats_empty": "No chats yet.",
     "install_button": "Install",
     "install_ios": "Tap Share, then Add to Home Screen. TMPlayer then opens full screen, like an app.",

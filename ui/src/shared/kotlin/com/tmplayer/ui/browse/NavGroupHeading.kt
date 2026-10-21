@@ -130,6 +130,7 @@ fun NavBrand(
         Spacer(Modifier.width(12.dp))
         Text("TMPlayer", style = MaterialTheme.typography.titleMedium, maxLines = 1)
         Spacer(Modifier.width(8.dp))
+        com.tmplayer.ui.components.BrandBadge(Modifier.padding(end = 8.dp))
         Text(
             "v$version",
             style = MaterialTheme.typography.labelMedium,

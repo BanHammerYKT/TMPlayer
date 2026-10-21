@@ -1,10 +1,19 @@
 package com.tmplayer.ui.components
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
+import com.tmplayer.ui.theme.Tone
 
 /**
  * The player mark as a vector, in its own colours: the same five paths as Android's
@@ -50,4 +59,25 @@ object AppLogo {
             "554.666667a21.269333 21.269333 0 0 1-21.333334-21.333334V277.333333a21.333333 21.333333 0 0 1 " +
             "33.173334-17.749333l192 128a21.333333 21.333333 0 0 1 0 35.498667l-192 128A21.333333 21.333333 " +
             "0 0 1 426.666667 554.666667z"
+}
+
+/**
+ * A word set beside the logo where this build is a preview: "Beta" in the browser build, nothing
+ * in the apps. Each place that draws the logo draws [BrandBadge] beside it.
+ */
+val LocalBrandBadge = staticCompositionLocalOf<String?> { null }
+
+/** [LocalBrandBadge] as a small outlined label in the accent, or nothing when the build has none. */
+@Composable
+fun BrandBadge(modifier: Modifier = Modifier) {
+    val text = LocalBrandBadge.current ?: return
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = Tone.accent,
+        maxLines = 1,
+        modifier = modifier
+            .border(1.dp, Tone.accent.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
