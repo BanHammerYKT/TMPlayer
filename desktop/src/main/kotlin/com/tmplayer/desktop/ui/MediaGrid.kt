@@ -372,6 +372,9 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
             }
             // An order other than Newest is of the videos loaded so far while older pages remain.
             val sortedLoaded = com.tmplayer.data.VideoSorting.sortsLoadedOnly(shownSort, content.endReached)
+            // The size limits' count with a way past them for this chat (gone since 7f9c44d).
+            val sizeHidden by model.sizeHidden.collectAsState()
+            val sizeNote = query.isBlank() && sizeHidden > 0
             MetaInviteDialog(state)
             VideoGrid(
                 state = state,
@@ -387,7 +390,7 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                 onNav = { gridNav = it },
                 // Online metadata is on by default, so the first grid says once where posters come
                 // from; not while searching, when the listing is what was searched for.
-                header = if (ad == null && course == null && !sortedLoaded && (!extras || query.isNotBlank())) null else {
+                header = if (ad == null && course == null && !sortedLoaded && !sizeNote && (!extras || query.isNotBlank())) null else {
                     {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                             // The chat's audio, as a list to play from, over its posters.
@@ -402,6 +405,13 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                             }
                             if (audioCount > 0 && query.isBlank()) AudioEntryRow(audioCount, noVideos = noVideos && pinnedShown == null) { audioOpen = true }
                             if (roundCount > 0 && query.isBlank()) RoundEntryRow(roundCount, noVideos = noVideos && pinnedShown == null && audioCount == 0) { roundOpen = true }
+                            if (sizeNote) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(L.browseHiddenBySize(sizeHidden), color = Tone.muted)
+                                    Spacer(Modifier.width(12.dp))
+                                    OutlinedButton(onClick = model::showHidden) { Text(s.commonShowHidden) }
+                                }
+                            }
                             if (sortedLoaded) {
                                 Text(s.gridSortLoadedNote(content.items.size), style = MaterialTheme.typography.bodySmall, color = Tone.muted)
                             }

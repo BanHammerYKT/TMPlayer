@@ -94,6 +94,58 @@ fun <T> ChoicePopover(
     onDismiss: () -> Unit,
     title: String? = null,
 ) {
+    PopoverCard(open, anchor, onDismiss) {
+        if (title != null) PopoverHeading(title)
+        choices.forEach { choice ->
+            ChoiceRow(choice.label, choice.icon, chosen = choice.value == selected) { onPick(choice.value) }
+        }
+    }
+}
+
+/** One line of a [GroupedChoicePopover]: what it says, its glyph, whether it is in force, and what a press does. */
+class GroupedChoice(val label: String, val icon: ImageVector?, val chosen: Boolean, val onPick: () -> Unit)
+
+/** A titled group of lines in a [GroupedChoicePopover], one choice of its own (an order, a filter). */
+class ChoiceGroup(val title: String, val choices: List<GroupedChoice>)
+
+/**
+ * A [ChoicePopover] of several groups, each with its heading and its own line in force: a chat's
+ * Sort and filter menu, where the order, which videos show and the size limits are picked in one
+ * card. What a pick does, closing the card included, is the line's own [GroupedChoice.onPick].
+ */
+@Composable
+fun GroupedChoicePopover(
+    open: Boolean,
+    anchor: PopoverAnchor,
+    groups: List<ChoiceGroup>,
+    onDismiss: () -> Unit,
+) {
+    PopoverCard(open, anchor, onDismiss) {
+        groups.filter { it.choices.isNotEmpty() }.forEachIndexed { index, group ->
+            PopoverHeading(group.title, top = if (index == 0) 8.dp else 14.dp)
+            group.choices.forEach { choice -> ChoiceRow(choice.label, choice.icon, chosen = choice.chosen, onClick = choice.onPick) }
+        }
+    }
+}
+
+@Composable
+private fun PopoverHeading(title: String, top: androidx.compose.ui.unit.Dp = 8.dp) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelMedium,
+        color = Tone.muted,
+        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = top, bottom = 4.dp),
+    )
+}
+
+/** The floating card both popovers draw in: the scrim, the place by the [anchor], the grow-in. */
+@Composable
+private fun PopoverCard(
+    open: Boolean,
+    anchor: PopoverAnchor,
+    onDismiss: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
     val reduced = rememberLessMotion()
     BackHandler(enabled = open, onBack = onDismiss)
     AnimatedVisibility(
@@ -153,19 +205,8 @@ fun <T> ChoicePopover(
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     .verticalScroll(rememberScrollState())
                     .padding(4.dp),
-            ) {
-                if (title != null) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Tone.muted,
-                        modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
-                    )
-                }
-                choices.forEach { choice ->
-                    ChoiceRow(choice.label, choice.icon, chosen = choice.value == selected) { onPick(choice.value) }
-                }
-            }
+                content = content,
+            )
         }
     }
 }
