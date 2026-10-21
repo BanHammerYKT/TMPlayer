@@ -30,9 +30,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlinx.coroutines.delay
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.rememberReducedMotion
@@ -89,15 +87,8 @@ object Micro {
  */
 @Composable
 fun rememberToggleTick(): (Boolean) -> Unit {
-    val haptic = LocalHapticFeedback.current
-    val touch = isTouch()
-    return remember(haptic, touch) {
-        { on: Boolean ->
-            if (touch && Micro.haptics) {
-                haptic.performHapticFeedback(if (on) HapticFeedbackType.ToggleOn else HapticFeedbackType.ToggleOff)
-            }
-        }
-    }
+    val play = rememberHaptics()
+    return remember(play) { { on: Boolean -> play(if (on) Haptic.ToggleOn else Haptic.ToggleOff) } }
 }
 
 /**
@@ -106,11 +97,8 @@ fun rememberToggleTick(): (Boolean) -> Unit {
  */
 @Composable
 fun rememberStepTick(): () -> Unit {
-    val haptic = LocalHapticFeedback.current
-    val touch = isTouch()
-    return remember(haptic, touch) {
-        { if (touch && Micro.haptics) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick) }
-    }
+    val play = rememberHaptics()
+    return remember(play) { { play(Haptic.Tick) } }
 }
 
 /**
