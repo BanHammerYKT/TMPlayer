@@ -183,7 +183,7 @@
       document.documentElement.style.setProperty('--bg', color);
     },
     setTitle(text) {
-      document.title = text ? text + ' - TMPlayer Web' : 'TMPlayer Web';
+      document.title = text ? text + ' - TMPlayer Beta' : 'TMPlayer Beta';
     },
 
     // The browser's back button walks the app's own back stack: each screen pushes one entry.

@@ -1588,6 +1588,10 @@
 
   let current = null;
 
+  // The engines on their own, for video-host.js: the apps' player controls drawn by the app
+  // (Compose) over a picture these give, with no controls of this file's.
+  window.TmEngines = { NativeEngine, MoviEngine, loadMovi, choose, IOS, STANDALONE };
+
   window.TmPlayer = {
     open(specJson, onEvent) {
       if (current) current.close();

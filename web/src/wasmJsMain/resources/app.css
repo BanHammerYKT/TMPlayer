@@ -131,3 +131,31 @@ body {
   text-align: center;
   pointer-events: none;
 }
+
+/* The video under the app's canvas while a video plays (web/player/video-host.js): the canvas
+   over it draws the desktop app's own player controls and is clear everywhere else. */
+#app {
+  z-index: 1;
+}
+#tm-video {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: #000;
+}
+html.tm-video-open, html.tm-video-open body {
+  background: #000;
+}
+#tm-video video, #tm-video movi-player {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+#tm-video[data-shape="crop"] video {
+  object-fit: cover;
+}
+#tm-video[data-shape="stretch"] video {
+  object-fit: fill;
+}

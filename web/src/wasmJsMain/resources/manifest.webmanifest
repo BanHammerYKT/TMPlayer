@@ -1,6 +1,6 @@
 {
-  "name": "TMPlayer",
-  "short_name": "TMPlayer",
+  "name": "TMPlayer Beta",
+  "short_name": "TMPlayer Beta",
   "description": "A player for the videos already in your own Telegram chats, in the browser. Unofficial, not affiliated with Telegram.",
   "id": "/",
   "start_url": "/",

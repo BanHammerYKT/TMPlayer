@@ -211,6 +211,32 @@ val copyFonts = tasks.register<Sync>("copyFonts") {
     into(layout.buildDirectory.dir("fonts/fonts"))
 }
 
+// The desktop app's own screens and player controls (desktop/src/main/kotlin), compiled for the
+// browser so a wide window gets exactly the desktop's UI (web/desktop-sources.txt lists them).
+// The JVM spellings with a plain Kotlin twin are rewritten in the copy, as :core and :ui do; what
+// is the desktop's alone (mpv, the window, files, the tray, the updater) has a browser stand in
+// under web/src/wasmJsMain/kotlin/com/tmplayer/desktop.
+val desktopWebSources = tasks.register<Sync>("desktopWebSources") {
+    val list = layout.projectDirectory.file("desktop-sources.txt")
+    inputs.file(list)
+    val names = list.asFile.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+    from(rootProject.layout.projectDirectory.dir("desktop/src/main/kotlin")) { include(names) }
+    into(layout.buildDirectory.dir("desktop-web/kotlin"))
+    val localeCase = Regex("""\.(lowercase|uppercase)\((java\.util\.)?Locale\.(ROOT|US|ENGLISH)\)""")
+    filter { line ->
+        val text = line
+            .replace("Dispatchers.IO", "Dispatchers.Default")
+            .replace("Dispatchers.Swing", "Dispatchers.Main")
+            .replace(localeCase, ".$1()")
+        val t = text.trim()
+        if (t == "@Synchronized" || t == "@Volatile" || t == "import kotlinx.coroutines.runBlocking" || t == "import kotlinx.coroutines.swing.Swing") {
+            ""
+        } else {
+            text.replace("@Synchronized ", "").replace("@Volatile ", "")
+        }
+    }
+}
+
 kotlin {
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
@@ -229,6 +255,7 @@ kotlin {
     sourceSets {
         wasmJsMain {
             kotlin.srcDir(generateBuildInfo)
+            kotlin.srcDir(desktopWebSources)
             resources.srcDir(patchTdweb)
             resources.srcDir(moviSite)
             resources.srcDir(playerSite)
@@ -236,6 +263,7 @@ kotlin {
             resources.srcDir(copyFonts.map { layout.buildDirectory.dir("fonts").get() })
             dependencies {
                 implementation(project(":core"))
+                implementation(project(":ui"))
                 implementation(libs.cmp.runtime)
                 implementation(libs.cmp.ui)
                 implementation(libs.cmp.foundation)
