@@ -101,3 +101,11 @@ interface AllowedChatsSource {
     /** The chats the lock lets through, or null while it is off. */
     val kidsAllowedChats: kotlinx.coroutines.flow.Flow<Set<Long>?>
 }
+
+/** The app lock as Settings shows it. [kids] is only true with a PIN set ([KidsLock.inForce]). */
+data class AppLockSettings(
+    val pinSet: Boolean = false,
+    val onOpen: Boolean = false,
+    val kids: Boolean = false,
+    val kidsChats: Set<Long> = emptySet(),
+)
