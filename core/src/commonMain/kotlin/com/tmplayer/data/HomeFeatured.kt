@@ -30,9 +30,9 @@ data class FeaturedPick(val entry: ShelfEntry) {
  *   page, as [SeriesShelf.sameVideoKey] keys them, and a show is one page however many of its
  *   episodes arrived, whether they came folded into a show or as a lone episode.
  * - Never an extra: a trailer, a teaser or a sample is not something to put across the top of Home.
- * - Films and shows first. A clip or a recording only fills a page when the starred chats have
- *   fewer than [LIMIT] films and shows among their newest videos, so a carousel is never empty
- *   for a chat of lectures.
+ * - Only films and shows. A clip, a recording or a lecture never makes a page, even when that
+ *   leaves the carousel short or empty: across the top of Home it reads as a featured title, and
+ *   a home video there looked out of place (user, 2026-10-21).
  * - Newest first, all from one chat or from several, as they came.
  *
  * [rank] then puts the pages with a sharp online picture first, since a page is a large picture
@@ -43,25 +43,18 @@ object HomeFeatured {
     /** Pages in the carousel at most. */
     const val LIMIT = 5
 
-    /** The newest [limit] different films, shows and videos in [entries] (see [HomeFeatured]). */
+    /** The newest [limit] different films and shows in [entries] (see [HomeFeatured]). */
     fun pick(entries: List<ShelfEntry>, limit: Int = LIMIT): List<FeaturedPick> {
         if (limit <= 0) return emptyList()
         val seen = HashSet<String>()
-        val titled = ArrayList<FeaturedPick>()
-        val others = ArrayList<FeaturedPick>()
-        entries
+        return entries
             .map(::FeaturedPick)
             .sortedWith(compareByDescending<FeaturedPick> { it.date }.thenByDescending { it.item.messageId })
-            .forEach { pick ->
-                val (key, isTitled) = identity(pick) ?: return@forEach
-                if (!seen.add(key)) return@forEach
-                if (isTitled) titled += pick else others += pick
+            .filter { pick ->
+                val (key, isTitled) = identity(pick) ?: return@filter false
+                isTitled && seen.add(key)
             }
-        val chosen = (titled.take(limit) + others.take((limit - titled.size).coerceAtLeast(0))).toHashSet()
-        // Back in the order they came, newest first, now that the films and shows have their places.
-        return (titled + others)
-            .filter { it in chosen }
-            .sortedWith(compareByDescending<FeaturedPick> { it.date }.thenByDescending { it.item.messageId })
+            .take(limit)
     }
 
     /**
@@ -69,7 +62,7 @@ object HomeFeatured {
      * videos of Continue watching, newest first) taken in turn, a new one first, so the carousel
      * holds some of each: at most [resumeShare] of what the viewer is part way through, the rest
      * new, and either fills the other's places when it has too few. A video or show in both is
-     * one page, the newer one's. Only pages with a picture of their own ([hasArt], or [online]
+     * one page, the newer one's. Only films and shows, and only pages with a picture of their own ([hasArt], or [online]
      * saying the providers have one) are taken: a page across the top of Home is a large picture,
      * and a generated cover there is a placeholder.
      */
@@ -84,8 +77,8 @@ object HomeFeatured {
         val seen = HashSet<String>()
         fun usable(pick: FeaturedPick): Boolean {
             if (!hasArt(pick.item) && !online(pick)) return false
-            val key = identity(pick)?.first ?: return false
-            return seen.add(key)
+            val (key, isTitled) = identity(pick) ?: return false
+            return isTitled && seen.add(key)
         }
         val fresh = ArrayDeque(recent)
         val going = ArrayDeque(resume.map { FeaturedPick(ShelfEntry.File(it)) })

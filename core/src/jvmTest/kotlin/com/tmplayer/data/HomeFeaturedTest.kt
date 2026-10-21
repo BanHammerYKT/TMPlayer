@@ -71,14 +71,13 @@ class HomeFeaturedTest {
     }
 
     @Test
-    fun `films and shows take the pages before other videos, which only fill in`() {
+    fun `only films and shows make a page, never other videos`() {
         val clips = (1..4).map { n -> file(video("holiday_clip_${'a' + n}.mp4", date = 100 + n, durationSec = 90)) }
         val films = (1..3).map { n -> file(video("Film Number ${'A' + n} ${2000 + n}.mkv", date = n)) }
         val picks = HomeFeatured.pick(clips + films)
-        assertEquals(HomeFeatured.LIMIT, picks.size)
-        // All three films, then the two newest clips, in the order they came.
-        assertTrue(films.all { f -> picks.any { it.key == f.key } })
-        assertEquals(listOf(104, 103, 3, 2, 1), picks.map { it.date })
+        // The three films, newest first; the newer clips are left out rather than filling in.
+        assertEquals(listOf(3, 2, 1), picks.map { it.date })
+        assertTrue(HomeFeatured.pick(clips).isEmpty())
     }
 
     @Test
