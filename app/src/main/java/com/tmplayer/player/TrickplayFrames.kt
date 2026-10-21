@@ -58,13 +58,23 @@ class TrickplayFrames(
     private var openedFor: Pair<String, Boolean>? = null
     private var failedFor: Pair<String, Boolean>? = null
 
+    /**
+     * When the file last failed to open, and how much of it was on the disk then. A file being
+     * streamed often cannot be opened at first (an MKV's index, an MP4's moov at the end, is not
+     * here yet), and used to be given up on for the rest of the session: no scrub pictures at all
+     * while streaming. It is tried again once [RETRY_BYTES] more has arrived, or [RETRY_MS] on.
+     */
+    private var failedAt = 0L
+    private var failedBytes = 0L
+
     override fun request(positionMs: Long, onFrame: (Bitmap?) -> Unit) {
         val duration = durationMs()
         val file = path()
         val done = complete()
         if (file == null || !Trickplay.covered(positionMs, duration, sizeBytes(), spans(), done)) {
             job?.cancel()
-            onFrame(null)
+            // The nearest picture already made, when it is close enough to say where this is.
+            onFrame(nearest(positionMs))
             return
         }
         val slot = Trickplay.bucketMs(positionMs)
@@ -78,7 +88,7 @@ class TrickplayFrames(
         job = scope.launch {
             val frame = withContext(worker) { frameAt(file, done, slot) }
             if (frame != null) cache.put(slot, frame)
-            onFrame(frame)
+            onFrame(frame ?: nearest(positionMs))
         }
     }
 
@@ -91,9 +101,21 @@ class TrickplayFrames(
         cache.evictAll()
     }
 
+    /** The cached picture nearest [positionMs], within [NEAREST_MS], or null. */
+    private fun nearest(positionMs: Long): Bitmap? = cache.snapshot().entries
+        .filter { kotlin.math.abs(it.key - positionMs) <= NEAREST_MS }
+        .minByOrNull { kotlin.math.abs(it.key - positionMs) }
+        ?.value
+
+    private fun onDisk(): Long = spans().sumOf { it.end - it.start }
+
     private fun frameAt(file: String, done: Boolean, slotMs: Long): Bitmap? {
         val key = file to done
-        if (failedFor == key) return null
+        if (failedFor == key) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (onDisk() - failedBytes < RETRY_BYTES && now - failedAt < RETRY_MS) return null
+            failedFor = null
+        }
         val reader = if (openedFor == key) retriever else open(file, done, key)
         reader ?: return null
         val us = slotMs * 1_000
@@ -121,6 +143,8 @@ class TrickplayFrames(
         if (!opened) {
             runCatching { reader.release() }
             failedFor = key
+            failedAt = android.os.SystemClock.elapsedRealtime()
+            failedBytes = onDisk()
             return null
         }
         retriever = reader
@@ -159,6 +183,13 @@ class TrickplayFrames(
     private companion object {
         /** About two minutes of bar at the 10 second step, a few megabytes at this size. */
         const val CACHE_FRAMES = 24
+
+        /** How far from the scrub point a picture already made may stand in for the right one. */
+        const val NEAREST_MS = 45_000L
+
+        /** A file that would not open is tried again after this much more of it, or this long. */
+        const val RETRY_BYTES = 8L * 1024 * 1024
+        const val RETRY_MS = 15_000L
 
         /** The picture's bounds; the retriever keeps the video's shape inside them. */
         const val WIDTH_PX = 320
