@@ -1,7 +1,16 @@
 package com.tmplayer.data
 
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 
 /**
  * What resume across devices keeps in the viewer's own Saved Messages: one text message, found by
@@ -101,40 +110,44 @@ object ResumeSyncDoc {
         val start = text.indexOf('{')
         if (start < 0) return Doc()
         return runCatching {
-            val root = JSONObject(text.substring(start))
-            if (root.optInt("v", 1) > VERSION) return null
-            val entries = root.optJSONArray("e") ?: JSONArray()
-            val tombs = root.optJSONArray("x") ?: JSONArray()
+            val root = Json.parseToJsonElement(text.substring(start)).jsonObject
+            if ((root.int("v") ?: 1) > VERSION) return null
+            val entries = root["e"] as? JsonArray ?: JsonArray(emptyList())
+            val tombs = root["x"] as? JsonArray ?: JsonArray(emptyList())
             Doc(
-                entries = (0 until entries.length()).mapNotNull { i ->
-                    val o = entries.optJSONObject(i) ?: return@mapNotNull null
+                entries = entries.mapNotNull { element ->
+                    val o = element as? JsonObject ?: return@mapNotNull null
                     Entry(
-                        chatId = o.optLong("c"),
-                        messageId = o.optLong("m"),
-                        positionMs = o.optLong("p"),
-                        durationMs = o.optLong("d"),
-                        updatedAt = o.optLong("u"),
-                        title = o.optString("t"),
-                        chatTitle = o.optString("ct"),
-                        fileName = o.optString("f").ifBlank { null },
-                        sizeBytes = o.optLong("s"),
-                        durationSec = o.optInt("ds"),
+                        chatId = o.long("c") ?: 0L,
+                        messageId = o.long("m") ?: 0L,
+                        positionMs = o.long("p") ?: 0L,
+                        durationMs = o.long("d") ?: 0L,
+                        updatedAt = o.long("u") ?: 0L,
+                        title = o.text("t"),
+                        chatTitle = o.text("ct"),
+                        fileName = o.text("f").ifBlank { null },
+                        sizeBytes = o.long("s") ?: 0L,
+                        durationSec = o.int("ds") ?: 0,
                     ).takeIf { it.chatId != 0L && it.messageId != 0L && it.positionMs > 0 }
                 },
-                tombs = (0 until tombs.length()).mapNotNull { i ->
-                    val o = tombs.optJSONObject(i) ?: return@mapNotNull null
-                    Tomb(o.optLong("c"), o.optLong("m"), o.optLong("a")).takeIf { it.chatId != 0L && it.messageId != 0L }
+                tombs = tombs.mapNotNull { element ->
+                    val o = element as? JsonObject ?: return@mapNotNull null
+                    Tomb(o.long("c") ?: 0L, o.long("m") ?: 0L, o.long("a") ?: 0L).takeIf { it.chatId != 0L && it.messageId != 0L }
                 },
             )
         }.getOrNull()
     }
 
-    private fun json(doc: Doc): String {
-        val root = JSONObject()
-        root.put("v", VERSION)
-        root.put("e", JSONArray().apply {
+    private fun JsonObject.primitive(name: String) = (this[name] as? JsonElement)?.let { runCatching { it.jsonPrimitive }.getOrNull() }
+    private fun JsonObject.long(name: String): Long? = primitive(name)?.let { it.longOrNull ?: it.content.toDoubleOrNull()?.toLong() }
+    private fun JsonObject.int(name: String): Int? = primitive(name)?.let { it.intOrNull ?: it.content.toDoubleOrNull()?.toInt() }
+    private fun JsonObject.text(name: String): String = primitive(name)?.takeIf { it.isString }?.content.orEmpty()
+
+    private fun json(doc: Doc): String = buildJsonObject {
+        put("v", VERSION)
+        put("e", buildJsonArray {
             doc.entries.forEach { e ->
-                put(JSONObject().apply {
+                add(buildJsonObject {
                     put("c", e.chatId)
                     put("m", e.messageId)
                     put("p", e.positionMs)
@@ -149,12 +162,11 @@ object ResumeSyncDoc {
             }
         })
         if (doc.tombs.isNotEmpty()) {
-            root.put("x", JSONArray().apply {
-                doc.tombs.forEach { t -> put(JSONObject().apply { put("c", t.chatId); put("m", t.messageId); put("a", t.at) }) }
+            put("x", buildJsonArray {
+                doc.tombs.forEach { t -> add(buildJsonObject { put("c", t.chatId); put("m", t.messageId); put("a", t.at) }) }
             })
         }
-        return root.toString()
-    }
+    }.toString()
 
     private const val VERSION = 1
     private const val TITLE_MAX = 60
