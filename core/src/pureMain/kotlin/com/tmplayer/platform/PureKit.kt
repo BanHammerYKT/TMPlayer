@@ -60,3 +60,9 @@ expect fun deviceLocaleTag(): String
 expect class PlainLock() {
     fun <T> locked(block: () -> T): T
 }
+
+/** A clock that only goes forward, in milliseconds, as `System.nanoTime() / 1_000_000`. */
+expect fun monotonicMillis(): Long
+
+/** [count] bytes from the platform's secure random source. */
+expect fun secureRandomBytes(count: Int): ByteArray

@@ -52,3 +52,34 @@ private val K = longArrayOf(
     0x19a4c116L, 0x1e376c08L, 0x2748774cL, 0x34b0bcb5L, 0x391c0cb3L, 0x4ed8aa4aL, 0x5b9cca4fL, 0x682e6ff3L,
     0x748f82eeL, 0x78a5636fL, 0x84c87814L, 0x8cc70208L, 0x90befffaL, 0xa4506cebL, 0xbef9a3f7L, 0xc67178f2L,
 ).map { it.toInt() }.toIntArray()
+
+/** HMAC-SHA256 of [message] under [key] (RFC 2104). */
+fun hmacSha256(key: ByteArray, message: ByteArray): ByteArray {
+    val block = 64
+    val k = if (key.size > block) sha256(key) else key
+    val ipad = ByteArray(block) { i -> ((k.getOrElse(i) { 0 }.toInt()) xor 0x36).toByte() }
+    val opad = ByteArray(block) { i -> ((k.getOrElse(i) { 0 }.toInt()) xor 0x5c).toByte() }
+    return sha256(opad + sha256(ipad + message))
+}
+
+/** PBKDF2 with HMAC-SHA256 (RFC 8018), [length] bytes of key. */
+fun pbkdf2Sha256(password: ByteArray, salt: ByteArray, iterations: Int, length: Int): ByteArray {
+    require(iterations > 0 && length > 0)
+    val out = ByteArray(length)
+    var block = 1
+    var at = 0
+    while (at < length) {
+        val index = byteArrayOf((block ushr 24).toByte(), (block ushr 16).toByte(), (block ushr 8).toByte(), block.toByte())
+        var u = hmacSha256(password, salt + index)
+        val t = u.copyOf()
+        repeat(iterations - 1) {
+            u = hmacSha256(password, u)
+            for (i in t.indices) t[i] = (t[i].toInt() xor u[i].toInt()).toByte()
+        }
+        val n = minOf(t.size, length - at)
+        t.copyInto(out, at, 0, n)
+        at += n
+        block++
+    }
+    return out
+}

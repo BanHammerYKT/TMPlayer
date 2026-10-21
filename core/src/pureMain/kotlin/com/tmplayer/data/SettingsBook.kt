@@ -101,6 +101,56 @@ class SettingsBook(private val kv: KeyValueStore) : AllowedChatsSource, Correcti
     /** The stored PIN line (salt and hash, as AppLock writes it), or null when none is set. */
     suspend fun pinLine(): String? = kv.snapshot().string(APP_PIN)
 
+    /** Sets (or changes) the PIN, as SettingsStore.setPin does, forgetting the wrong guesses. */
+    suspend fun setPin(pin: String) {
+        val line = PinHash.hash(pin)
+        kv.edit { e ->
+            e[APP_PIN] = line
+            e.remove(PIN_FAILURES)
+            e.remove(PIN_WAIT_LEFT)
+            e.remove(PIN_WAIT_STAMP)
+        }
+    }
+
+    /** Removes the PIN and what it guards (the lock on opening, the kids lock); the chats stay. */
+    suspend fun removePin() = kv.edit { e ->
+        listOf(APP_PIN, PIN_FAILURES, PIN_WAIT_LEFT, PIN_WAIT_STAMP, LOCK_ON_OPEN, KIDS_LOCK).forEach(e::remove)
+    }
+
+    /** As SettingsStore.checkPin: a wrong PIN counts, and a wait earned is waited out first. */
+    suspend fun checkPin(pin: String, now: Long = PinClock.now()): PinCheck {
+        var verdict: PinCheck = PinCheck.NoPin
+        kv.edit { e ->
+            val stored = e.string(APP_PIN) ?: return@edit
+            val attempts = PinAttempts.restored(
+                failures = (e.long(PIN_FAILURES) ?: 0L).toInt(),
+                waitLeftMs = e.long(PIN_WAIT_LEFT) ?: 0L,
+                stampedAt = e.long(PIN_WAIT_STAMP) ?: 0L,
+                now = now,
+            )
+            val wait = attempts.waitMs(now)
+            verdict = when {
+                wait > 0 -> PinCheck.Waiting(wait)
+                PinHash.verify(pin, stored) -> {
+                    e.remove(PIN_FAILURES)
+                    e.remove(PIN_WAIT_LEFT)
+                    e.remove(PIN_WAIT_STAMP)
+                    PinCheck.Right
+                }
+                else -> {
+                    val next = attempts.failed(now)
+                    e[PIN_FAILURES] = next.failures.toLong()
+                    e[PIN_WAIT_LEFT] = next.waitMs(now)
+                    e[PIN_WAIT_STAMP] = now
+                    PinCheck.Wrong(next)
+                }
+            }
+        }
+        return verdict
+    }
+
+    suspend fun setLockOnOpen(on: Boolean) = kv.edit { it[LOCK_ON_OPEN] = on }
+
     suspend fun setKidsLock(on: Boolean) = kv.edit { it[KIDS_LOCK] = on }
 
     suspend fun setKidsChats(chats: Set<Long>) = kv.edit { it[KIDS_CHATS] = chats.map(Long::toString).toSet() }
@@ -329,6 +379,9 @@ class SettingsBook(private val kv: KeyValueStore) : AllowedChatsSource, Correcti
         const val REDUCE_MOTION = "reduce_motion"
         const val UI_SCALE = "ui_scale"
         const val APP_PIN = "app_pin"
+        const val PIN_FAILURES = "app_pin_failures"
+        const val PIN_WAIT_LEFT = "app_pin_wait_left_ms"
+        const val PIN_WAIT_STAMP = "app_pin_wait_stamp"
         const val LOCK_ON_OPEN = "app_lock_on_open"
         const val KIDS_LOCK = "kids_lock"
         const val KIDS_CHATS = "kids_chats"

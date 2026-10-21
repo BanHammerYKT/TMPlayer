@@ -5,6 +5,7 @@ import com.tmplayer.json.JSONException
 import com.tmplayer.json.JSONObject
 import com.tmplayer.online.hostOf
 import com.tmplayer.platform.formEncode
+import com.tmplayer.platform.pbkdf2Sha256
 import com.tmplayer.platform.sha256
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +27,17 @@ class PureWebKitTest {
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
             hex(sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".encodeToByteArray())),
         )
+    }
+
+    @Test
+    fun pbkdf2MatchesRfcVectorsAndPinsCheck() {
+        val p = "password".encodeToByteArray()
+        val salt = "salt".encodeToByteArray()
+        assertEquals("120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b", hex(pbkdf2Sha256(p, salt, 1, 32)))
+        assertEquals("ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43", hex(pbkdf2Sha256(p, salt, 2, 32)))
+        val line = PinHash.hash("1234")
+        assertTrue(PinHash.verify("1234", line))
+        assertFalse(PinHash.verify("4321", line))
     }
 
     @Test

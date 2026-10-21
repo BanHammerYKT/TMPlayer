@@ -58,3 +58,7 @@ actual fun deviceLocaleTag(): String = java.util.Locale.getDefault().toLanguageT
 actual class PlainLock actual constructor() {
     actual fun <T> locked(block: () -> T): T = synchronized(this) { block() }
 }
+
+actual fun monotonicMillis(): Long = System.nanoTime() / 1_000_000L
+
+actual fun secureRandomBytes(count: Int): ByteArray = ByteArray(count).also { java.security.SecureRandom().nextBytes(it) }

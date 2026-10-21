@@ -7,11 +7,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.util.Base64
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
+import com.tmplayer.platform.monotonicMillis
+import com.tmplayer.platform.pbkdf2Sha256
+import com.tmplayer.platform.secureRandomBytes
+import kotlin.concurrent.Volatile
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * The app lock's PIN (CP57): four digits, kept only as a salted PBKDF2 hash.
@@ -24,6 +25,7 @@ import javax.crypto.spec.PBEKeySpec
  * Stored as `v1:<iterations>:<salt>:<hash>`, Base64 for the two byte strings, so a later version
  * can raise the iteration count and still read a PIN set under this one.
  */
+@OptIn(ExperimentalEncodingApi::class)
 object PinHash {
 
     /** How many digits a PIN has. Fixed, so the pad can tell when one is complete. */
@@ -44,8 +46,7 @@ object PinHash {
     /** The line to store for [pin], with a fresh random salt unless one is handed in (tests). */
     fun hash(pin: String, salt: ByteArray = newSalt()): String {
         require(isValid(pin)) { "A PIN is $LENGTH digits" }
-        val encoder = Base64.getEncoder()
-        return listOf(VERSION, ITERATIONS.toString(), encoder.encodeToString(salt), encoder.encodeToString(derive(pin, salt, ITERATIONS)))
+        return listOf(VERSION, ITERATIONS.toString(), Base64.encode(salt), Base64.encode(derive(pin, salt, ITERATIONS)))
             .joinToString(":")
     }
 
@@ -59,21 +60,23 @@ object PinHash {
         val parts = stored.split(':')
         if (parts.size != 4 || parts[0] != VERSION) return false
         val iterations = parts[1].toIntOrNull()?.takeIf { it > 0 } ?: return false
-        val decoder = Base64.getDecoder()
-        val salt = runCatching { decoder.decode(parts[2]) }.getOrNull() ?: return false
-        val expected = runCatching { decoder.decode(parts[3]) }.getOrNull() ?: return false
-        return MessageDigest.isEqual(derive(pin, salt, iterations), expected)
+        val salt = runCatching { Base64.decode(parts[2]) }.getOrNull() ?: return false
+        val expected = runCatching { Base64.decode(parts[3]) }.getOrNull() ?: return false
+        return sameBytes(derive(pin, salt, iterations), expected)
     }
 
-    private fun newSalt(): ByteArray = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
+    private fun newSalt(): ByteArray = secureRandomBytes(SALT_BYTES)
 
-    private fun derive(pin: String, salt: ByteArray, iterations: Int): ByteArray {
-        val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, KEY_BITS)
-        try {
-            return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
-        } finally {
-            spec.clearPassword()
-        }
+    /** PBKDF2 with HMAC-SHA256, as the JDK's PBKDF2WithHmacSHA256 derives it. */
+    private fun derive(pin: String, salt: ByteArray, iterations: Int): ByteArray =
+        pbkdf2Sha256(pin.encodeToByteArray(), salt, iterations, KEY_BITS / 8)
+
+    /** Compared in constant time, as MessageDigest.isEqual does. */
+    private fun sameBytes(a: ByteArray, b: ByteArray): Boolean {
+        if (a.size != b.size) return false
+        var diff = 0
+        for (i in a.indices) diff = diff or (a[i].toInt() xor b[i].toInt())
+        return diff == 0
     }
 }
 
@@ -84,7 +87,7 @@ object PinHash {
  */
 object PinClock {
     @Volatile
-    var source: () -> Long = { System.nanoTime() / 1_000_000L }
+    var source: () -> Long = { monotonicMillis() }
 
     fun now(): Long = source()
 }

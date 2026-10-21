@@ -56,3 +56,11 @@ actual fun deviceLocaleTag(): String = runCatching { jsLanguage() }.getOrDefault
 actual class PlainLock actual constructor() {
     actual fun <T> locked(block: () -> T): T = block()
 }
+
+private fun jsNowMonotonic(): Double = js("performance.now()")
+
+private fun jsRandomByte(): Int = js("crypto.getRandomValues(new Uint8Array(1))[0]")
+
+actual fun monotonicMillis(): Long = jsNowMonotonic().toLong()
+
+actual fun secureRandomBytes(count: Int): ByteArray = ByteArray(count) { jsRandomByte().toByte() }

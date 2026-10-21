@@ -77,5 +77,11 @@ class BooksMatchStoresTest {
 
         book.addRecentSearch("harbour")
         assertEquals(listOf("harbour"), store.recentSearches.first())
+
+        book.setPin("2580")
+        assertEquals(PinCheck.Right, store.checkPin("2580"))
+        store.setPin("1470")
+        assertEquals(PinCheck.Right, book.checkPin("1470"))
+        assertTrue(book.checkPin("0000") is PinCheck.Wrong)
     }
 }
