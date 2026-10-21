@@ -2,35 +2,35 @@ package com.tmplayer.i18n
 
 import com.tmplayer.data.SizeFilter
 import com.tmplayer.player.StreamStats
-import java.text.NumberFormat
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
-import java.util.Locale
 
 /**
  * Numbers, sizes, durations, dates and track language names in one UI language. The unit words
- * come from the catalog (`format.*`), the digits and separators from the Java locale, so French
+ * come from the catalog (`format.*`), the digits and separators from the platform's locale data
+ * ([PlatformText]: the JDK on Android and the desktop, `Intl` in the browser), so French
  * reads "1,5 Go" once its catalog says "{size} Go".
  */
 class LocaleFormatter internal constructor(private val messages: Messages) {
 
-    val locale: Locale get() = messages.locale
+    val locale: TmLocale get() = messages.locale
 
-    // NumberFormat is not thread safe, so each call makes its own; they are cheap next to a frame.
-    fun number(value: Number): String = NumberFormat.getInstance(locale).format(value)
+    /** A whole number grouped (`1,234`), anything else with up to three fraction digits. */
+    fun number(value: Number): String = when (value) {
+        is Int, is Long, is Short, is Byte -> PlatformText.integer(locale, value.toLong(), grouping = true, minDigits = 1)
+        is Decimal -> if (value.scale <= 0) {
+            PlatformText.integer(locale, value.toLong(), grouping = true, minDigits = 1)
+        } else {
+            PlatformText.decimal(locale, value.toDouble(), 0, 3)
+        }
+        else -> PlatformText.decimal(locale, value.toDouble(), 0, 3)
+    }
 
     /** [value] with exactly [digits] fraction digits: `1.5`, `1,5`. */
-    fun decimal(value: Double, digits: Int): String = NumberFormat.getInstance(locale).apply {
-        minimumFractionDigits = digits
-        maximumFractionDigits = digits
-    }.format(value)
+    fun decimal(value: Double, digits: Int): String = PlatformText.decimal(locale, value, digits, digits)
 
     /** `62%`, rounded down so something still arriving is never shown as complete. */
     fun percent(fraction: Double): String {
         val whole = (fraction * 100).toInt().coerceIn(0, 100)
-        return NumberFormat.getPercentInstance(locale).format(whole / 100.0)
+        return PlatformText.percent(locale, whole / 100.0)
     }
 
     /** `1.5 GB`, `350 MB`, `12 KB` (binary units, as the rest of the app counts), or "" for nothing. */
@@ -113,15 +113,14 @@ class LocaleFormatter internal constructor(private val messages: Messages) {
         return if (h > 0) "${number(h)}:${twoDigits(m)}:${twoDigits(s)}" else "${number(m)}:${twoDigits(s)}"
     }
 
-    /** A calendar date in the language's medium form: `6 Oct 2026`, `6 oct. 2026`. */
-    fun date(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
-        DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
-            .format(Instant.ofEpochMilli(epochMillis).atZone(zone))
+    /** A calendar date in the language's medium form, in the device's time zone: `6 Oct 2026`, `6 oct. 2026`. */
+    fun date(epochMillis: Long): String = PlatformText.date(locale, epochMillis)
 
-    /** A date and a time, both in the language's medium form. */
-    fun dateTime(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String =
-        DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT).withLocale(locale)
-            .format(Instant.ofEpochMilli(epochMillis).atZone(zone))
+    /** A date and a time, both in the language's medium form, in the device's time zone. */
+    fun dateTime(epochMillis: Long): String = PlatformText.dateTime(locale, epochMillis)
+
+    /** "6 Oct", or "6 Oct 2025" with [withYear]: the short form "watched on" uses. */
+    fun dayMonth(epochMillis: Long, withYear: Boolean): String = PlatformText.dayMonth(locale, epochMillis, withYear)
 
     /**
      * An audio or subtitle track's language, named in the UI language: `ger` and `de` both read
@@ -134,9 +133,9 @@ class LocaleFormatter internal constructor(private val messages: Messages) {
         val language = raw.substringBefore('-').lowercase()
         if (language in UNDETERMINED) return null
         val iso1 = TrackCodes.toIso1(language) ?: return raw
-        val name = Locale.forLanguageTag(iso1).getDisplayLanguage(locale)
+        val name = PlatformText.languageName(iso1, locale)
         if (name.isBlank() || name.equals(iso1, ignoreCase = true)) return raw
-        return name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+        return PlatformText.capitalize(name, locale)
     }
 
     /**
@@ -147,16 +146,12 @@ class LocaleFormatter internal constructor(private val messages: Messages) {
      */
     fun trackLanguageVariant(code: String?): String? {
         val raw = code?.trim()?.replace('_', '-')?.takeIf { '-' in it } ?: return null
-        val tag = Locale.forLanguageTag(raw)
-        val script = tag.script.takeIf { it.isNotEmpty() }?.let { tag.getDisplayScript(locale) }
-        val region = tag.country.takeIf { it.isNotEmpty() }?.let { tag.getDisplayCountry(locale) }
+        val script = PlatformText.scriptName(raw, locale)
+        val region = PlatformText.regionName(raw, locale)
         return listOfNotNull(script, region).filter { it.isNotBlank() }.joinToString(", ").ifBlank { null }
     }
 
-    private fun twoDigits(value: Long): String = NumberFormat.getIntegerInstance(locale).apply {
-        minimumIntegerDigits = 2
-        isGroupingUsed = false
-    }.format(value)
+    private fun twoDigits(value: Long): String = PlatformText.integer(locale, value, grouping = false, minDigits = 2)
 
     private companion object {
         const val KB = 1024L
@@ -166,7 +161,7 @@ class LocaleFormatter internal constructor(private val messages: Messages) {
     }
 }
 
-/** ISO 639-2 and 639-3 codes to the two letter ones Java names languages by. */
+/** ISO 639-2 and 639-3 codes to the two letter ones the platform names languages by. */
 internal object TrackCodes {
     private val bibliographic = mapOf(
         "alb" to "sq", "arm" to "hy", "baq" to "eu", "bur" to "my", "chi" to "zh", "cze" to "cs",
@@ -176,11 +171,7 @@ internal object TrackCodes {
     )
 
     private val threeToTwo: Map<String, String> by lazy {
-        val out = HashMap<String, String>()
-        for (two in Locale.getISOLanguages()) {
-            val three = runCatching { Locale.forLanguageTag(two).isO3Language }.getOrNull()
-            if (!three.isNullOrEmpty()) out[three] = two
-        }
+        val out = HashMap(PlatformText.threeLetterCodes())
         out.putAll(bibliographic)
         out
     }

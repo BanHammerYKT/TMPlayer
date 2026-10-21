@@ -1,8 +1,5 @@
 package com.tmplayer.i18n
 
-import java.math.BigDecimal
-import java.util.Locale
-
 /**
  * One UI language's text: its own catalog over the English one, key by key. A key the language
  * has not translated yet, or translated into something that does not parse or names arguments the
@@ -21,8 +18,8 @@ class Messages internal constructor(
 
     override val messages: Messages get() = this
 
-    /** The Java locale numbers, dates and language names are written in. */
-    val locale: Locale = Locale.forLanguageTag(if (pseudo) Languages.ENGLISH else tag)
+    /** The locale numbers, dates and language names are written in (`java.util.Locale` on the JVM). */
+    val locale: TmLocale = localeOf(if (pseudo) Languages.ENGLISH else tag)
 
     /** True for a right to left language (Arabic), so a screen can mirror its layout. */
     val rtl: Boolean = Languages.isRtl(tag)
@@ -55,7 +52,7 @@ class Messages internal constructor(
             Icu.Pound -> out.append(pound?.let(formatter::number) ?: "#")
             is Icu.Plural -> {
                 val value = number(args[part.name])
-                val shifted: Number = if (part.offset == 0) value else BigDecimal(value.toString()).subtract(BigDecimal(part.offset))
+                val shifted: Number = if (part.offset == 0) value else Decimal.of(value).minus(part.offset.toLong())
                 val operands = PluralRules.Operands(value)
                 val exact = operands.whole?.let { "=$it" }
                 val case = exact?.let(part.cases::get)
@@ -73,7 +70,7 @@ class Messages internal constructor(
     private fun number(value: Any?): Number = when (value) {
         is Number -> value
         null -> 0
-        else -> value.toString().toBigDecimalOrNull() ?: 0
+        else -> Decimal.parse(value.toString()) ?: 0
     }
 
     override fun toString(): String = "Messages($tag, ${own.size} of ${english.size} keys)" // i18n-ok: debug toString

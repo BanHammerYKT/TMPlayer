@@ -1,5 +1,7 @@
 package com.tmplayer.platform
 
+import kotlin.concurrent.Volatile
+
 /**
  * Where `:core` sends its log lines.
  *
@@ -25,11 +27,13 @@ object Logger {
 /** The sink nothing has to install. */
 object StandardErrorSink : LogSink {
     override fun i(tag: String, message: String) {
-        System.err.println("I/$tag: $message")
+        printError("I/$tag: $message", null)
     }
 
     override fun w(tag: String, message: String, error: Throwable?) {
-        System.err.println("W/$tag: $message")
-        error?.printStackTrace()
+        printError("W/$tag: $message", error)
     }
 }
+
+/** Standard error on the JVM, the console in the browser. */
+internal expect fun printError(line: String, error: Throwable?)

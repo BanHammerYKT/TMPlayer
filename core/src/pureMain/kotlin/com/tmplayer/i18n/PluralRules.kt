@@ -1,7 +1,5 @@
 package com.tmplayer.i18n
 
-import java.math.BigDecimal
-
 /**
  * CLDR cardinal plural rules (CLDR 46) for the languages TMPlayer ships, written out by hand so
  * no ICU4J is needed. Each returns one of `zero`, `one`, `two`, `few`, `many`, `other`; a message
@@ -14,23 +12,19 @@ object PluralRules {
 
     /** The operands of one number. A Double keeps its shortest form, so 1.5 has v = 1. */
     class Operands(number: Number) {
-        val n: BigDecimal
+        val n: Decimal
         val i: Long
         val v: Int
 
         init {
-            val exact = when (number) {
-                is Int, is Long, is Short, is Byte -> BigDecimal.valueOf(number.toLong())
-                is BigDecimal -> number
-                else -> BigDecimal(number.toDouble().toString())
-            }.abs()
+            val exact = Decimal.of(number).abs()
             n = exact
-            i = exact.toBigInteger().toLong()
-            v = exact.scale().coerceAtLeast(0)
+            i = exact.toLong()
+            v = exact.scale.coerceAtLeast(0)
         }
 
         /** True when n is a whole number (it may still be written with fraction digits). */
-        val integral: Boolean get() = n.signum() == 0 || n.stripTrailingZeros().scale() <= 0
+        val integral: Boolean get() = n.isWhole
 
         /** n as a whole number, or null when it has a fractional part. */
         val whole: Long? get() = if (integral) n.toLong() else null
@@ -57,13 +51,13 @@ object PluralRules {
     private fun rule(language: String): (Operands) -> String = when (base(language)) {
         "en", "de" -> ::oneIsExactlyOneInteger
         "it" -> { o -> if (o.i == 1L && o.v == 0) "one" else if (millions(o)) "many" else "other" }
-        "es" -> { o -> if (o.whole == 1L && o.n.compareTo(BigDecimal.ONE) == 0) "one" else if (millions(o)) "many" else "other" }
+        "es" -> { o -> if (o.whole == 1L && o.n.compareTo(Decimal.ONE) == 0) "one" else if (millions(o)) "many" else "other" }
         // pt (Brazil, the CLDR root for Portuguese) and fr: 0 and 1, and anything from 0 up to 2.
         "pt", "fr" -> { o -> if (o.i == 0L || o.i == 1L) "one" else if (millions(o)) "many" else "other" }
         "ru", "uk" -> ::eastSlavic
         "pl" -> ::polish
-        "tr", "ml" -> { o -> if (o.n.compareTo(BigDecimal.ONE) == 0) "one" else "other" }
-        "hi", "bn", "fa" -> { o -> if (o.i == 0L || o.n.compareTo(BigDecimal.ONE) == 0) "one" else "other" }
+        "tr", "ml" -> { o -> if (o.n.compareTo(Decimal.ONE) == 0) "one" else "other" }
+        "hi", "bn", "fa" -> { o -> if (o.i == 0L || o.n.compareTo(Decimal.ONE) == 0) "one" else "other" }
         "ar" -> ::arabic
         "ja", "ko", "zh", "vi", "id" -> { _ -> "other" }
         else -> ::oneIsExactlyOneInteger

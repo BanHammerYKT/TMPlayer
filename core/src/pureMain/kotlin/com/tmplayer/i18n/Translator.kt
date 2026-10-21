@@ -1,15 +1,20 @@
 package com.tmplayer.i18n
 
 import com.tmplayer.platform.Logger
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /**
  * The UI language for the whole process. Catalogs are `i18n/<tag>.json` on the classpath (the
- * resources of `:core`, so the same files on Android and the desktop), nested objects whose keys
- * join with dots: `{"browse": {"videos_count": "..."}}` is `browse.videos_count`.
+ * resources of `:core`, so the same files on Android and the desktop; the browser fetches the same
+ * files and hands them in through [provide]), nested objects whose keys join with dots:
+ * `{"browse": {"videos_count": "..."}}` is `browse.videos_count`.
  *
  * Compose reads [active] through `LocalStrings` in `:ui`, so a change recomposes in place. Code
  * outside Compose (notifications, the tray, the track picker) reads [L], which is always the
@@ -23,7 +28,7 @@ object Translator {
     var pseudoEnabled: Boolean = false
 
     private val englishPatterns: Map<String, Icu.Pattern> by lazy {
-        val source = resource(Languages.ENGLISH) ?: error("i18n/en.json is missing from the classpath")
+        val source = resource(Languages.ENGLISH) ?: error("i18n/en.json is missing")
         parse(source).mapValues { Icu.parse(it.value) }
     }
 
@@ -108,21 +113,33 @@ object Translator {
     /** A catalog's JSON as dotted keys to message text. */
     fun parse(json: String): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        fun walk(prefix: String, node: JSONObject) {
-            for (name in node.keys()) {
+        fun walk(prefix: String, node: JsonObject) {
+            for ((name, value) in node) {
                 val key = if (prefix.isEmpty()) name else "$prefix.$name"
-                when (val value = node.get(name)) {
-                    is JSONObject -> walk(key, value)
-                    is String -> out[key] = value
+                when {
+                    value is JsonObject -> walk(key, value)
+                    value is JsonPrimitive && value.isString -> out[key] = value.content
                     else -> throw IllegalArgumentException("$key is not text")
                 }
             }
         }
-        walk("", JSONObject(json))
+        walk("", Json.parseToJsonElement(json).jsonObject)
         return out
     }
 
-    private val translated = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    /** Copied on write, so a reader on another thread never sees it half changed. */
+    @Volatile
+    private var translated: Map<String, Boolean> = emptyMap()
+
+    /** Catalogs handed in rather than read off the classpath: the browser fetches its own. */
+    @Volatile
+    private var provided: Map<String, String> = emptyMap()
+
+    /** Makes [json] the catalog for [tag], for a platform with no classpath (the browser). */
+    fun provide(tag: String, json: String) {
+        provided = provided + (tag to json)
+        translated = translated - tag
+    }
 
     /**
      * Whether [tag] has text of its own: English always, any other language once its catalog
@@ -130,11 +147,12 @@ object Translator {
      * reads all in English and does not count.
      */
     fun hasCatalog(tag: String): Boolean =
-        tag == Languages.ENGLISH || translated.getOrPut(tag) {
-            resource(tag)?.let { json -> runCatching { parse(json).isNotEmpty() }.getOrDefault(false) } ?: false
+        tag == Languages.ENGLISH || translated[tag] ?: run {
+            val has = resource(tag)?.let { json -> runCatching { parse(json).isNotEmpty() }.getOrDefault(false) } ?: false
+            translated = translated + (tag to has)
+            has
         }
 
-    /** `i18n/<tag>.json` from the classpath, or null when that language has no catalog yet. */
-    fun resource(tag: String): String? =
-        Translator::class.java.getResourceAsStream("/i18n/$tag.json")?.use { it.readBytes().decodeToString() }
+    /** `i18n/<tag>.json` from the classpath (or [provide]), or null when that language has no catalog yet. */
+    fun resource(tag: String): String? = provided[tag] ?: bundledCatalog(tag)
 }

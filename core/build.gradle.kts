@@ -22,6 +22,7 @@ plugins {
     // bytecode. Without it every model here would look unstable to :app's screens, which would
     // then redraw rows that had not changed.
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // The UI text catalog, i18n/en.json, turned into the typed `Strings` interface and `object L`
@@ -173,6 +174,21 @@ val generateStrings = tasks.register("generateStrings") {
 }
 
 kotlin {
+    // Two halves. commonMain is pure Kotlin, read from src/pureMain/kotlin: no JDK, no TDLib, no
+    // DataStore, so it compiles for the browser too (web/, CP92). Everything else is the jvmShared
+    // group, android plus jvm, which still reads src/commonMain/kotlin as ordinary JVM Kotlin
+    // (java.io.File, HttpURLConnection and the rest), so no file had to move at once. A file moves
+    // to pureMain once it stops needing the JDK; the plan and what blocks the rest are in
+    // docs/WEB.md ("The core's web target").
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi::class)
+    applyDefaultHierarchyTemplate {
+        common {
+            group("jvmShared") {
+                withJvm()
+                withCompilations { it.target.platformType == org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.androidJvm }
+            }
+        }
+    }
     android {
         namespace = "com.tmplayer.core"
         // tdl-coroutines refuses anything older, as in :app.
@@ -180,22 +196,43 @@ kotlin {
         minSdk = 26
     }
     jvm()
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
+    wasmJs {
+        nodejs()
+        compilerOptions {
+            optIn.add("kotlin.js.ExperimentalWasmJsInterop")
+        }
+    }
 
     sourceSets {
         commonMain {
+            kotlin.setSrcDirs(listOf("src/pureMain/kotlin"))
             kotlin.srcDir(generateStrings)
+            resources.setSrcDirs(emptyList<String>())
         }
         commonMain.dependencies {
-            api(libs.tdl.coroutines)
             api(libs.kotlinx.coroutines.core)
-            api(libs.androidx.datastore.preferences.core)
+            api(libs.kotlinx.serialization.json)
+            // @Immutable and @Stable only, which the browser build needs no runtime for.
             implementation(project.dependencies.platform(libs.androidx.compose.bom))
-            implementation(libs.androidx.compose.runtime)
-            // The shared half of crash reporting (CrashRecord, CrashReportScrubber, CrashLimits),
-            // which builds and trims Sentry's events with its protocol classes. Each app brings
-            // the SDK up itself: Android through sentry-android-core, which is built on this very
-            // artifact at the same version, and the desktop directly.
-            api(libs.sentry)
+            implementation(libs.androidx.compose.runtime.annotation)
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+        }
+        val jvmSharedMain by getting {
+            kotlin.srcDir("src/commonMain/kotlin")
+            resources.srcDir("src/commonMain/resources")
+            dependencies {
+                api(libs.tdl.coroutines)
+                api(libs.androidx.datastore.preferences.core)
+                implementation(libs.androidx.compose.runtime)
+                // The shared half of crash reporting (CrashRecord, CrashReportScrubber, CrashLimits),
+                // which builds and trims Sentry's events with its protocol classes. Each app brings
+                // the SDK up itself: Android through sentry-android-core, which is built on this very
+                // artifact at the same version, and the desktop directly.
+                api(libs.sentry)
+            }
         }
         jvmMain.dependencies {
             // Android ships org.json in the platform, and bundling it there would shadow the
@@ -204,9 +241,22 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(libs.junit)
+            // Reads back the pure QR encoder's codes (QrCodeTest).
+            implementation(libs.zxing.core)
             implementation(libs.kotlinx.coroutines.test)
         }
     }
+}
+
+// The Compose compiler only records stability for :app's and :ui's screens, which are JVM; the
+// browser build compiles the pure half without it.
+composeCompiler {
+    targetKotlinPlatforms.set(
+        setOf(
+            org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.jvm,
+            org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType.androidJvm,
+        ),
+    )
 }
 
 // The same bytecode level as `:app`. A toolchain would be tidier, but the build machines run a

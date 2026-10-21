@@ -32,7 +32,7 @@ object Icu {
             val out = LinkedHashMap<String, ArgKind>()
             fun walk(parts: List<Part>) {
                 for (part in parts) when (part) {
-                    is Value -> out.putIfAbsent(part.name, ArgKind.VALUE)
+                    is Value -> if (part.name !in out) out[part.name] = ArgKind.VALUE
                     is Plural -> {
                         out[part.name] = ArgKind.PLURAL
                         part.cases.values.forEach(::walk)
