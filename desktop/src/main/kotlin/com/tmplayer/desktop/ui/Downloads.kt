@@ -177,8 +177,10 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
     val cachedHeadingAt = remember { intArrayOf(-1) }
     BackHandler(enabled = picked.isNotEmpty()) { picked = emptySet() }
     // The episodes of one show together in watching order, other videos newest first.
-    val shelf = remember(history) {
-        com.tmplayer.data.DownloadShelf.arrange(history, { it.toMediaItem() }, { it.key }, { it.updatedAt })
+    // The page's order, remembered once: newest, by name, or the largest first, to make room.
+    val downloadsSort by state.settings.downloadsSort.collectAsState(initial = com.tmplayer.data.DownloadShelf.Sort.Newest)
+    val shelf = remember(history, downloadsSort) {
+        com.tmplayer.data.DownloadShelf.arrange(history, { it.toMediaItem() }, { it.key }, { it.updatedAt }, sort = downloadsSort)
     }
     val list = rememberLazyListState()
     // Where the Downloaded heading sits, for "Choose downloads to delete" to scroll to.
@@ -350,6 +352,31 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
                         at += 1
                         if (!twoPane) {
                             item(key = "t-remove") { Box(Modifier.padding(horizontal = ROW_INSET, vertical = 4.dp)) { removeAfter() } }
+                            at += 1
+                        }
+                        if (history.size > 1) {
+                            item(key = "t-sort") {
+                                Box(Modifier.padding(vertical = 4.dp)) {
+                                    ChoiceChips(
+                                        com.tmplayer.data.DownloadShelf.Sort.entries.map { sort ->
+                                            Choice(
+                                                sort.name,
+                                                when (sort) {
+                                                    com.tmplayer.data.DownloadShelf.Sort.Newest -> s.downloadsSortNewest
+                                                    com.tmplayer.data.DownloadShelf.Sort.Name -> s.downloadsSortName
+                                                    com.tmplayer.data.DownloadShelf.Sort.Largest -> s.downloadsSortLargest
+                                                },
+                                                when (sort) {
+                                                    com.tmplayer.data.DownloadShelf.Sort.Newest -> TmIcons.Clock
+                                                    com.tmplayer.data.DownloadShelf.Sort.Name -> TmIcons.TextSize
+                                                    com.tmplayer.data.DownloadShelf.Sort.Largest -> TmIcons.Download
+                                                },
+                                                selected = sort == downloadsSort,
+                                            ) { scope.launch { state.settings.setDownloadsSort(sort) } }
+                                        },
+                                    )
+                                }
+                            }
                             at += 1
                         }
                         if (history.isEmpty()) {

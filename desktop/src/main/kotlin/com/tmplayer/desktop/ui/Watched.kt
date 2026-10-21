@@ -61,10 +61,14 @@ import kotlinx.coroutines.launch
 @Composable
 fun HistoryPage(state: ShellState) {
     val tabs: @Composable () -> Unit = {
+        val s = LocalStrings.current
+        val sort = state.historySort
         ChoiceChips(
-            HistoryTab.entries.map { tab ->
-                Choice(tab.name, tab.label, tab.icon, selected = tab == state.historyTab) { state.historyTab = tab }
-            },
+            // The lists' order first, as the Chats page has its own: Recent or A to Z.
+            listOf(Choice("sort", sort.label, sort.icon, selected = false, description = s.browseSortBy(sort.label)) { state.historySort = sort.toggled }) +
+                HistoryTab.entries.map { tab ->
+                    Choice(tab.name, tab.label, tab.icon, selected = tab == state.historyTab) { state.historyTab = tab }
+                },
         )
     }
     when (state.historyTab) {
@@ -84,7 +88,7 @@ fun WatchedPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
     val s = LocalStrings.current
     val all by state.watched.history.collectAsState(initial = null)
     // One card for the copies of one video, as Continue watching has.
-    val records = remember(all) { all?.let(HomeRows::foldWatched) }
+    val records = remember(all, state.historySort) { all?.let(HomeRows::foldWatched)?.let { historyOrder(state, it) { record -> record.toMediaItem() } } }
     val progress by state.settings.watchProgress.collectAsState(initial = emptyMap())
     var confirmClear by remember { mutableStateOf(false) }
     // The page's, not a tile's: unmarking takes the tile away, and with it any scope of its own.
@@ -204,7 +208,8 @@ private fun WatchedTile(
 @Composable
 fun WatchLaterPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
     val s = LocalStrings.current
-    val records by state.watched.watchLater.items.collectAsState(initial = null)
+    val saved by state.watched.watchLater.items.collectAsState(initial = null)
+    val records = remember(saved, state.historySort) { saved?.let { historyOrder(state, it) { record -> record.toMediaItem() } } }
     val progress by state.settings.watchProgress.collectAsState(initial = emptyMap())
     // The page's, not a tile's: removing takes the tile away, and with it any scope of its own.
     val scope = rememberCoroutineScope()
@@ -321,6 +326,17 @@ internal class DaySections<T>(val sections: List<Pair<DayGroup?, List<T>>>) {
         out.toIntArray()
     }
 }
+
+/**
+ * One of History's lists in the order picked over it: as kept (most recent first), or by title.
+ * By title the day headings stand aside on their own ([DayGroup.headings] wants newest first).
+ */
+internal fun <T> historyOrder(state: ShellState, records: List<T>, item: (T) -> com.tmplayer.data.MediaItem): List<T> =
+    if (state.historySort == com.tmplayer.ui.browse.ChatSort.Name) {
+        com.tmplayer.data.VideoSorting.byName(records, { com.tmplayer.data.SeriesShelf.tileTitle(item(it)) })
+    } else {
+        records
+    }
 
 /** [records] under Today, Yesterday and Earlier, or in one run when headings would not help. */
 internal fun <T> daySections(records: List<T>, now: Long, at: (T) -> Long): DaySections<T> =

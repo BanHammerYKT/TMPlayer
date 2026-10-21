@@ -114,6 +114,12 @@ class VideoSortTest {
     }
 
     @Test
+    fun `by name sorts any rows by their titles, ties in their own order`() {
+        val rows = listOf("the Run 2", "Part 10", "Part 2", "run 2")
+        assertEquals(listOf("Part 2", "Part 10", "the Run 2", "run 2"), VideoSorting.byName(rows, { it }, Locale.ENGLISH))
+    }
+
+    @Test
     fun `natural order of names`() {
         val collator = Collator.getInstance(Locale.ENGLISH).apply { strength = Collator.PRIMARY }
         assertTrue(VideoSorting.compareNames("Part 2", "Part 10", collator) < 0)

@@ -148,6 +148,17 @@ object VideoSorting {
     }
 
     /**
+     * [rows] in the order of their titles, as a chat's Name order has them (a leading article set
+     * aside, numbers in number order), ties in their own order: History's lists and Downloads.
+     */
+    fun <T> byName(rows: List<T>, title: (T) -> String, locale: Locale = L.messages.locale): List<T> {
+        if (rows.size < 2) return rows
+        val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
+        val titles = rows.map(title)
+        return rows.indices.sortedWith { a, b -> compareNames(titles[a], titles[b], collator).takeIf { it != 0 } ?: a.compareTo(b) }.map(rows::get)
+    }
+
+    /**
      * Two titles in the app's language: a leading article set aside, then word by word, a run of
      * digits by its value. Exposed for the tests.
      */

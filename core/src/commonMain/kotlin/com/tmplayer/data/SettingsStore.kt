@@ -91,6 +91,8 @@ private val KIDS_CHATS = stringSetPreferencesKey("kids_chats")
 private val SETUP = stringPreferencesKey("setup")
 private val TOUR = stringPreferencesKey("tour")
 private val HISTORY_TAB = stringPreferencesKey("history_tab")
+private val HISTORY_SORT = stringPreferencesKey("history_sort")
+private val DOWNLOADS_SORT = stringPreferencesKey("downloads_sort")
 private val MEDIA_LAYOUT = stringPreferencesKey("media_layout")
 private val CHAT_SNAPSHOT = stringPreferencesKey("chat_snapshot")
 private val ACCOUNT_SNAPSHOT = stringPreferencesKey("account_snapshot")
@@ -1816,6 +1818,20 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
 
     suspend fun setHistoryTab(name: String) {
         prefs.edit { it[HISTORY_TAB] = name }
+    }
+
+    /** The order of History's lists (Continue watching, Watch later, Watched), `ChatSort` by name: most recent first or by title. */
+    val historySort: Flow<String?> = read { it[HISTORY_SORT] }
+
+    suspend fun setHistorySort(name: String) {
+        prefs.edit { it[HISTORY_SORT] = name }
+    }
+
+    /** The Downloads page's order, once for the page. See [DownloadShelf.Sort]. */
+    val downloadsSort: Flow<DownloadShelf.Sort> = read { DownloadShelf.Sort.decode(it[DOWNLOADS_SORT]) }
+
+    suspend fun setDownloadsSort(sort: DownloadShelf.Sort) {
+        prefs.edit { it[DOWNLOADS_SORT] = sort.name }
     }
 
     /**

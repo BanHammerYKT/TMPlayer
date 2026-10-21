@@ -225,6 +225,8 @@ fun DownloadsScreen(
     val allHistory by settings.downloadHistory.collectAsStateWithLifecycle(initialValue = emptyList())
     val history = remember(allHistory, allowedChats) { com.tmplayer.data.KidsLock.records(allHistory, allowedChats) }
     val removeAfterWatching by settings.removeAfterWatching.collectAsStateWithLifecycle(initialValue = false)
+    // The page's order, remembered once for the page: newest, by name, or the largest first.
+    val downloadsSort by settings.downloadsSort.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.DownloadShelf.Sort.Newest)
     // What is arriving and what is behind it, which the finished-downloads record knows nothing
     // about until the file has landed. In the order the videos were asked for, which is the order
     // they will arrive in, so the list does not reshuffle itself as the figures move.
@@ -621,8 +623,12 @@ fun DownloadsScreen(
     // The episodes of one show sit together under its name, in watching order, and every other
     // video stands on its own, newest first. The rows
     // and every action on them are the tabs' own; only the order and the headings are new.
-    val shelf = remember(rows) {
-        com.tmplayer.data.DownloadShelf.arrange(rows, { it.record.toMediaItem() }, { it.key }, { it.record.updatedAt })
+    val shelf = remember(rows, downloadsSort) {
+        com.tmplayer.data.DownloadShelf.arrange(rows, { it.record.toMediaItem() }, { it.key }, { it.record.updatedAt }, sort = downloadsSort)
+    }
+    // Newest, Name and Largest over the downloads, once there are two to put in order.
+    val sortChips: @Composable () -> Unit = {
+        DownloadsSortChips(downloadsSort) { picked -> scope.launch { settings.setDownloadsSort(picked) } }
     }
     val keptCard: @Composable (DownloadRow) -> Unit = { row ->
         DownloadCard(
@@ -795,6 +801,7 @@ fun DownloadsScreen(
                 }
             }
         }
+        if (rows.size > 1) item(key = "sort") { sortChips() }
         // Grouped by show as the phone's page is, so the two read as one list. The headings take
         // no focus: the remote steps from card to card and each heading scrolls in with its first.
         shelf.forEach { entry ->
@@ -872,6 +879,10 @@ fun DownloadsScreen(
             }
         }
         at += 2
+        if (rows.size > 1) {
+            item(key = "sort") { sortChips() }
+            at++
+        }
         shelf.forEach { entry ->
             when (entry) {
                 is com.tmplayer.data.DownloadShelf.Entry.Single -> {
@@ -1531,6 +1542,36 @@ private fun StrayCard(stray: com.tmplayer.data.WatchCacheRules.Stray, onDelete: 
             SecondaryAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
         }
     }
+}
+
+/**
+ * The Downloads page's order as a row of chips, the look History's and Chats' chips have on each
+ * device: Newest, Name, and Largest, which is the one for making room.
+ */
+@Composable
+private fun DownloadsSortChips(current: com.tmplayer.data.DownloadShelf.Sort, onPick: (com.tmplayer.data.DownloadShelf.Sort) -> Unit) {
+    val s = LocalStrings.current
+    com.tmplayer.ui.browse.OrderChips(
+        com.tmplayer.data.DownloadShelf.Sort.entries.map { sort ->
+            com.tmplayer.ui.browse.OrderChip(
+                key = sort.name,
+                label = when (sort) {
+                    com.tmplayer.data.DownloadShelf.Sort.Newest -> s.downloadsSortNewest
+                    com.tmplayer.data.DownloadShelf.Sort.Name -> s.downloadsSortName
+                    com.tmplayer.data.DownloadShelf.Sort.Largest -> s.downloadsSortLargest
+                },
+                icon = when (sort) {
+                    com.tmplayer.data.DownloadShelf.Sort.Newest -> TmIcons.Clock
+                    com.tmplayer.data.DownloadShelf.Sort.Name -> TmIcons.TextSize
+                    com.tmplayer.data.DownloadShelf.Sort.Largest -> TmIcons.Download
+                },
+                selected = sort == current,
+                onClick = { onPick(sort) },
+            )
+        },
+        description = s.downloadsSortLabel,
+        modifier = Modifier.padding(start = TEXT_EDGE, end = TEXT_EDGE, top = 8.dp, bottom = 4.dp),
+    )
 }
 
 /** A section's name on the one page: Downloaded, over the downloads. */

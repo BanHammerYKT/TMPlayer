@@ -142,6 +142,8 @@ object Backups {
         "gesture_seek" to Kind.BOOL,
         "gesture_volume" to Kind.BOOL,
         "history_tab" to Kind.TEXT,
+        "history_sort" to Kind.TEXT,
+        "downloads_sort" to Kind.TEXT,
         "hold_speed" to Kind.FLOAT,
         "language" to Kind.TEXT,
         "lighter_pictures" to Kind.BOOL,

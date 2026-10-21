@@ -261,6 +261,10 @@ private fun Browse(state: ShellState, player: PlayerContent) {
             state.chatFilter = ChatFilter.decode(state.settings.chatFilter.first())
             state.chatSort = ChatSort.decode(state.settings.chatSort.first())
             state.historyTab = HistoryTab.decode(state.settings.historyTab.first())
+            state.historySort = ChatSort.decode(state.settings.historySort.first())
+        }
+        launch {
+            snapshotFlow { state.historySort }.drop(1).collect { runCatching { state.settings.setHistorySort(it.name) } }
         }
         snapshotFlow { Triple(state.chatFilter, state.chatSort, state.historyTab) }.drop(1).collect { (filter, sort, tab) ->
             runCatching {

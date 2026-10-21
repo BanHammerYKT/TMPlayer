@@ -670,7 +670,7 @@ fun ContinuePage(state: ShellState, tabs: @Composable () -> Unit = {}) {
     val s = LocalStrings.current
     val stored by state.settings.continueWatching.collectAsState(initial = null)
     // The copies of one film or episode as one card, the one watched last, as on Home.
-    val records = remember(stored) { stored?.let(com.tmplayer.data.HomeRows::foldCopies) }
+    val records = remember(stored, state.historySort) { stored?.let(com.tmplayer.data.HomeRows::foldCopies)?.let { historyOrder(state, it) { record -> record.toMediaItem() } } }
     val scope = rememberCoroutineScope()
     val toast = rememberToast()
     // The card waiting on "Remove from Continue watching?": its saved place cannot be got back.
