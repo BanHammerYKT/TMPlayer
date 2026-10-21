@@ -111,9 +111,12 @@ sealed interface HomeRow {
  * - Continue watching first, then "Recently added in starred chats", so what just arrived in a
  *   favourite is near the top, then Watch later, then New episodes when there are any, then one
  *   row per starred chat in the chat list's own order.
- * - Recently added draws only from the starred chats. Somebody's other chats are family groups,
- *   work and news as often as films, so what is new there is not what Home is for. It needs two
- *   starred chats at least: with one, it would repeat that chat's own row.
+ * - Recently added draws from Home's chats: the starred ones, and where Home fills itself
+ *   ([homeChats], the app's default since 2026-10-21) the chats the search across chats found the
+ *   most videos in, which leaves out family groups and news that only ever post a clip. Starred
+ *   chats alone need two at least: with one, it would repeat that chat's own row.
+ * - Filling itself, Home puts Movies and Shows across its chats straight under Continue watching,
+ *   and gives each chat a row of its movies and a row of its shows: the two never share a row.
  * - Every row holds at most [LIMIT] tiles. A show folded into one tile counts once.
  * - Continue watching holds one record per film or episode: copies of it (a 1080p and a 720p)
  *   fold into the one watched last ([foldCopies]).
