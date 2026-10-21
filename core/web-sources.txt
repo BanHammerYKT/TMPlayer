@@ -7,6 +7,8 @@ com/tmplayer/data/TdlResultExt.kt
 com/tmplayer/data/ChatRepository.kt
 com/tmplayer/data/MediaMapper.kt
 com/tmplayer/data/SettingsStore.kt
+com/tmplayer/data/VideoDecoder.kt
+com/tmplayer/data/LearntLanguages.kt
 com/tmplayer/data/SponsoredMessageRepository.kt
 com/tmplayer/data/AccountSessions.kt
 com/tmplayer/data/ConnectHelp.kt
