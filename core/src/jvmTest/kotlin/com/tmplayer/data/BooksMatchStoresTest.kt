@@ -84,4 +84,17 @@ class BooksMatchStoresTest {
         assertEquals(PinCheck.Right, book.checkPin("1470"))
         assertTrue(book.checkPin("0000") is PinCheck.Wrong)
     }
+
+    @Test
+    fun `the bookmark book and the bookmark store read each other`() = runBlocking {
+        val file = BookmarkStore.openDataStore(dir.resolve(BookmarkStore.FILE_NAME))
+        val store = BookmarkStore(file)
+        val book = BookmarkBook(DataStoreKeyValueStore(file))
+        store.add(-100L, 1L, 60_000, "the answer", now = 10)
+        book.add(-100L, 1L, 120_000, "the twist", now = 20)
+        assertEquals(store.bookmarksNow(-100L, 1L), book.bookmarksNow(-100L, 1L))
+        assertEquals(listOf("the answer", "the twist"), store.bookmarksNow(-100L, 1L).map { it.note })
+        book.delete(-100L, 1L, store.bookmarksNow(-100L, 1L).first().id)
+        assertEquals(1, store.bookmarksNow(-100L, 1L).size)
+    }
 }

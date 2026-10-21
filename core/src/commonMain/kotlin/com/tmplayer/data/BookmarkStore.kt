@@ -18,23 +18,6 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 /**
- * A moment in one video the viewer wants to come back to, with an optional short note: the slide
- * a lecture turns to the answer, the scene a friend should see.
- *
- * [id] is the time it was made, which is unique enough within one video and keeps the order a
- * viewer made them in should two ever share a position.
- */
-data class Bookmark(
-    val chatId: Long,
-    val messageId: Long,
-    val id: Long,
-    val positionMs: Long,
-    val note: String,
-) {
-    val key: String get() = SettingsStore.progressKey(chatId, messageId)
-}
-
-/**
  * The viewer's bookmarks, every video's in one file of their own, beside the settings and the
  * Watched list rather than inside either.
  *
@@ -151,54 +134,26 @@ class BookmarkStore(private val store: DataStore<Preferences>) {
         const val FILE_NAME = "bookmarks.preferences_pb"
 
         /** How many bookmarks one video keeps before the oldest made start dropping off. */
-        const val MAX_PER_VIDEO = 200
+        const val MAX_PER_VIDEO = BookmarkCodec.MAX_PER_VIDEO
 
         /** The longest note kept, in characters: a line, not an essay. */
-        const val MAX_NOTE = 120
+        const val MAX_NOTE = BookmarkCodec.MAX_NOTE
 
         /** Two bookmarks closer than this are one moment. */
-        const val SAME_MOMENT_MS = 1_000L
+        const val SAME_MOMENT_MS = BookmarkCodec.SAME_MOMENT_MS
 
-        private const val PREFIX = "b_"
-
-        /** Between bookmarks, and between a bookmark's fields: notes can hold anything else. */
-        private const val RECORD = '\u001E'
-        private const val FIELD = '\u001F'
+        private const val PREFIX = BookmarkCodec.PREFIX
 
         private fun keyOf(chatId: Long, messageId: Long) =
-            stringPreferencesKey(PREFIX + SettingsStore.progressKey(chatId, messageId))
+            stringPreferencesKey(PREFIX + ProgressKeys.of(chatId, messageId))
 
-        /** A note as stored: one line, trimmed, the separators out and cut to [MAX_NOTE]. */
-        fun cleanNote(note: String): String = note
-            .map { if (it == RECORD || it == FIELD || it.isISOControl()) ' ' else it }
-            .joinToString("")
-            .replace(SPACES, " ")
-            .trim()
-            .take(MAX_NOTE)
-            .trim()
+        /** A note as stored: see [BookmarkCodec.cleanNote]. */
+        fun cleanNote(note: String): String = BookmarkCodec.cleanNote(note)
 
-        private val SPACES = Regex("\\s+")
+        internal fun encode(list: List<Bookmark>): String = BookmarkCodec.encode(list)
 
-        internal fun encode(list: List<Bookmark>): String = list.joinToString(RECORD.toString()) {
-            listOf(it.id.toString(), it.positionMs.toString(), it.note).joinToString(FIELD.toString())
-        }
-
-        /** Rebuilds a video's list, earliest first, skipping any record this build cannot read. */
-        internal fun decode(chatId: Long, messageId: Long, encoded: String?): List<Bookmark> {
-            if (encoded.isNullOrEmpty()) return emptyList()
-            return encoded.split(RECORD).mapNotNull { record ->
-                val parts = record.split(FIELD)
-                // A later build may append fields; the first three still read the same.
-                if (parts.size < 3) return@mapNotNull null
-                Bookmark(
-                    chatId = chatId,
-                    messageId = messageId,
-                    id = parts[0].toLongOrNull() ?: return@mapNotNull null,
-                    positionMs = parts[1].toLongOrNull() ?: return@mapNotNull null,
-                    note = parts[2],
-                )
-            }.sortedWith(compareBy({ it.positionMs }, { it.id }))
-        }
+        internal fun decode(chatId: Long, messageId: Long, encoded: String?): List<Bookmark> =
+            BookmarkCodec.decode(chatId, messageId, encoded)
 
         /** Opens the store at [file]. Call once per process and share the result. */
         fun openDataStore(file: File): DataStore<Preferences> =
@@ -218,9 +173,9 @@ object BookmarkJump {
     private val pending = ConcurrentHashMap<String, Long>()
 
     fun request(chatId: Long, messageId: Long, positionMs: Long) {
-        pending[SettingsStore.progressKey(chatId, messageId)] = positionMs.coerceAtLeast(0L)
+        pending[ProgressKeys.of(chatId, messageId)] = positionMs.coerceAtLeast(0L)
     }
 
     /** The position asked for this video, once, or null when none was. */
-    fun take(chatId: Long, messageId: Long): Long? = pending.remove(SettingsStore.progressKey(chatId, messageId))
+    fun take(chatId: Long, messageId: Long): Long? = pending.remove(ProgressKeys.of(chatId, messageId))
 }
