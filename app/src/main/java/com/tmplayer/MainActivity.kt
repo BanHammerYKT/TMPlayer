@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1020,7 +1021,10 @@ private fun Root() {
     // the drawer badges, because every one of them is a video the viewer is still owed. Held here
     // because the chat list is where the drawer lives, and a download is started from a different
     // screen entirely and outlives it.
-    val activeDownloads by OfflineDownloads.active.collectAsStateWithLifecycle()
+    // Only the count: the map itself changes with every download's progress, several times a
+    // second, and reading it here recomposed the whole shell for each one.
+    val activeDownloadsState = OfflineDownloads.active.collectAsStateWithLifecycle()
+    val activeDownloadCount by remember(activeDownloadsState) { derivedStateOf { activeDownloadsState.value.size } }
 
     /**
      * The preparation itself, split out only so [play] can wrap the whole of it in one pending
@@ -1656,7 +1660,7 @@ private fun Root() {
             favoriteCount = favorites.size,
             watchingCount = continueWatching.size,
             watchedCount = watchedVideos.size,
-            downloadCount = activeDownloads.size,
+            downloadCount = activeDownloadCount,
             updateVersion = offeredUpdate,
             onHome = { browseTo(BrowseSection.of(BrowseTab.Home)) },
             onChats = {
@@ -1715,7 +1719,7 @@ private fun Root() {
                     returnToRail = railReturn,
                     tvNav = if (tvBar) touchNav else null,
                     onReturnedToRail = { railReturn = null },
-                    downloadCount = activeDownloads.size,
+                    downloadCount = activeDownloadCount,
                     updateVersion = offeredUpdate,
                     onUpdate = { showUpdate = true },
                     // Each of these changes the chat in Telegram, so each says out loud what it
