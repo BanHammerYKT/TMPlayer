@@ -119,8 +119,9 @@ fun Strings.tourCopy(page: TourPage, form: DeviceForm): TourCopy {
                 tourSettingsAppearance,
             ) +
                 // Where Settings is, last and without a badge: the picture is the page itself, and
-                // on the desktop it opens from the profile menu rather than a place on the bar.
-                if (form == DeviceForm.Desktop) listOf(tourSettingsWhereDesktop) else emptyList(),
+                // on every device it opens from the profile picture's menu rather than a place on
+                // the bar (2026-10-21).
+                listOf(tourSettingsWhereDesktop),
         )
     }
 }

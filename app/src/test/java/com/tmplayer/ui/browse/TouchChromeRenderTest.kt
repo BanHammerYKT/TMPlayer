@@ -35,7 +35,7 @@ import java.io.File
 
 /**
  * The phone's floating chrome, composed for real and drawn to PNGs under
- * `build/device-test/review/`: the one bar lit on Settings, the bar on a page behind the picture
+ * `build/device-test/review/`: the bar lit on Home, the bar on a page behind the picture (Settings among them)
  * with its pill of buttons, and a chat's page with its round Back and sticky bar, upright and on
  * its side. Each page's say over the bar is checked as the host reads it.
  */

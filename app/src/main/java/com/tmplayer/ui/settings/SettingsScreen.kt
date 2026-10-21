@@ -569,8 +569,8 @@ fun SettingsScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             // The app bar already clears the status bar on a phone, so the list only owes the
             // gesture bar at the bottom.
-            // Under the TV top bar the list starts right below it.
-            top = if (touch || page == null) 4.dp else Tv.SafeV,
+            // A television's Settings opens from the account menu without the top bar over it.
+            top = if (touch) 4.dp else Tv.SafeV,
             bottom = if (touch) maxOf(insets.calculateBottomPadding(), LocalBottomChrome.current) + 32.dp else 40.dp,
         ),
         // The gap between two rows of a phone's preference list is a divider's worth of nothing,
@@ -579,12 +579,12 @@ fun SettingsScreen(
     ) {
         // TV only: the phone's app bar already says where the viewer is and offers the way out.
         if (!touch) {
-            // Under the TV top bar, whose Settings tab names the list: a page alone keeps a
-            // compact title, one line, since the bar does not say which page it is.
-            page?.let { shown ->
+            // No top bar over Settings on a television: the list and each page say where the
+            // remote is, in one compact line.
+            (page?.let { titleOf(it) } ?: s.settingsTitle).let { heading ->
                 item {
                     Text(
-                        titleOf(shown),
+                        heading,
                         style = MaterialTheme.typography.titleLarge,
                         color = Tone.text,
                         maxLines = 1,
@@ -1923,10 +1923,17 @@ fun SettingsScreen(
             FloatingBackButton(TmIcons.ArrowBack, s.aboutBackToSettings, { closePage() }, Modifier.align(Alignment.TopStart))
         }
     } else if (touch) {
-        // The list: its name along the top in the same bar Home and Chats have, and no arrow, since
-        // the floating bar is the way to everywhere else.
-        Scaffold(topBar = { TopAppBar(title = { M3Text(s.settingsTitle) }) }) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) { list() }
+        // The list: opened from the profile picture's menu as a page of its own, so it has the
+        // pages' floating title and round Back, which goes back where it was opened from.
+        val listScroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
+        Box(Modifier.fillMaxSize()) {
+            Scaffold(
+                modifier = Modifier.nestedScroll(listScroll.nestedScrollConnection),
+                topBar = { FloatingPageTitle({ M3Text(s.settingsTitle) }, listScroll) },
+            ) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding)) { list() }
+            }
+            FloatingBackButton(TmIcons.ArrowBack, s.commonBack, onBack, Modifier.align(Alignment.TopStart))
         }
     } else {
         list()

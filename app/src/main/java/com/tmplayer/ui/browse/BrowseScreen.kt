@@ -223,8 +223,9 @@ internal fun BrowseScreen(
      */
     onOpenDownloads: () -> Unit = {},
     /**
-     * Back from Settings or Downloads, or a tab picked on their bar: the remote is held on the
-     * television's top bar while the page comes up. Null the rest of the time.
+     * Back from Settings (opened from the account picture's menu, to the picture) or Downloads,
+     * or a tab picked on Downloads' bar: the remote is held on the television's top bar while the
+     * page comes up. Null the rest of the time.
      */
     returnToRail: RailReturn? = null,
     /** Told once [returnToRail] has been honoured, so it is not honoured again. */
@@ -879,8 +880,9 @@ internal fun BrowseScreen(
             tvSearchOpen = true
             TvBarSignals.searchAsked.value = false
         }
-        // Back from Settings or Downloads, or a tab picked on their bar: the remote stays on the
-        // bar, held there against the page taking focus as it loads, until a key is pressed.
+        // Back from Settings (to the account picture, whose menu opened it) or Downloads, or a tab
+        // picked on Downloads' bar: the remote stays on the bar, held there against the page
+        // taking focus as it loads, until a key is pressed.
         val pressedSinceArrival = remember { booleanArrayOf(false) }
         LaunchedEffect(returnToRail) {
             if (returnToRail == null) return@LaunchedEffect
