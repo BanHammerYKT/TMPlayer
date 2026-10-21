@@ -36,7 +36,11 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.Stable
 import com.tmplayer.data.AuthState
+import com.tmplayer.data.QrClock
+import com.tmplayer.data.QrPhase
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import kotlinx.coroutines.delay
@@ -133,14 +137,87 @@ fun QrScannedVeil(scanned: Boolean, modifier: Modifier = Modifier) {
  * signs anybody in and must not be left looking usable.
  */
 @Composable
-fun rememberQrExpired(link: String): Boolean {
-    var expired by remember(link) { mutableStateOf(false) }
-    LaunchedEffect(link) {
-        delay(QR_STALE_MS)
-        expired = true
+fun rememberQrExpired(link: String): Boolean = rememberQrClock(link).phase == QrPhase.Expired
+
+/** Where the code on screen is in its life ([QrClock]), ticking a few times a second. */
+@Stable
+class QrLife(val phase: QrPhase, val remaining: Float)
+
+/**
+ * The clock of the code [link] on screen. The time between the last two links is the lifetime
+ * TDLib renews at, so it is remembered across links; each new link starts the count again.
+ */
+@Composable
+fun rememberQrClock(link: String): QrLife {
+    val memo = remember { QrArrivals() }
+    val arrived = remember(link) {
+        val now = System.currentTimeMillis()
+        memo.lastAt?.let { memo.gap = now - it }
+        memo.lastAt = now
+        now
     }
-    return expired
+    val lifetime = QrClock.lifetime(memo.gap)
+    var age by remember(link) { mutableStateOf(0L) }
+    LaunchedEffect(link) {
+        while (age < QrClock.STALE_MS) {
+            delay(QR_TICK_MS)
+            age = System.currentTimeMillis() - arrived
+        }
+    }
+    return QrLife(QrClock.phase(age, lifetime), QrClock.remaining(age, lifetime))
 }
+
+private class QrArrivals {
+    var lastAt: Long? = null
+    var gap: Long? = null
+}
+
+/**
+ * The "expires soon" cue under a QR plate: a thin bar that drains over the code's life, and in
+ * its last seconds a line saying a new code is on its way, so a code that changes under the
+ * camera is expected rather than a surprise. Its width is the plate's ([modifier]).
+ */
+@Composable
+fun QrLifeCue(life: QrLife, modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
+    val bar by androidx.compose.animation.core.animateFloatAsState(
+        life.remaining,
+        animationSpec = tween(QR_TICK_MS.toInt(), easing = androidx.compose.animation.core.LinearEasing),
+        label = "qrLife",
+    )
+    val soon = life.phase == QrPhase.ExpiringSoon || life.phase == QrPhase.Renewing
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(CircleShape)
+                .background(com.tmplayer.ui.theme.Tone.outline),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(if (life.phase == QrPhase.Renewing) 1f else bar)
+                    .height(4.dp)
+                    .clip(CircleShape)
+                    .background(if (soon) com.tmplayer.ui.theme.Tone.muted else com.tmplayer.ui.theme.Tone.accent),
+            )
+        }
+        // Always laid out, so the pane does not jump when the line appears.
+        Text(
+            when (life.phase) {
+                QrPhase.ExpiringSoon -> s.loginQrExpiresSoon
+                QrPhase.Renewing, QrPhase.Expired -> s.loginQrRenewing
+                QrPhase.Fresh -> ""
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = com.tmplayer.ui.theme.Tone.muted,
+            maxLines = 1,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
+    }
+}
+
+private const val QR_TICK_MS = 500L
 
 /**
  * Over a code that has run out ([rememberQrExpired]): the code fades under the same white veil as
@@ -219,7 +296,7 @@ fun QrRefreshButton(onRefresh: () -> Unit, modifier: Modifier = Modifier, onWhit
 }
 
 /** A login token lasts about 30 seconds and TDLib renews it before then; past this it could not. */
-const val QR_STALE_MS = 45_000L
+const val QR_STALE_MS = QrClock.STALE_MS
 
 private const val REFRESH_SPIN_MS = 4_000L
 
