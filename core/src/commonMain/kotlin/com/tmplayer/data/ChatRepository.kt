@@ -126,7 +126,8 @@ class ChatRepository(private val td: TdlClient) {
             // Reused rows still have their folders reapplied. Membership is read per folder rather
             // than off each chat, so a row fetched before the folder lists were loaded is not left
             // permanently outside every folder it belongs to.
-            val all = (known.filter { it.id in ids.toSet() } + fetched).map { chat ->
+            val wanted = ids.toHashSet()
+            val all = (known.filter { it.id in wanted } + fetched).map { chat ->
                 val belongs = folders[chat.id].orEmpty()
                 if (belongs == chat.folderIds) chat else chat.copy(folderIds = belongs)
             }
