@@ -1,3 +1,6 @@
+import java.net.URI
+import java.security.MessageDigest
+import java.util.zip.ZipFile
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
@@ -173,6 +176,71 @@ val generateStrings = tasks.register("generateStrings") {
     }
 }
 
+// tdl-coroutines in the browser (CP92). The library is Kotlin over TDLib's JSON interface, and
+// all of it but the three files that reach the native library is common code: its sources jar
+// (Apache-2.0, the same version the apps use) is fetched, checked by SHA-256 and compiled for
+// wasmJs, with core/src/wasmJsMain/kotlin/dev/g000sha256/tdl/TdlWebEngine.kt standing in for the
+// native part over tdweb. The apps keep the published artifact.
+val tdlVersion = "15.0.0"
+val tdlSourcesSha256 = "f526d033e4f12f6debf03edd0ad4a8782eac8c99af55e57aae20c08f41544d5f"
+
+val fetchTdlSources = tasks.register("fetchTdlSources") {
+    val jar = layout.buildDirectory.file("tdl-web/tdl-coroutines-$tdlVersion-sources.jar")
+    val out = layout.buildDirectory.dir("tdl-web/kotlin")
+    inputs.property("version", tdlVersion)
+    inputs.property("sha256", tdlSourcesSha256)
+    outputs.dir(out)
+    doLast {
+        val file = jar.get().asFile
+        fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        if (!file.exists() || sha(file.readBytes()) != tdlSourcesSha256) {
+            val url = "https://repo1.maven.org/maven2/dev/g000sha256/tdl-coroutines/$tdlVersion/tdl-coroutines-$tdlVersion-sources.jar"
+            val bytes = URI(url).toURL().openStream().use { it.readBytes() }
+            if (sha(bytes) != tdlSourcesSha256) throw GradleException("tdl-coroutines $tdlVersion sources do not match their SHA-256")
+            file.parentFile.mkdirs()
+            file.writeBytes(bytes)
+        }
+        val dir = out.get().asFile.apply { deleteRecursively(); mkdirs() }
+        val skip = setOf("TdlEngine.kt", "TdlNative.kt", "TdlServiceLocator.kt", "JsonClient.kt")
+        ZipFile(file).use { zip ->
+            for (entry in zip.entries()) {
+                if (entry.isDirectory || !entry.name.startsWith("commonMain/") || !entry.name.endsWith(".kt")) continue
+                if (entry.name.substringAfterLast('/') in skip) continue
+                val target = dir.resolve(entry.name.removePrefix("commonMain/"))
+                target.parentFile.mkdirs()
+                zip.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+            }
+        }
+    }
+}
+
+// The JVM half's files the browser build compiles as well (core/web-sources.txt): Td, the chat
+// repository, the settings store and what they need, now that tdl-coroutines is there too. The
+// same sources, copied into the wasmJs compilation only, so the apps' build does not change.
+val coreWebSources = tasks.register<Sync>("coreWebSources") {
+    val list = layout.projectDirectory.file("web-sources.txt")
+    inputs.file(list)
+    val names = list.asFile.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }
+    from(layout.projectDirectory.dir("src/commonMain/kotlin")) { include(names) }
+    into(layout.buildDirectory.dir("core-web/kotlin"))
+    // The few JVM spellings with a plain Kotlin twin, rewritten in the copy only: the browser has
+    // one thread (no IO dispatcher, nothing to synchronise) and locale free case mapping. What
+    // else the files name of the JDK has a small stand in under core/src/wasmJsMain/kotlin/java.
+    val localeCase = Regex("""\.(lowercase|uppercase)\((java\.util\.)?Locale\.(ROOT|US|ENGLISH)\)""")
+    filter { line ->
+        val text = line
+            .replace("Dispatchers.IO", "Dispatchers.Default")
+            .replace(localeCase, ".$1()")
+            .replace(Regex("""(?<!import )java\.util\.concurrent\.ConcurrentHashMap"""), "HashMap")
+            .replace("NoClassDefFoundError", "NotImplementedError")
+        if (text.trim() == "@Synchronized" || text.trim() == "@Volatile") {
+            ""
+        } else {
+            text.replace("@Synchronized ", "").replace("@Volatile ", "")
+        }
+    }
+}
+
 kotlin {
     // Two halves. commonMain is pure Kotlin, read from src/pureMain/kotlin: no JDK, no TDLib, no
     // DataStore, so it compiles for the browser too (web/, CP92). Everything else is the jvmShared
@@ -233,6 +301,14 @@ kotlin {
                 // the SDK up itself: Android through sentry-android-core, which is built on this very
                 // artifact at the same version, and the desktop directly.
                 api(libs.sentry)
+            }
+        }
+        wasmJsMain {
+            kotlin.srcDir(fetchTdlSources)
+            kotlin.srcDir(coreWebSources)
+            dependencies {
+                implementation(libs.kotlinx.atomicfu)
+                api(libs.androidx.datastore.preferences.core)
             }
         }
         jvmMain.dependencies {

@@ -8,6 +8,20 @@ actual class TmLocale(val tag: String) {
     override fun equals(other: Any?): Boolean = other is TmLocale && other.tag == tag
     override fun hashCode(): Int = tag.hashCode()
     override fun toString(): String = tag
+
+    fun toLanguageTag(): String = tag
+
+    /** The region, when the tag has one: "BR" for "pt-BR". */
+    val country: String get() = tag.split('-').drop(1).firstOrNull { it.length == 2 }?.uppercase().orEmpty()
+
+    /** java.util.Locale's constants and factories, for the shared code that names them. */
+    companion object {
+        val ROOT = TmLocale("und")
+        val US = TmLocale("en-US")
+        val ENGLISH = TmLocale("en")
+        fun forLanguageTag(tag: String): TmLocale = TmLocale(tag)
+        fun getDefault(): TmLocale = TmLocale(com.tmplayer.i18n.Translator.messages.tag)
+    }
 }
 
 actual fun localeOf(tag: String): TmLocale = TmLocale(tag.ifBlank { "en" })
