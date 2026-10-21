@@ -1806,6 +1806,13 @@
     "watch_again": "Watch again",
     "wifi_only": "This video isn't downloaded yet, and Wi-Fi only is on, so it won't play on mobile data. Connect to Wi-Fi, or turn Wi-Fi only off in Settings."
   },
+  "profile": {
+    "heading": "Your viewing",
+    "starred": "Starred",
+    "summary": "{watching} watching, {watched} watched, {starred} starred",
+    "watched": "Watched",
+    "watching": "Watching"
+  },
   "proxy": {
     "add": "Add proxy",
     "added": "Proxy added and turned on",

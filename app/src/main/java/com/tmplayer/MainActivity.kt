@@ -1591,6 +1591,8 @@ private fun Root() {
         val touchNav = TouchNav(
             account = accountHeader,
             favoriteCount = favorites.size,
+            watchingCount = continueWatching.size,
+            watchedCount = watchedVideos.size,
             downloadCount = activeDownloads.size,
             updateVersion = offeredUpdate,
             onHome = { browseTo(BrowseSection.of(BrowseTab.Home)) },

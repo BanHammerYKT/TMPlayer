@@ -223,12 +223,22 @@ internal fun TvTopBar(
         }
         TvMenu(
             title = nav.account?.name.orEmpty(),
-            subtitle = nav.account?.username?.takeIf { it.isNotBlank() }?.let { "@$it" },
+            // "Your viewing" under the name, as the phone's and the desktop's menus head theirs;
+            // the rows below go to each list.
+            subtitle = listOfNotNull(
+                nav.account?.username?.takeIf { it.isNotBlank() }?.let { "@$it" },
+                s.profileSummary(
+                    s.formatter.number(nav.watchingCount),
+                    s.formatter.number(nav.watchedCount),
+                    s.formatter.number(nav.favoriteCount),
+                ),
+            ).joinToString("  ·  "),
             onDismiss = { profileOpen = false },
             actions = buildList {
                 add(MenuAction(s.browseTabFavourites, TmIcons.StarOutline, detail = nav.favoriteCount.takeIf { it > 0 }?.toString(), onSelect = go(nav.onFavourites)))
                 add(MenuAction(s.navDownloads, TmIcons.Download, detail = nav.downloadCount.takeIf { it > 0 }?.toString(), onSelect = go(nav.onDownloads)))
-                add(MenuAction(s.browseTabHistory, TmIcons.History, onSelect = go { nav.onHistory(HistoryTab.Continue) }))
+                add(MenuAction(s.browseTabHistory, TmIcons.History, detail = nav.watchingCount.takeIf { it > 0 }?.toString(), onSelect = go { nav.onHistory(HistoryTab.Continue) }))
+                add(MenuAction(s.profileWatched, TmIcons.Check, detail = nav.watchedCount.takeIf { it > 0 }?.toString(), onSelect = go { nav.onHistory(HistoryTab.Watched) }))
                 add(MenuAction(s.browseTabWatchLater, TmIcons.Clock, onSelect = go { nav.onHistory(HistoryTab.WatchLater) }))
                 // Settings, with the account at its top and Sign out at its foot, as on the phone.
                 add(MenuAction(s.navSettings, TmIcons.Settings, onSelect = go(nav.onSettings)))

@@ -154,6 +154,9 @@ internal class TouchNav(
     val favoriteCount: Int,
     /** Downloads in flight, badged on the Downloads row and on the picture. */
     val downloadCount: Int,
+    /** "Your viewing" over the picture's menu: videos part way through, and videos watched. */
+    val watchingCount: Int = 0,
+    val watchedCount: Int = 0,
     val updateVersion: String?,
     val onHome: () -> Unit,
     val onChats: () -> Unit,
@@ -410,8 +413,11 @@ internal fun TouchNavHost(
                     railRoom = railRoom,
                     favoriteCount = nav.favoriteCount,
                     downloadCount = nav.downloadCount,
+                    watchingCount = nav.watchingCount,
+                    watchedCount = nav.watchedCount,
                     updateVersion = nav.updateVersion,
                     onDismiss = { profileOpen = false },
+                    onWatched = { profileOpen = false; nav.onHistory(HistoryTab.Watched) },
                     onFavourites = { profileOpen = false; nav.onFavourites() },
                     onDownloads = { profileOpen = false; nav.onDownloads() },
                     onHistory = { profileOpen = false; nav.onHistory(HistoryTab.Continue) },
@@ -886,8 +892,11 @@ private fun ProfilePopover(
     railRoom: Dp,
     favoriteCount: Int,
     downloadCount: Int,
+    watchingCount: Int,
+    watchedCount: Int,
     updateVersion: String?,
     onDismiss: () -> Unit,
+    onWatched: () -> Unit,
     onFavourites: () -> Unit,
     onDownloads: () -> Unit,
     onHistory: () -> Unit,
@@ -954,6 +963,15 @@ private fun ProfilePopover(
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
             ) {
+                com.tmplayer.ui.components.ViewingSummary(
+                    watching = watchingCount,
+                    watched = watchedCount,
+                    starred = favoriteCount,
+                    onWatching = onHistory,
+                    onWatched = onWatched,
+                    onStarred = onFavourites,
+                )
+                HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
                 val rows = buildList<@Composable (Modifier) -> Unit> {
                     add { m -> PopoverRow(TmIcons.StarOutline, s.browseTabFavourites, favoriteCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onFavourites) }
                     add { m -> PopoverRow(TmIcons.Download, s.navDownloads, downloadCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onDownloads) }

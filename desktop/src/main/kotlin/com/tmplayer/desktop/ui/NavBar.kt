@@ -425,6 +425,8 @@ private fun BoxScope.ProfilePopover(state: ShellState, update: NavUpdate?, ancho
         )
     }
     val favourites by state.settings.favorites.collectAsState(initial = emptySet())
+    val watching by state.settings.continueWatching.collectAsState(initial = emptyList())
+    val watchedVideos by state.watched.watched.collectAsState(initial = emptyMap())
     val inFlight = rememberDownloadsInFlight()
     val half = POPOVER_WIDTH / 2
     Box(
@@ -464,6 +466,15 @@ private fun BoxScope.ProfilePopover(state: ShellState, update: NavUpdate?, ancho
                     }
                     .padding(vertical = 6.dp),
             ) {
+                com.tmplayer.ui.components.ViewingSummary(
+                    watching = watching.size,
+                    watched = watchedVideos.size,
+                    starred = favourites.size,
+                    onWatching = close { state.showHistory(HistoryTab.Continue) },
+                    onWatched = close { state.showHistory(HistoryTab.Watched) },
+                    onStarred = close { state.go(Destination.Favourites) },
+                )
+                HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), color = Tone.outline)
                 PopoverRow(TmIcons.StarOutline, s.browseTabFavourites, favourites.size.takeIf { it > 0 }?.toString(), Modifier.focusRequester(first), onClick = close { state.go(Destination.Favourites) })
                 PopoverRow(TmIcons.Download, s.navDownloads, inFlight.takeIf { it > 0 }?.toString(), onClick = close { state.go(Destination.Downloads) })
                 PopoverRow(TmIcons.History, s.browseTabHistory, null, onClick = close { state.showHistory(HistoryTab.Continue) })
