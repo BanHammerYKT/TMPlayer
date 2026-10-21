@@ -79,6 +79,13 @@ interface PlaybackEngine {
     /** What is actually playing, as label and value pairs for the Playback details panel. */
     fun details(): List<Pair<String, String>>
 
+    /**
+     * A picture of the video at [positionMs] for the timebar's hover, [width] by [height] at most,
+     * from a second decoder that reads only what is on the disk; null where there is none (that
+     * part not here yet, or an engine without one).
+     */
+    suspend fun previewFrame(positionMs: Long, width: Int, height: Int): androidx.compose.ui.graphics.ImageBitmap? = null
+
     fun close()
 }
 

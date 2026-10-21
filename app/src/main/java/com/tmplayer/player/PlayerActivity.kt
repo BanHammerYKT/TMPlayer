@@ -422,6 +422,81 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun uploadSize(): Long = if (playingQuality != 0 && uploadFileId != 0) uploadSizeBytes else fileSizeBytes
     private var resumeMs = 0L
 
+    /** When the press that opened this video happened, from the intent ([EXTRA_PRESSED_AT]); 0 unknown. */
+    private var pressedAt = 0L
+
+    /** When this player was created, for the timing log when the press is not known. */
+    private var openedAt = 0L
+
+    /** Whether this video's picture tracks were looked at yet ([pictureUnplayable]). */
+    private var pictureChecked = false
+
+    /**
+     * True, with the failure sheet up, when the video has a picture and this device can decode none
+     * of it: no decoder for the format at all (VC-1, an HEVC profile, AV1 on an older chip).
+     *
+     * Media3 raises no error for that: its track selector leaves an unsupported video track out and
+     * plays the rest, so the film played as sound over a black screen with nothing to say why. Now
+     * it stops and says the format is not playable here, with Open in another app where the chat
+     * allows it ([showError], not retryable). A track Media3 chose to leave out for another reason,
+     * while one is playable, is not this case; nor is a picture that is only cover art.
+     */
+    private fun pictureUnplayable(tracks: Tracks): Boolean {
+        if (pictureChecked || isAudio) return false
+        val video = tracks.groups.filter { group ->
+            group.type == C.TRACK_TYPE_VIDEO &&
+                (0 until group.length).none { group.getTrackFormat(it).sampleMimeType?.startsWith("image/") == true }
+        }
+        if (video.isEmpty()) return false
+        pictureChecked = true
+        if (video.any { it.isSelected }) return false
+        if (video.any { group -> (0 until group.length).any { group.isTrackSupported(it, true) } }) return false
+        val format = video.first().getTrackFormat(0)
+        Log.w("TMPlayer", "No decoder for the picture: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
+        player?.pause()
+        showError(if (format.height >= UHD_HEIGHT) L.playerErrorUhd(format.height.toString()) else L.playerErrorFormat, retryable = false)
+        return true
+    }
+
+    /** The last error Media3 reported, for "Copy details" on the failure sheet. */
+    private var lastPlaybackError: PlaybackException? = null
+
+    /**
+     * What "Copy details" puts on the clipboard: what the sheet says, the file, the device and the
+     * error underneath, plain text a report or a forum post can carry. Nothing about the account.
+     */
+    private fun errorDetails(): String = buildString {
+        appendLine("TMPlayer ${com.tmplayer.BuildConfig.VERSION_NAME} (${com.tmplayer.BuildConfig.VERSION_CODE})")
+        appendLine("${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})${if (FormFactor.isTv(this@PlayerActivity)) ", TV" else ""}")
+        appendLine("${statusTitle.text}: ${statusText.text}")
+        appendLine("File: ${mediaFileName.ifBlank { "?" }}, ${mediaMime.ifBlank { "?" }}, ${fileSizeBytes} bytes, ${durationSec} s, ${if (downloadedFile != null) "downloaded" else "streamed"}")
+        player?.videoFormat?.let { appendLine("Video: ${it.sampleMimeType} ${it.codecs.orEmpty()} ${it.width}x${it.height}") }
+        player?.audioFormat?.let { appendLine("Audio: ${it.sampleMimeType} ${it.codecs.orEmpty()} ${it.channelCount} ch ${it.sampleRate} Hz") }
+        lastPlaybackError?.let { e ->
+            appendLine("Error: ${e.errorCodeName} (${e.errorCode})")
+            var cause: Throwable? = e
+            var depth = 0
+            while (cause != null && depth < 4) {
+                appendLine("  ${cause.javaClass.simpleName}: ${cause.message.orEmpty().take(300)}")
+                cause = cause.cause
+                depth++
+            }
+        }
+    }
+
+    /** When the latest seek began, for its "seek to ready" log; 0 when none is pending. */
+    private var seekStartedAt = 0L
+
+    /** Logs press (or open) to first frame once per video, for the device pass to compare. */
+    private fun logFirstFrame() {
+        if (openedAt == 0L) return
+        val now = SystemClock.elapsedRealtime()
+        val fromPress = if (pressedAt > 0) "press to first frame ${now - pressedAt} ms, " else ""
+        Log.i(START_TAG, "${fromPress}open to first frame ${now - openedAt} ms (file $fileId, resume $resumeMs ms, ${if (downloadedFile != null) "download" else "stream"})")
+        openedAt = 0L
+        pressedAt = 0L
+    }
+
     /**
      * The A-B repeat marked from the menu, or null. Media3 has no loop of its own between two
      * points, so [loopWatch] looks at the position a few times a second and seeks back to the start
@@ -764,7 +839,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusReload?.text = L.commonReload
         statusOpenWith?.text = L.playerOpenInAnotherApp
         statusBack?.text = L.playerGoBack
-        statusLogs = PlayerErrorSheet.addSendLogs(statusOpenWith)
+        statusLogs = PlayerErrorSheet.addSendLogs(statusOpenWith, ::errorDetails)
         statusName = findViewById(R.id.status_name)
         loaderHost = PlayerLoaderHost(
             root = findViewById(R.id.player_root),
@@ -1013,6 +1088,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The video's own fields, from the intent that opened it or the one [continueUnseen] set. */
     private fun readItem(from: Intent) {
         fileId = from.getIntExtra(EXTRA_FILE_ID, 0)
+        pressedAt = from.getLongExtra(EXTRA_PRESSED_AT, 0L)
+        openedAt = SystemClock.elapsedRealtime()
+        // Read once: a later open of the same intent (a recreate) is not a press.
+        from.removeExtra(EXTRA_PRESSED_AT)
         chatId = from.getLongExtra(EXTRA_CHAT_ID, 0)
         messageId = from.getLongExtra(EXTRA_MESSAGE_ID, 0)
         mediaTitle = from.getStringExtra(EXTRA_TITLE).orEmpty()
@@ -1082,7 +1161,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // lands. Under "download the whole video first" there is no player to seek yet, so
         // [startPlayback] applies the same position as well; whichever arrives second sets it again.
         // A few seconds before the saved point, as Settings has it ([ResumeRewind]).
-        itemScope.launch {
+        val resumeRead = itemScope.launch {
             // Resume across devices, when on: the other devices' places in first, a couple of
             // seconds at most, so a video half watched on the phone opens there on the TV.
             com.tmplayer.data.ResumeSync.pullFor(settings)
@@ -1158,6 +1237,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 }
                 if (!allowedOnThisConnection(availability)) return@launch
                 if (!makeRoomForThisVideo(availability)) return@launch
+                // The head and the index on their way while the settings are read and the player
+                // is built ([StreamWarmup]); a no-op if the press already started it.
+                if (availability != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(fileId, fileSizeBytes)
                 holdFile(fileId)
                 claimTheWatchCache()
                 val streamsLow = boundTheStream(availability)
@@ -1202,6 +1284,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 syncDelays = runCatching { settings.syncDelays(chatId, messageId) }.getOrDefault(SyncDelays())
             }
             subtitleDelayUs = syncDelays.subtitleMs * 1000
+            // The saved position, given a moment more if it is still being read: set before
+            // prepare(), the first request goes to where the video resumes, not to byte 0 and
+            // then a seek away from it.
+            if (resumeRead.isActive) withTimeoutOrNull(RESUME_WAIT_MS) { resumeRead.join() }
             if (!session.isCurrent()) return@launch
             startPlayback(session.client)
         }
@@ -2626,6 +2712,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         offeredSkip = null
         hideSkipPill()
         creditsSkipped = false
+        pictureChecked = false
         hideNextUp()
         nextUpShown = false
         nextUpDismissed = false
@@ -2678,6 +2765,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
          * a phone, and the file's defaults on a series being watched for the first time.
          */
         override fun onTracksChanged(tracks: Tracks) {
+            if (pictureUnplayable(tracks)) return
             restoreResumeTracks(tracks)
             applySettingsSubtitles(tracks)
             rememberTracks(tracks)
@@ -2685,6 +2773,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
 
         override fun onRenderedFirstFrame() {
+            logFirstFrame()
             if (videoBackAskedAt == 0L) return
             Log.i("TMPlayer", "Background audio: picture back in ${SystemClock.elapsedRealtime() - videoBackAskedAt} ms")
             videoBackAskedAt = 0L
@@ -2739,6 +2828,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 // Playing again is the only proof that a recovery worked, so the budget is
                 // refilled here rather than when the retry is issued.
                 Player.STATE_READY -> {
+                    if (seekStartedAt > 0) {
+                        Log.i(START_TAG, "seek to ready ${SystemClock.elapsedRealtime() - seekStartedAt} ms (file $fileId)")
+                        seekStartedAt = 0L
+                    }
                     recoveryAttempts = 0
                     firstFrameReady = true
                     readChapters()
@@ -2775,6 +2868,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             reason: Int,
         ) {
             if (reason != Player.DISCONTINUITY_REASON_SEEK) return
+            seekStartedAt = SystemClock.elapsedRealtime()
             noteSeek(oldPosition.positionMs, newPosition.positionMs)
         }
 
@@ -2782,6 +2876,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // Worked out before anything else looks at the failure: the sheet shows the button
             // only when the other decoder can take this format.
             decoderPlan = DecoderSwitch.planFor(player, error)
+            lastPlaybackError = error
             // A file TDLib cannot size is a stale id, not a slow network: retrying the same id
             // only spins for a minute, while asking for the message again fixes it in a second.
             if (staleFileId(error) && resourceAgain(error, sameId = { if (!recoverFrom(error)) showError(friendlyError(error), retryable = !isHopeless(error)) })) return
@@ -5392,6 +5487,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                         val label = _episodes.value.nextTag?.label ?: com.tmplayer.data.SeriesShelf.tileTitle(next)
                         if (nextUpCard?.show(label, (until.coerceAtLeast(0) + 999) / 1000) == true) {
                             nextUpShown = true
+                            // Its head and index, so it starts as fast as this one ends.
+                            com.tmplayer.player.StreamWarmup.warm(next)
                             // The card and the pill share a corner; the card is the offer then.
                             hideSkipPill()
                             liftCornerOffers()
@@ -5941,6 +6038,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             val line = if (isRealDownload()) L.playerDownloadingRate(figure) else L.playerCachingRate(figure)
             // Telegram's own cap on an account without Premium (CP83): said, nothing offered.
             if (Td.speedLimitedNow()) "$line\n${L.playerSpeedLimited}" else line
+        } else if (slow && !downloadComplete) {
+            // Nothing measurable arriving yet: said quietly, long before the stall sheet's minute.
+            L.connectSlowTitle
         } else {
             null
         }
@@ -6581,10 +6681,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         player?.release()
         player = null
         // Only once the player, and the reads it had waiting, are gone: a read that asked TDLib
-        // again after [stopDownload] would otherwise have asked for the rest of the film unbounded.
-        // That late request is stopped here too.
-        // The same for "Save mobile data": a late read must not ask for the rest of the film.
-        if (letGoOfStreamBounds()) stopDownload()
+        // again after [stopDownload] would otherwise have asked for the rest of the film unbounded,
+        // and went on fetching with nobody watching. Asked again whatever the stream's bounds (it
+        // used to be only for Low storage mode and "Save mobile data"); the byte window refuses
+        // any request once closed as well (TdByteWindow.shut).
+        letGoOfStreamBounds()
+        stopDownload()
         super.onDestroy()
     }
 
@@ -6777,6 +6879,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     companion object {
         private const val EXTRA_FILE_ID = "file_id"
+
+        /** `SystemClock.elapsedRealtime()` when Play was pressed, for the start timing log. */
+        private const val EXTRA_PRESSED_AT = "pressed_at"
+
+        /** The log tag of the start and seek timings. */
+        private const val START_TAG = "PlayerStart"
+
+        /** How long the player waits for a saved position still being read before it starts anyway. */
+        private const val RESUME_WAIT_MS = 400L
         private const val EXTRA_CHAT_ID = "chat_id"
         private const val EXTRA_MESSAGE_ID = "message_id"
         private const val EXTRA_TITLE = "title"
@@ -6810,8 +6921,16 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         private const val BUFFER_MIN_MS = 15_000
         private const val BUFFER_MAX_MS = 50_000
-        private const val BUFFER_PLAYBACK_MS = 2_500
-        private const val BUFFER_REBUFFER_MS = 5_000
+        /**
+         * What has to be buffered before the first frame plays: 1 s, down from Media3's 2.5 s,
+         * since TDLib keeps filling at its own pace whatever the player holds and a stream that
+         * cannot keep a second ahead is rebuffering either way. Device check: a slow line should
+         * start sooner, not stutter more (see the start timing log, PlayerStart).
+         */
+        private const val BUFFER_PLAYBACK_MS = 1_000
+
+        /** After a stall, more than the start asks, so a struggling line does not stall again at once. */
+        private const val BUFFER_REBUFFER_MS = 4_000
         private const val TARGET_BUFFER_BYTES = 20 * 1024 * 1024
 
         /** See the note on the sink in [buildPlayer]: about two seconds of AC-3 bitstream. */
@@ -7010,6 +7129,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 // A film's other copies go with it, for the player's copy button.
                 if (item.versions.size > 1) CopyHandoff.offer(item.versions, mapOf(item.chatId to chatTitle).filterValues { it.isNotBlank() })
                 putExtra(EXTRA_FILE_ID, item.fileId)
+                putExtra(EXTRA_PRESSED_AT, SystemClock.elapsedRealtime())
                 putExtra(EXTRA_SIZE, item.sizeBytes)
                 putExtra(EXTRA_DURATION, item.durationSec)
                 putExtra(EXTRA_CHAT_ID, item.chatId)

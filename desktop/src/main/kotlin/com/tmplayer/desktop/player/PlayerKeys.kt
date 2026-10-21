@@ -24,6 +24,9 @@ sealed interface PlayerAction {
     /** Subtitles one [com.tmplayer.player.SyncDelays.STEP_MS] later ([direction] 1) or earlier (-1). */
     data class SubtitleDelay(val direction: Int) : PlayerAction
 
+    /** Subtitles one size bigger (1) or smaller (-1), mpv's Shift+G and Shift+F. */
+    data class SubtitleSize(val direction: Int) : PlayerAction
+
     /** The sound one step later or earlier, as [SubtitleDelay]. */
     data class AudioDelay(val direction: Int) : PlayerAction
     data object SpeedUp : PlayerAction
@@ -183,7 +186,8 @@ object PlayerKeys {
             Key.Comma -> if (shift) PlayerAction.SpeedDown else PlayerAction.FrameStep(forward = false)
             Key.Period -> if (shift) PlayerAction.SpeedUp else PlayerAction.FrameStep(forward = true)
             Key.M -> PlayerAction.ToggleMute
-            Key.F -> PlayerAction.ToggleFullscreen
+            // Shift+F and Shift+G: smaller and bigger subtitles, as in mpv; F alone is fullscreen.
+            Key.F -> if (shift) PlayerAction.SubtitleSize(-1) else PlayerAction.ToggleFullscreen
             // mpv's screenshot keys: s with the subtitles, S the bare picture. The subtitle cycle
             // that S had before moved to V, mpv's own and already its alias.
             Key.S -> PlayerAction.Screenshot(withSubtitles = !shift)
@@ -205,7 +209,7 @@ object PlayerKeys {
             Key.I -> PlayerAction.Stats
             // "Go past": S, the obvious letter, has been mpv's screenshot key since before there
             // was anything to skip, and G was free in both tables.
-            Key.G -> if (shift) null else PlayerAction.SkipSegment
+            Key.G -> if (shift) PlayerAction.SubtitleSize(1) else PlayerAction.SkipSegment
             Key.Slash -> if (shift) PlayerAction.ShortcutSheet else null
             else -> null
         }
@@ -262,6 +266,7 @@ object PlayerKeys {
                 L.keysRowSubtitles to L.keysSubtitlesKeys,
                 L.keysRowAudio to L.keysAudioKeys,
                 L.keysRowSubtitleDelay to "Z, X",
+                L.keysRowSubtitleSize to L.keysSubtitleSizeKeys,
                 L.keysRowAudioDelay to L.keysAudioDelayKeys,
             ),
             L.keysGroupWindow to listOf(

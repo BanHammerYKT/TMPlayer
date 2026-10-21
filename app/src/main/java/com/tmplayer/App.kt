@@ -65,6 +65,17 @@ class App : Application() {
                 AppLocales.apply(this@App, saved)
             }
         }
+        // The stream warm-up stays out of Low storage mode and of "Save mobile data" on a metered
+        // line, whatever asks for it ([com.tmplayer.player.StreamWarmup]).
+        backgroundScope.launch {
+            val store = SettingsStore(this@App)
+            val tv = com.tmplayer.data.FormFactor.isTv(this@App)
+            kotlinx.coroutines.flow.combine(store.lowStorageMode, store.saveMobileData) { low, save -> low to save }
+                .collect { (low, save) ->
+                    val saving = com.tmplayer.data.MeteredPolicy.saveMobileDataInForce(save, tv)
+                    com.tmplayer.player.StreamWarmup.allowed = { !low && !(saving && NetworkMonitor.metered.value) }
+                }
+        }
         // Lighter pictures and Reduce motion (CP68), from the stored choice and whenever it changes.
         // Before the promo return, so the fixture shows a screen as a low-end device draws it.
         backgroundScope.launch {

@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import kotlinx.coroutines.withContext
 import org.openani.mediamp.PlaybackEvent
 import org.openani.mediamp.features.Screenshots
@@ -676,6 +678,30 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
             h.string("mpv-version")?.let { add("mpv" to it) }
             h.string("ffmpeg-version")?.let { add("FFmpeg" to it) }
         }
+    }
+
+    /**
+     * mediamp's frame preview: a second mpv on the same media, seeking to keyframes for the
+     * timebar's hover. Its reads go through [PreviewReads], so a stream's preview decodes only what
+     * is on the disk and never moves the playing video's download.
+     */
+    private val previewLock = kotlinx.coroutines.sync.Mutex()
+
+    override suspend fun previewFrame(positionMs: Long, width: Int, height: Int): androidx.compose.ui.graphics.ImageBitmap? {
+        if (closed || !_state.value.opened) return null
+        val preview = runCatching { player.features[org.openani.mediamp.features.FramePreview] }.getOrNull() ?: return null
+        val frame = previewLock.withLock {
+            PreviewReads.active.incrementAndGet()
+            try {
+                runCatching { preview.getPreviewFrame(positionMs, width, height) }.getOrNull()
+            } finally {
+                PreviewReads.active.decrementAndGet()
+            }
+        } ?: return null
+        if (frame.width <= 0 || frame.height <= 0 || frame.pixels.size < frame.width * frame.height) return null
+        val image = java.awt.image.BufferedImage(frame.width, frame.height, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        image.setRGB(0, 0, frame.width, frame.height, frame.pixels, 0, frame.width)
+        return image.toComposeImageBitmap()
     }
 
     override fun close() {

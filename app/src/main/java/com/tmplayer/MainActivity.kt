@@ -1043,6 +1043,9 @@ private fun Root() {
             }
             val local = runCatching { Td.localFileAvailability(item.fileId) }
                 .getOrDefault(LocalFileAvailability.Missing)
+            // A stream: its head and index start coming now, while the room is measured and the
+            // player is built ([com.tmplayer.player.StreamWarmup]).
+            if (local != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
             val canReachTelegram = telegramConnected || networkStatus != NetworkStatus.Offline
             if (!canReachTelegram && local != LocalFileAvailability.Complete) {
                 toast(
