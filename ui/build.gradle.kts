@@ -42,6 +42,39 @@ val generateNotices = tasks.register("generateNotices") {
     }
 }
 
+// The browser build (web/, CP92) draws the very screens the desktop draws: src/shared/kotlin and
+// the desktop's own platform pieces in src/jvmMain/kotlin, which are Compose Multiplatform and
+// Skia already, copied into the wasmJs compilation with the few JVM spellings that have a plain
+// Kotlin twin rewritten (as :core's coreWebSources does). The pieces that differ in a browser
+// (fonts, links, trailers, setup pictures) are in src/wasmJsMain/kotlin and replace the copies.
+val webOwnPieces = setOf(
+    "com/tmplayer/ui/theme/FallbackFonts.kt",
+    "com/tmplayer/ui/online/TrailerOpener.kt",
+    "com/tmplayer/ui/onboarding/SetupImageDesktop.kt",
+    "com/tmplayer/ui/auth/QrBitmap.kt",
+    "com/tmplayer/ui/theme/ReducedMotion.kt",
+    "com/tmplayer/ui/components/IconTipDesktop.kt",
+    "com/tmplayer/ui/onboarding/DeviceFitDesktop.kt",
+    "com/tmplayer/data/ThumbnailDecoding.kt",
+)
+
+val uiWebSources = tasks.register<Sync>("uiWebSources") {
+    from(layout.projectDirectory.dir("src/shared/kotlin"))
+    from(layout.projectDirectory.dir("src/jvmMain/kotlin")) { exclude(webOwnPieces) }
+    into(layout.buildDirectory.dir("ui-web/kotlin"))
+    val localeCase = Regex("""\.(lowercase|uppercase)\((java\.util\.)?Locale\.(ROOT|US|ENGLISH)\)""")
+    filter { line ->
+        val text = line
+            .replace("Dispatchers.IO", "Dispatchers.Default")
+            .replace(localeCase, ".$1()")
+        if (text.trim() == "@Synchronized" || text.trim() == "@Volatile" || text.trim() == "import kotlinx.coroutines.runBlocking") {
+            ""
+        } else {
+            text.replace("@Synchronized ", "").replace("@Volatile ", "")
+        }
+    }
+}
+
 kotlin {
     android {
         namespace = "com.tmplayer.ui"
@@ -49,6 +82,15 @@ kotlin {
         minSdk = 26
     }
     jvm()
+    // The browser (web/, CP92): the same shared screens, compiled against Compose Multiplatform
+    // for Web as the desktop compiles them against Compose Multiplatform for the JVM.
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
+    wasmJs {
+        browser()
+        compilerOptions {
+            optIn.add("kotlin.js.ExperimentalWasmJsInterop")
+        }
+    }
 
     sourceSets {
         commonMain {
@@ -56,7 +98,6 @@ kotlin {
         }
         commonMain.dependencies {
             api(project(":core"))
-            implementation(libs.zxing.core)
             // Multiplatform itself, at the version :app already uses, so the chat list and media
             // view models are shared as they are.
             api(libs.androidx.lifecycle.viewmodel)
@@ -69,6 +110,7 @@ kotlin {
                 api(libs.androidx.compose.foundation)
                 api(libs.androidx.compose.material3)
                 implementation(libs.androidx.activity.compose)
+                implementation(libs.zxing.core)
             }
         }
         jvmMain {
@@ -78,6 +120,17 @@ kotlin {
                 api(libs.cmp.ui)
                 api(libs.cmp.foundation)
                 api(libs.cmp.material3)
+                implementation(libs.zxing.core)
+            }
+        }
+        wasmJsMain {
+            kotlin.srcDir(uiWebSources)
+            dependencies {
+                api(libs.cmp.runtime)
+                api(libs.cmp.ui)
+                api(libs.cmp.foundation)
+                api(libs.cmp.material3)
+                implementation(libs.kotlinx.browser)
             }
         }
         jvmTest.dependencies {

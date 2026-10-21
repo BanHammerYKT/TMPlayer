@@ -97,7 +97,7 @@ object Thumbnails {
 
         val path = withContext(Dispatchers.IO) { downloadThumbnail(fileId) } ?: return null
         return withContext(Dispatchers.IO) {
-            runCatching { decodeImageFile(path, lighter(MAX_THUMBNAIL_WIDTH)) }.getOrNull()?.also { cache.put(key, it) }
+            runCatching { decodeTdImage(fileId, path, lighter(MAX_THUMBNAIL_WIDTH)) }.getOrNull()?.also { cache.put(key, it) }
         }
     }
 
@@ -287,15 +287,22 @@ internal class SizedLru<K : Any, V : Any>(
     private val maxSize: Int,
     private val sizeOf: (V) -> Int,
 ) {
-    private val map = LinkedHashMap<K, V>(0, 0.75f, true)
+    // Insertion ordered, and a read moves the entry to the end: the order a LinkedHashMap in
+    // access order keeps, which only the JVM's has.
+    private val map = LinkedHashMap<K, V>()
     private var size = 0
 
     @Synchronized
-    fun get(key: K): V? = map[key]
+    fun get(key: K): V? {
+        val value = map.remove(key) ?: return null
+        map[key] = value
+        return value
+    }
 
     @Synchronized
     fun put(key: K, value: V) {
-        map.put(key, value)?.let { size -= sizeOf(it) }
+        map.remove(key)?.let { size -= sizeOf(it) }
+        map[key] = value
         size += sizeOf(value)
         trimToSize(maxSize)
     }

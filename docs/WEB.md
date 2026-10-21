@@ -1,11 +1,166 @@
 # TMPlayer in the browser (CP92, web.tmplayer.org)
 
-Status: planned for later, not started. Nothing of it is in the repository. A phase 1 prototype
-was built on 2026-10-19 to settle the risky parts and then set aside on the user's word; what it
-proved is under "Findings". This document is the plan to build it from.
+Status (2026-10-21): being built, in the `web/` module, on branch `worktree-agent-a3db7b7ec854ecc21`
+until it is merged. A signed in session runs against the real Telegram with the app's own api_id:
+QR sign in, the chat list, a chat's video grid, and playback of real MP4 and MKV files from a
+channel, seeking to 90 % of a 2 hour MKV with the page's JavaScript heap at 78 MB. Phase by phase
+status is in the table under "Phases"; what is still to do is under "Open work".
 
 Goal: as much of the app as a browser allows, for the videos already in the viewer's own Telegram
 chats, at web.tmplayer.org, a static site with no server of ours in the path.
+
+## What is built
+
+| Piece | Where | State |
+| --- | --- | --- |
+| Gradle module, Kotlin/Wasm with Compose for Web | `web/build.gradle.kts` | dev and production tasks; Node from the machine, Binaryen from the settings repository |
+| tdweb 1.8.64, pinned by SHA-256 | `fetchTdweb` | fetched from DIBgram/tdweb at commit `af27a3b`, checked file by file |
+| Sparse storage for TDLib's files | `web/tdweb/sparse-fs.js`, `patchTdweb` | OPFS through FileSystemSyncAccessHandle in tdweb's worker, memory chunks with a ceiling where OPFS is missing; three exact text edits over the verified worker |
+| The JSON bridge | `web/src/wasmJsMain/resources/td-bridge.js`, `web/.../td/WebTd.kt` | TDLib JSON in and out, windowed streaming reads, warm up, stop |
+| `:core` pure source set with a wasmJs target | `core/src/pureMain/kotlin` | the catalogs, plural rules, number and date formatting (`PlatformText`: the JDK on the JVM, `Intl` in the browser), `Decimal`, the sign in flow (`AuthFlow`), a QR encoder checked against ZXing; the rest of `:core` moves in phase 2 |
+| Sign in | `web/.../td/WebAuth.kt`, `ui/SignIn.kt` | QR (default), phone, code, email, email code, password, start over, another tab holding TDLib |
+| Chat list, chat grid | `web/.../data/WebChats.kt`, `WebVideos.kt`, `ui/Shell.kt`, `ui/ChatGrid.kt` | from TDLib's updates; Telegram's video and document filters merged; restricted and self destructing messages left out |
+| Player | `web/player/` | two engines (below), TMPlayer's controls, the desktop's keys, the phone's gestures, Media Session, wake lock |
+| Service Worker | `web/src/wasmJsMain/resources/sw.js` | byte range streaming for the browser's own video, the offline shell |
+| PWA | `manifest.webmanifest`, `index.html` | installable; iOS web app meta and safe areas; an install offer in the app |
+| Local tests | `web/player/test/` | the player on generated files in headless Chromium, both engines, start and seek |
+
+## iPhone first
+
+The user's main reason for the web app is iPhone users (2026-10-21), so iOS Safari, installed to
+the Home Screen, is the first target, ahead of desktop Chromium. Each decision below was checked
+against WebKit's own sources on 2026-10-21.
+
+| Decision | Why, with the source |
+| --- | --- |
+| **iOS 18.2 is the floor.** Kotlin/Wasm needs WebAssembly GC, which Safari has from 18.2 (exception handling from 15.2). | [WebKit features in Safari 18.2](https://webkit.org/blog/16301/webkit-features-in-safari-18-2/), [Kotlin/Wasm browser support](https://kotlinlang.org/docs/wasm-configuration.html). An older iPhone is told to update or use the app. |
+| **Native `<video>` first on iOS.** MP4 and MOV with H.264 or HEVC, and AC-3 / E-AC-3, FLAC and ALAC sound, play in Safari's own player, which is the only way to full screen on an iPhone, AirPlay, the lock screen and the hardware decoders. | [Apple's HLS authoring spec](https://developer.apple.com/documentation/http-live-streaming/hls-authoring-specification-for-apple-devices) for the codecs; element full screen is iPad only, an iPhone has only `webkitEnterFullscreen` on a video ([New video policies for iOS](https://webkit.org/blog/6784/new-video-policies-for-ios/)). WebM with VP8/VP9 plays from iOS 17.4 (Safari 17.4 release notes). |
+| **The Service Worker answers byte ranges exactly as WebKit asks.** WebKit opens with `Range: bytes=0-1` and needs a real 206 with `Content-Range`; a 200 fails. | [WebKit bug 229413](https://bugs.webkit.org/show_bug.cgi?id=229413), [bug 284443](https://bugs.webkit.org/show_bug.cgi?id=284443); the old Service Worker media bug is fixed ([184447](https://bugs.webkit.org/show_bug.cgi?id=184447)). Reliability inside an installed web app is not documented: it is on the device test plan, and ManagedMediaSource is the fallback if it fails there. |
+| **ManagedMediaSource for what Safari cannot open (MKV and TS with H.264 or HEVC)**, repacked to fragmented MP4 in the page, so the picture stays in the native player. An iPhone has no classic MediaSource. MMS needs `disableRemotePlayback` or an AirPlay alternative. | [Safari 17.1](https://webkit.org/blog/14735/webkit-features-in-safari-17-1/) (MMS on iPhone), MDN compatibility data (MediaSource iPad only), Safari 17 release notes (the AirPlay condition). Stall on a `timestampOffset` change: [bug 262886](https://bugs.webkit.org/show_bug.cgi?id=262886). Not built yet (Open work); until then such files play in movi-player on the canvas, which works on iOS 18.2 and later. |
+| **movi-player (FFmpeg in wasm) only as the last resort on iOS**: DTS, TrueHD and pictures with no native decoder. Its audio goes through FFmpeg and Web Audio; WebCodecs `AudioDecoder` is only in Safari 26. | Safari 26 release notes (AudioDecoder), Safari 16.4 (VideoDecoder), 17.4 (HEVC in WebCodecs). |
+| **Small, strict memory ceilings on iOS.** There is no published per tab limit; WebKit kills a web content process past a soft limit under pressure, and wasm memory above a few hundred MB is unreliable on iOS. TDLib's downloads go to OPFS, never to memory; the memory fallback stops at 48 MiB on phones; the player's read cache is 12 MiB on phones; the download window ahead of the playhead is 24 MiB. | [bug 279637](https://bugs.webkit.org/show_bug.cgi?id=279637) (jetsam), [bug 269777](https://bugs.webkit.org/show_bug.cgi?id=269777) and [269937](https://bugs.webkit.org/show_bug.cgi?id=269937) (wasm memory). |
+| **OPFS with synchronous handles in tdweb's worker.** In Safari since 15.2. The quota (Safari 17 and on) is up to 60 % of the disk for the browser's origin, the same for a Home Screen web app, which is also kept out of the 7 day deletion of script written data. `navigator.storage.persist()` is granted by heuristics that favour Home Screen apps; the app asks once installed. | Safari 15.2 release notes, [Updates to storage policy](https://webkit.org/blog/14403/updates-to-storage-policy/), [Full third party cookie blocking and more](https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/). |
+| **No SharedArrayBuffer path.** Threaded FFmpeg would need COOP and COEP; nothing in the app depends on them, and TDLib already runs in its own worker (unlike reelbox's mtcute, which shares the main thread with the decoder). | Safari 15.2 (SharedArrayBuffer with isolation). |
+| **Picture in picture is hidden in an installed web app on iOS**, where `requestPictureInPicture()` fails with NotSupportedError; in Safari's tab it is offered. | [WebKit bug 303885](https://bugs.webkit.org/show_bug.cgi?id=303885), open on iOS 26.6. The button shows only where `webkitSupportsPresentationMode` says yes. |
+| **Notifications through Web Push only once installed** (iOS 16.4 and on, asked for after a tap); Declarative Web Push from 18.4. | [Web Push for web apps on iOS](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/), [Meet Declarative Web Push](https://webkit.org/blog/16535/meet-declarative-web-push/). Not built yet: the app's notices for a new episode need a push service, which a static site has not got; the closest is a notice while a tab is open. |
+| **The install path.** iOS has no install prompt: the app shows "Share, then Add to Home Screen". From iOS 26 every site added to the Home Screen opens as a web app. The manifest's `display: standalone`, the `apple-mobile-web-app-*` meta tags, an Apple touch icon and `viewport-fit=cover` with the canvas kept inside `env(safe-area-inset-*)`; `100dvh` (Safari 15.4). Orientation cannot be locked on iOS. | [Safari 26](https://webkit.org/blog/17333/webkit-features-in-safari-26-0/), Apple's archived web app guide for the meta tags, MDN for the rest. |
+| **Lock screen and background.** Media Session for the title, artwork and buttons (Safari 15); audio keeps playing with the screen locked in a Home Screen app ([bug 232909](https://bugs.webkit.org/show_bug.cgi?id=232909), fixed); lock screen buttons have stopped answering in standalone mode before ([bug 261858](https://bugs.webkit.org/show_bug.cgi?id=261858)), so it is on the device test plan. Screen Wake Lock works in a Home Screen app from 18.4. `navigator.vibrate` does not exist on iOS: haptics are skipped quietly. | Safari release notes as linked. |
+
+The device pass is `web/IOS-TEST-PLAN.md`.
+
+## Two shells, one app
+
+Phone users get the phone UI and desktop users the desktop UI (user, 2026-10-21), and tablets
+"whatever is recommended". The web app therefore decides layout and input separately, at runtime
+and again on every resize or rotation, without losing its place:
+
+- **Layout, by Material's window size class on the window's width**: compact (under 600 dp) is
+  the phone layout with the floating bottom bar; medium (600 to 840 dp) is the phone layout with
+  the navigation rail and wider grids; expanded (840 dp and over) is the wide, desktop style
+  layout. This is the Android app's own rule: its touch shell turns the bottom bar into a rail
+  from 600 dp (`app/.../browse/TouchNav.kt`, `RAIL_FROM`), and it has no separate tablet layout
+  beyond that, so the web app matches it and adds the wide layout at 840 dp.
+- **Input, by the pointer, independent of layout**: on a coarse pointer (phones, iPad, Android
+  tablets) every layout keeps touch behaviour: 44 pt targets, nothing reachable by hover alone,
+  the phone's player gestures, bottom sheets where a finger needs room. A fine pointer gets hover
+  states, popovers and the keyboard shortcuts; an iPad with a trackpad or keyboard gets both.
+- Split View and Slide Over on an iPad change the window size, which is re-read like a rotation.
+
+Built so far: the bottom bar and the rail by width, the player's touch and mouse behaviour by
+pointer. The phone screens themselves (Home, chat pages, pickers and sheets) live in `app/` today;
+the plan is to move them into `:ui` common code so Android and the web share them, which waits
+for the coordinator's go ahead, as the desktop screens' move does.
+
+## Playback as built
+
+Two engines under one set of controls (`web/player/player.js`):
+
+1. **The browser's own `<video>`** when `canPlayType` says yes to the container and the name's
+   codec markers (HEVC, AV1, AC-3 / E-AC-3, DTS, TrueHD): MP4 and WebM nearly everywhere, and on
+   Apple devices HEVC and AC-3 in MP4. Fed by the Service Worker's byte ranges (`stream/<fileId>`,
+   2 MiB answers at most). A video that errors, or an MP4 whose sound Chromium cannot decode
+   (no audio decoded after 4 s of a video over a minute long), moves to the second engine at the
+   same moment.
+2. **movi-player 0.4.1** (FFmpeg in wasm with WebCodecs, drawing on a canvas, sound through Web
+   Audio) for everything else: MKV, AVI, TS, HEVC without a hardware decoder, E-AC-3, DTS and
+   TrueHD. Fed straight from TDLib by `TgSource` (its SourceAdapter contract). When WebCodecs
+   cannot decode the picture it reports `canTrySoftware`, and the player switches to FFmpeg's
+   software decoders and carries on from the same moment. A picture too heavy to decode in time
+   (software HEVC 10 bit at 1080p and up) gets an honest "This video needs the TMPlayer app" with
+   "Play anyway", never a silent spinner.
+
+The streaming read path (`td-bridge.js`) follows the apps' TdByteWindow: TDLib is pointed at the
+byte the player wants with a window ahead of it (24 MiB on phones, 64 MiB elsewhere), reads wait
+for TDLib's file updates, and the window moves as the reads do. A card held under the pointer or
+the focus for 250 ms, and the next episode 30 s before the end, get their head (2 MiB) and their
+last megabyte fetched ahead, which reelbox measured as the largest single win (a 2.6 GB MKV's
+first frame 4.2 s after the click). Read-ahead stops when the video closes.
+
+TDLib's files sit on OPFS in tdweb's worker (`sparse-fs.js`): each part is written at its offset,
+nothing is held in memory, and what was downloaded survives a reload, so a video played before
+opens from the disk. Tested on the real account: a 1 GB MKV opened from the head and the tail
+read at 1032 MB, and a 2 hour MKV sought to 90 % with the JavaScript heap at 78 MB.
+
+## Libraries and sizes
+
+| Library | Licence | Loaded | Size on the wire (Brotli) |
+| --- | --- | --- | --- |
+| Compose Multiplatform 1.12 for Web, Skiko | Apache-2.0 | always | about 2.6 MB (prototype measure) |
+| The app's own wasm | | always | about 0.9 MB (prototype measure; larger as screens arrive) |
+| tdweb 1.8.64 (TDLib, OpenSSL 1.1.0l, localforage, zlib) | BSL-1.0, OpenSSL / SSLeay, Apache-2.0, zlib | always | about 3.3 MB |
+| Noto Sans (Latin, Cyrillic, Greek) | OFL-1.1 | always | 0.7 MB uncompressed TTF |
+| Noto CJK, Indic and Arabic subsets, Noto Color Emoji | OFL-1.1 | after the first paint | up to 14 MB, the UI language's first |
+| movi-player 0.4.1 slim (`element.slim.js`) | Apache-2.0 | only when a video needs it | 0.91 MB |
+| its `movi.wasm` (FFmpeg libavformat/libavcodec, dav1d) | LGPL-2.1+, BSD-2-Clause | with it | 1.71 MB |
+
+movi-player's package says only Apache-2.0 and strips FFmpeg's licence line, so the LGPL notice and
+the FFmpeg source offer are ours to ship: THIRD_PARTY_NOTICES "Web" section, and a CI build of
+`movi.wasm` from its build script (Open work) so the exact source can be pointed to.
+
+## Feature parity
+
+Every feature reaches every platform (user, 2026-10-21): what the apps have the web app gets, and
+what the web app gains goes to the apps. "Built" is in the branch now; "Planned" is designed and
+waiting (mostly for the `:core` and `:ui` moves); where a browser cannot, the closest equivalent.
+
+| Feature | Android phone | TV | Desktop | Web, phone | Web, desktop |
+| --- | --- | --- | --- | --- | --- |
+| QR sign in | yes | yes | yes | Built | Built |
+| Phone, code, email code, password | yes | yes | yes | Built | Built |
+| Country picker, paste, resend timer, recovery, account reset | yes (sign in branch) | yes | yes | Planned (shared core) | Planned |
+| Proxies | yes | yes | yes | MTProto proxy only if tdweb's WebSocket transport allows; SOCKS5/HTTP impossible from a page | same |
+| Chat list | yes | yes | yes | Built | Built |
+| Folders, archive, favourites, pinned | yes | yes | yes | Planned (data built) | Planned |
+| Chat grid | yes | yes | yes | Built | Built |
+| Sort, size filter, search in a chat | yes | yes | yes | Planned | Planned |
+| Shows: seasons, episodes, copies, pieces | yes | yes | yes | Planned (with MediaItem in pure core) | Planned |
+| Home: carousel, Continue watching, rows | yes | yes | yes | Planned | Planned |
+| Search with @username and filters | yes | yes | yes | Planned | Planned |
+| Online metadata (TMDB, TVmaze) | yes | yes | yes | Planned (fetch; both send CORS headers) | Planned |
+| Watched, Watch later, favourites, history | yes | yes | yes | Watched and resume built locally; the rest Planned | same |
+| Resume across devices (Saved Messages) | yes | yes | yes | Planned | Planned |
+| Kids lock and PIN | yes | yes | yes | Planned | Planned |
+| Themes, Black | yes | yes | yes | Built (system, dark, light, black) | Built |
+| 21 languages | yes | yes | yes | Built (catalogs fetched, RTL) | Built |
+| Player: speed, audio and subtitle tracks, subtitle delay | yes | yes | yes | Built | Built |
+| Player: chapters, frame step, picture shape | yes | yes | yes | Built | Built |
+| Player: keyboard shortcuts as the desktop | | | yes | | Built |
+| Player: double tap seek, hold for 2x, swipe volume and brightness | yes | | | Built (brightness as a dimming layer; volume swipe not on iOS, which keeps volume to its buttons) | |
+| Volume boost, night mode | yes | yes | yes | Built (compressor and gain; movi's levelling) | Built |
+| Bookmarks, A-B repeat, sleep timer, skip intro | yes | yes | yes | Planned | Planned |
+| Online subtitles | yes | yes | yes | Planned | Planned |
+| Picture subtitles (PGS, VobSub), styled ASS | yes | yes | yes | Planned (JASSUB for ASS; PGS listed, labelled, never "no subtitles") | Planned |
+| Picture in picture | yes | | yes (mini player) | Built where the browser allows; hidden in an installed iOS app (bug 303885) | Built |
+| Casting | yes | | yes | AirPlay from Safari's own player; Remote Playback where offered | Remote Playback (Chrome) |
+| Lock screen controls | yes | | MPRIS, SMTC | Built (Media Session) | Built |
+| Notifications | yes | yes | yes | Web Push needs a push server: a notice while a tab is open | same |
+| Downloads for offline | yes | yes | yes | What was played stays on OPFS and plays again offline; no Downloads folder | same |
+| Warm a video on hover or focus, and the next episode | partly | partly | partly | Built | Built |
+| Installable | Play, APK | stores | packages | Built (Add to Home Screen) | Built (Chromium install) |
+
+Built for the web that the apps lack, to take back to them: head and tail warm up on hover or
+focus and for the next episode 30 s ahead (reelbox's largest measured win); stopping read-ahead
+the moment a video closes; the honest "too heavy to decode here" notice with Play anyway.
 
 ## Findings from the prototype (2026-10-19)
 
@@ -274,6 +429,11 @@ tray, self update (the site is the update), the LAN cast server.
 
 ## Phases
 
+Status on 2026-10-21: phase 1 done except the movement of the screens into `:ui` it never needed;
+phase 2 under way (`:core` pure set started, a fork moving the rest; the screens in `web/` meanwhile);
+phase 3 partly (the player, the sparse storage, movi-player in place of the planned repack and
+WebCodecs AC-3 conversion, which reelbox showed are not needed); phase 4 partly (PWA, offline shell).
+
 | Phase | Deliverables | Acceptance checks | Effort |
 | --- | --- | --- | --- |
 | 1. Proof | `web/` module (Kotlin/Wasm, Compose for Web); tdweb 1.8.64 pinned by hash; the JSON bridge; QR and phone sign in mapped onto `AuthState`; chat list; one chat's video grid with titles from MediaName, sizes and thumbnails; MP4 through the Service Worker; the codec check and "needs the app"; `:core` pure source set with a wasmJs target; dev and production Gradle tasks | `./gradlew build` green with `:core` wasmJs tests on Node; `node --test` range tests; Playwright with `/usr/bin/chromium-browser` plays and seeks a generated 30 MB MP4 and WebM through the worker; the sign in screen shows a QR code at 1280 and 390 wide; a real sign in by the user ends on the chat list and plays an MP4 from a chat | 3 to 4 days (about half was done in the prototype) |
@@ -308,6 +468,23 @@ page's script, exactly as they are in the APK.
 - **Safari:** Service Worker streaming to `<video>` works, but storage eviction after 7 days of no
   use (ITP) means signing in again; WebCodecs audio is partial.
 - **Size:** about 7 MB compressed on first load (Skiko alone is 2.6 MB); a slow phone waits.
+
+## Open work
+
+- `:core` into the pure set (MediaItem, the shelf rules, the stores behind a key value interface,
+  HTTP behind an interface, `TdGateway`), then the web screens on it: Home, shows, Search, Watch
+  later, favourites, the kids lock, online metadata. A fork is on it.
+- The `:ui` move (desktop screens, then the phone screens) once the coordinator says go.
+- The sign in branch's additions (country picker, paste, resend timer, recovery, reset, proxy) on
+  the web through the shared core.
+- MKV and TS repacked to fragmented MP4 into ManagedMediaSource on iOS, so the picture stays in
+  Safari's player; DTS and TrueHD sound converted where native video is kept.
+- movi-player's first positioning bisects about half of the MKVs before frame 0 (reelbox's
+  measure): find the call, or take the repack path for MKV with H.264.
+- Recreate movi's wasm module after a number of videos or past a heap limit (it only grows).
+- Styled ASS through JASSUB (MIT); PGS drawn or at least labelled.
+- tdweb built by our own workflow (TDLib 1.8.67, OpenSSL 3), `movi.wasm` from source in CI.
+- The CI job, the Vercel project, the privacy and legal pages.
 
 ## Open decisions for the user
 

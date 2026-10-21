@@ -11,5 +11,5 @@ object KeepVideo {
      * Whether a finished download may be copied out to the phone's gallery or a folder: only
      * where it could be saved at all (CP04's gate), and only once it is whole in Downloads.
      */
-    fun mayExport(canBeSaved: Boolean, inDownloads: Boolean): Boolean = canBeSaved && inDownloads
+    fun mayExport(canBeSaved: Boolean, inDownloads: Boolean): Boolean = KeepRules.mayExport(canBeSaved, inDownloads)
 }

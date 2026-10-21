@@ -331,7 +331,7 @@ private fun cachedKey(chatId: Long, messageId: Long) =
  * instance per file in a process: each app opens it once, with [openDataStore], and every
  * `SettingsStore` shares that instance.
  */
-class SettingsStore(private val prefs: DataStore<Preferences>) {
+class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSource, CorrectionsSource, HiddenChatsSource {
 
     /**
      * One preference, read the way every preference here is read.
@@ -349,7 +349,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
     // ---- hidden chats -----------------------------------------------------------------------
 
     /** The chats hidden from TMPlayer's lists, in the order they were hidden. See [HiddenChats]. */
-    val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HIDDEN_CHATS]) }
+    override val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HIDDEN_CHATS]) }
 
     suspend fun hideChat(chatId: Long, title: String) {
         prefs.edit { it[HIDDEN_CHATS] = HiddenChats.encode(HiddenChats.with(HiddenChats.decode(it[HIDDEN_CHATS]), HiddenChat(chatId, title))) }
@@ -559,7 +559,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
     }
 
     /** Every [VideoCorrection], by [MediaItem.id]. See [VideoCorrections]. */
-    val corrections: Flow<Map<String, VideoCorrection>> = read { prefs ->
+    override val corrections: Flow<Map<String, VideoCorrection>> = read { prefs ->
         prefs.asMap().mapNotNull { (key, value) ->
             val id = VideoCorrections.idOf(key.name) ?: return@mapNotNull null
             val correction = VideoCorrection.decode(value as? String)
@@ -1769,7 +1769,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
      * The chats the kids lock allows, or null while it is off: what [ChatGate] follows and every
      * list of chats is filtered by.
      */
-    val kidsAllowedChats: Flow<Set<Long>?> = read(::allowedChatsOf)
+    override val kidsAllowedChats: Flow<Set<Long>?> = read(::allowedChatsOf)
 
     /** Whether a PIN is set, now. */
     suspend fun pinSetNow(): Boolean = prefs.data.first()[APP_PIN] != null
@@ -2607,28 +2607,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
          */
         const val MAX_HISTORY = 200
 
-        fun progressKey(chatId: Long, messageId: Long) = "${chatId}_$messageId"
+        fun progressKey(chatId: Long, messageId: Long) = ProgressKeys.of(chatId, messageId)
     }
 }
 
-/**
- * The soundtrack and the subtitles a series is watched with.
- *
- * [subtitlesOn] is separate from [textLanguage] having a value, because "off" is a real choice and
- * has to survive: without it, a viewer who turned subtitles off would get them back the moment the
- * next episode's default selection picked a track.
- */
-data class TrackChoice(
-    val audioLanguage: String? = null,
-    val textLanguage: String? = null,
-    val subtitlesOn: Boolean = false,
-) {
-    /** Nothing has been chosen yet, so the player's own defaults are the honest answer. */
-    val empty: Boolean get() = audioLanguage == null && textLanguage == null && !subtitlesOn
-}
-
-/** How far into a video the viewer got, and how long it runs. */
-data class WatchPoint(val positionMs: Long, val durationMs: Long) {
-    val fraction: Float
-        get() = if (durationMs <= 0) 0f else (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-}

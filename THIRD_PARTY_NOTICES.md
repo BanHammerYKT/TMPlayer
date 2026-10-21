@@ -196,6 +196,58 @@ characters of each script; nothing else in them is changed. The full licence tex
 copyright line travels beside the fonts as `fonts/OFL.txt` inside the app and as `OFL-Noto.txt`
 next to these notices in every desktop package.
 
+## Web (web.tmplayer.org)
+
+The web app is served as static files and runs in the visitor's browser. It ships the components
+below in addition to the shared ones.
+
+### tdweb with TDLib 1.8.64
+
+- Authors: the TDLib authors (Telegram FZ-LLC); the tdweb wrapper by Telegram, built by the
+  DIBgram/tdweb project's public workflow
+- Licence: Boost Software License 1.0 (TDLib and tdweb's source; its npm package says MIT)
+- Source: <https://github.com/tdlib/td> (example/web), built files from
+  <https://github.com/DIBgram/tdweb/tree/af27a3b79f6dc7435d5ceeb31a998d531d845762/dist>, each
+  checked by SHA-256 in web/build.gradle.kts
+- TMPlayer adds web/tdweb/sparse-fs.js to the worker and three small edits (web/build.gradle.kts,
+  patchTdweb), under TMPlayer's own licence
+
+The bundle contains:
+
+- OpenSSL 1.1.0l: OpenSSL and SSLeay licences, <https://www.openssl.org/source/old/1.1.0/>. The
+  additional permission for OpenSSL in LICENSE-OPENSSL-EXCEPTION.md applies.
+- zlib: zlib licence, <https://zlib.net/>
+- localforage: Apache-2.0, <https://github.com/localForage/localForage>
+- broadcast-channel, uuid, @babel/runtime: MIT
+
+### movi-player 0.4.1
+
+- Author: Ujjawal Kashyap and contributors (github.com/mrujjwalg)
+- Licence: Apache-2.0 for its own code
+- Source: <https://www.npmjs.com/package/movi-player/v/0.4.1>, fetched by version and checked by its
+  SHA-512 integrity hash; only `element.slim.js` and `movi.wasm` are served, and only loaded when a
+  video needs them
+
+`movi.wasm` contains:
+
+- FFmpeg (libavformat, libavcodec, libavutil, libswresample, libswscale): LGPL-2.1-or-later for the
+  configuration used (no GPL-only or non-free components seen in the decoder and demuxer list).
+  The package does not state the FFmpeg version or configuration; TMPlayer will build `movi.wasm`
+  from movi-player's build script in its own CI so the exact FFmpeg source can be offered. Until
+  then, FFmpeg's source is at <https://ffmpeg.org/download.html>.
+- dav1d (the AV1 decoder): BSD-2-Clause, <https://code.videolan.org/videolan/dav1d>
+
+### Fonts in the web app
+
+- Noto Sans and Noto Color Emoji: SIL Open Font License 1.1, Google, <https://github.com/notofonts>
+  and <https://github.com/googlefonts/noto-emoji>. The CJK, Indic and Arabic subsets are the
+  desktop's (see "Fonts on the desktop").
+
+### Web libraries
+
+- Compose Multiplatform for Web and Skiko: Apache-2.0, JetBrains
+- kotlinx-serialization, kotlinx-coroutines, kotlinx-browser: Apache-2.0, JetBrains
+
 ## Shared
 
 ### tdl-coroutines 15.0.0 and TDLib 1.8.67

@@ -47,3 +47,7 @@ internal fun sharperUrl(url: String, pixels: Int): String = url
 
 /** Bilinear, as always on Android: cheap enough for a television stick. */
 internal val artFilter: androidx.compose.ui.graphics.FilterQuality = androidx.compose.ui.graphics.FilterQuality.Low
+
+/** TDLib's file [fileId], downloaded to [path], decoded as [decodeImageFile] does. */
+@Suppress("UNUSED_PARAMETER")
+internal suspend fun decodeTdImage(fileId: Int, path: String, maxWidth: Int): ImageBitmap? = decodeImageFile(path, maxWidth)

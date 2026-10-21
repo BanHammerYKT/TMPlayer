@@ -130,6 +130,12 @@ enum class SettingsCategory {
     }
 }
 
+/**
+ * The pages this build's Settings lists, in order: every one on the desktop. The browser build
+ * sets its own shorter list at start (com.tmplayer.web.Main), for the pages it has.
+ */
+var settingsCategories: List<SettingsCategory> = SettingsCategory.entries
+
 /** A page's name, as its row in the list and its heading say it. */
 @Composable
 internal fun titleOf(category: SettingsCategory): String {
@@ -283,7 +289,7 @@ fun SettingsPage(
                     state = state,
                     version = version,
                     account = account,
-                    selected = if (wide) open ?: SettingsCategory.entries.first() else null,
+                    selected = if (wide) open ?: settingsCategories.first() else null,
                     focus = categoryFocus,
                     onOpen = { category ->
                         cameFromStep = null
@@ -294,7 +300,7 @@ fun SettingsPage(
                 )
             }
             if (wide) {
-                val shown = open ?: SettingsCategory.entries.first()
+                val shown = open ?: settingsCategories.first()
                 Column(Modifier.fillMaxSize()) {
                     PageHeader(s().settingsTitle, s().settingsSavesAsYouGo)
                     Row(
@@ -417,7 +423,7 @@ private fun CategoryList(
         modifier = Modifier.padding(vertical = 8.dp),
     )
     SettingsColumn(Modifier.padding(top = 4.dp), dividerStart = SettingsDividerStart) {
-        SettingsCategory.entries.forEach { category ->
+        settingsCategories.forEach { category ->
             val summary = when (category) {
                 SettingsCategory.SetupChoices -> s.setupChoicesSummary
                 SettingsCategory.Appearance -> s.settingsPageAppearanceSummary(theme = theme.label, language = s.languageRowDetail(language))

@@ -114,6 +114,7 @@ fun SignInScreen(auth: AuthState) {
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Image(AppLogo.Mark, contentDescription = null, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)))
+            com.tmplayer.ui.components.BrandBadge()
             when (auth) {
                 // Under the shell's loader, which fades out over whichever pane comes next.
                 AuthState.Connecting, AuthState.ChooseMethod -> Unit

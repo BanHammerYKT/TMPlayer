@@ -201,6 +201,8 @@ private fun NavBar(
                 .padding(horizontal = NAV_PADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // A preview build's word ("Beta" in the browser), at the start of the bar; none in the apps.
+            com.tmplayer.ui.components.BrandBadge(Modifier.padding(start = 8.dp, end = 6.dp))
             Box(contentAlignment = Alignment.CenterStart) {
                 // One highlight that slides to the chosen place rather than blinking from one
                 // button to the next, so the bar shows where the page went.

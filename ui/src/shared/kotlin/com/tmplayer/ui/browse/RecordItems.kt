@@ -23,15 +23,13 @@ object RecordItems {
     /** Enough for a few screens of History; the oldest goes first past it. */
     private const val KEEP = 200
 
-    private val cache = object : LinkedHashMap<String, MediaItem>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MediaItem>?): Boolean = size > KEEP
-    }
+    private val cache = com.tmplayer.platform.LruMap<String, MediaItem>(KEEP)
 
-    internal fun peek(key: String): MediaItem? = synchronized(cache) { cache[key] }
+    internal fun peek(key: String): MediaItem? = cache[key]
 
     /** A video Telegram has described elsewhere (Home's tiles), for History to draw without asking. */
     fun keep(item: MediaItem) {
-        synchronized(cache) { cache[SettingsStore.progressKey(item.chatId, item.messageId)] = item }
+        cache[SettingsStore.progressKey(item.chatId, item.messageId)] = item
     }
 
     internal suspend fun lookup(chatId: Long, messageId: Long, source: HomeSource = TdHomeSource): MediaItem? {
@@ -44,7 +42,7 @@ object RecordItems {
         } catch (_: Exception) {
             null
         } ?: return null
-        synchronized(cache) { cache[key] = item }
+        cache[key] = item
         return item
     }
 }

@@ -1,6 +1,7 @@
 package com.tmplayer.online
 
-import org.json.JSONObject
+import com.tmplayer.json.JSONArray
+import com.tmplayer.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
@@ -22,7 +23,7 @@ class MetadataCache(
     private val imageTtlMs: Long = MAX_TTL_MS,
     /** The most the pictures may take on the disk; the ones fetched longest ago go first past it. */
     private val imageCapBytes: Long = IMAGE_CAP_BYTES,
-) {
+) : MetaCacheStore {
     init {
         require(foundTtlMs in 1..MAX_TTL_MS && missTtlMs in 1..MAX_TTL_MS && imageTtlMs in 1..MAX_TTL_MS) {
             "a metadata cache TTL may not exceed six months"
@@ -41,7 +42,7 @@ class MetadataCache(
 
     /** A title's logo as learnt within [foundTtlMs] (or [missTtlMs] for a title with none), or null to ask. */
     @Synchronized
-    fun logo(key: String): LogoAnswer? {
+    override fun logo(key: String): LogoAnswer? {
         val file = File(logos, name(key) + ".json")
         if (!file.isFile) return null
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
@@ -54,7 +55,7 @@ class MetadataCache(
     }
 
     @Synchronized
-    fun putLogo(key: String, answer: LogoAnswer) {
+    override fun putLogo(key: String, answer: LogoAnswer) {
         logos.mkdirs()
         val json = JSONObject().put("key", key).put("saved", now()).put("url", answer.url.orEmpty())
         write(File(logos, name(key) + ".json"), json.toString().toByteArray())
@@ -66,7 +67,7 @@ class MetadataCache(
      * Null when it has to be asked.
      */
     @Synchronized
-    fun skipTimes(key: String): List<SkipSegment>? {
+    override fun skipTimes(key: String): List<SkipSegment>? {
         val file = File(skips, name(key) + ".json")
         if (!file.isFile) return null
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
@@ -80,7 +81,7 @@ class MetadataCache(
     }
 
     @Synchronized
-    fun putSkipTimes(key: String, segments: List<SkipSegment>) {
+    override fun putSkipTimes(key: String, segments: List<SkipSegment>) {
         skips.mkdirs()
         val json = JSONObject().put("key", key).put("saved", now()).put("segments", SkipSegment.listToJson(segments))
         write(File(skips, name(key) + ".json"), json.toString().toByteArray())
@@ -88,7 +89,7 @@ class MetadataCache(
 
     /** What was learnt the last time, if it is still fresh: a result, or null to ask again. */
     @Synchronized
-    fun answer(key: String): MetaResult? {
+    override fun answer(key: String): MetaResult? {
         val file = File(answers, name(key) + ".json")
         if (!file.isFile) return null
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
@@ -102,7 +103,7 @@ class MetadataCache(
     }
 
     @Synchronized
-    fun putAnswer(key: String, result: MetaResult) {
+    override fun putAnswer(key: String, result: MetaResult) {
         val info = when (result) {
             is MetaResult.Found -> result.info
             MetaResult.NoMatch -> null
@@ -116,7 +117,7 @@ class MetadataCache(
 
     /** A detail page's extras learnt within [foundTtlMs], by [OnlineMetadata]'s extras key. */
     @Synchronized
-    fun extras(key: String): MetaExtras? {
+    override fun extras(key: String): MetaExtras? {
         val file = File(extras, name(key) + ".json")
         if (!file.isFile) return null
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
@@ -128,7 +129,7 @@ class MetadataCache(
     }
 
     @Synchronized
-    fun putExtras(key: String, value: MetaExtras) {
+    override fun putExtras(key: String, value: MetaExtras) {
         extras.mkdirs()
         val json = JSONObject().put("key", key).put("saved", now()).put("extras", value.toJson())
         write(File(extras, name(key) + ".json"), json.toString().toByteArray())
@@ -139,7 +140,7 @@ class MetadataCache(
      * episode a week and the page should say so without waiting months.
      */
     @Synchronized
-    fun season(key: String): List<MetaEpisode>? {
+    override fun season(key: String): List<MetaEpisode>? {
         val file = File(seasons, name(key) + ".json")
         if (!file.isFile) return null
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
@@ -162,9 +163,9 @@ class MetadataCache(
     }
 
     @Synchronized
-    fun putSeason(key: String, episodes: List<MetaEpisode>) {
+    override fun putSeason(key: String, episodes: List<MetaEpisode>) {
         seasons.mkdirs()
-        val list = org.json.JSONArray(
+        val list = JSONArray(
             episodes.map {
                 JSONObject().put("season", it.season).put("number", it.number).put("name", it.name).put("overview", it.overview)
                     .put("still", it.stillUrl.orEmpty()).put("airDate", it.airDate.orEmpty()).put("runtime", it.runtimeMin ?: 0)
@@ -176,7 +177,7 @@ class MetadataCache(
 
     /** A picture fetched within [imageTtlMs], by its address. */
     @Synchronized
-    fun image(url: String): File? {
+    override fun image(url: String): File? {
         val file = File(images, name(url))
         if (!file.isFile) return null
         if (now() - file.lastModified() > imageTtlMs) {
@@ -187,7 +188,7 @@ class MetadataCache(
     }
 
     @Synchronized
-    fun putImage(url: String, bytes: ByteArray): File {
+    override fun putImage(url: String, bytes: ByteArray): File {
         images.mkdirs()
         val file = File(images, name(url))
         write(file, bytes)
@@ -223,7 +224,7 @@ class MetadataCache(
 
     /** Every entry past its TTL, deleted. Run once at start, off the main thread. */
     @Synchronized
-    fun prune() {
+    override fun prune() {
         answers.listFiles()?.forEach { f ->
             val json = runCatching { JSONObject(f.readText()) }.getOrNull()
             val ttl = if (json?.has("info") == true) foundTtlMs else missTtlMs
@@ -243,25 +244,25 @@ class MetadataCache(
 
     /** What the cache holds on the disk, in bytes. */
     @Synchronized
-    fun bytes(): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    override fun bytes(): Long = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
     /** What the pictures alone take on the disk, in bytes: the posters and backdrops. */
     @Synchronized
-    fun imageBytes(): Long = images.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+    override fun imageBytes(): Long = images.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
 
     /**
      * The pictures only. The answers stay, so every title keeps its match and its overview and a
      * poster is fetched again only when it is next shown (Free up space, user 2026-10-18).
      */
     @Synchronized
-    fun purgeImages() {
+    override fun purgeImages() {
         imageTotal = -1
         images.deleteRecursively()
     }
 
     /** Everything, answers and pictures. */
     @Synchronized
-    fun purge() {
+    override fun purge() {
         imageTotal = -1
         dir.deleteRecursively()
     }

@@ -159,6 +159,7 @@ object Backups {
         "min_size_bytes" to Kind.LONG,
         "new_video_alerts" to Kind.BOOL,
         "night_mode" to Kind.BOOL,
+        "even_volume" to Kind.BOOL,
         "notify_downloads" to Kind.BOOL,
         "notify_episodes" to Kind.BOOL,
         "notify_low_storage" to Kind.BOOL,

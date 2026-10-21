@@ -37,3 +37,7 @@ internal fun sharperUrl(url: String, pixels: Int): String = com.tmplayer.online.
  * drawn smaller stays smooth instead of shimmering, and bilinear when it is drawn larger.
  */
 internal val artFilter: androidx.compose.ui.graphics.FilterQuality = androidx.compose.ui.graphics.FilterQuality.Medium
+
+/** TDLib's file [fileId], downloaded to [path], decoded as [decodeImageFile] does. */
+@Suppress("UNUSED_PARAMETER")
+internal suspend fun decodeTdImage(fileId: Int, path: String, maxWidth: Int): ImageBitmap? = decodeImageFile(path, maxWidth)

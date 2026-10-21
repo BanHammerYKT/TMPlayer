@@ -49,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerButton
@@ -103,6 +104,14 @@ import com.tmplayer.ui.components.BrandLoaderHandOff
 typealias PlayerContent = @Composable (request: PlayRequest, onClose: () -> Unit) -> Unit
 
 /**
+ * True where the player's picture is drawn under the window's content rather than in it: the
+ * browser build, whose video element sits under the page's canvas (web/player/video-host.js).
+ * While a video plays, the shell then paints nothing of its own over it but the player's
+ * controls. The desktop draws mpv's picture into the window, so it stays false there.
+ */
+val LocalVideoBehindPage = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+/**
  * The desktop window's content (B2.1): sign in until Telegram says Ready, then the page with the
  * floating bar at its foot ([NavFrame]), and the player over the page when something is playing.
  */
@@ -126,7 +135,7 @@ fun DesktopShell(
                 .onPointerEvent(PointerEventType.Press) { event ->
                     if (event.button == PointerButton.Back) state.backStack.handleBack()
                 },
-            color = Tone.background,
+            color = if (LocalVideoBehindPage.current && state.nowPlaying != null) androidx.compose.ui.graphics.Color.Transparent else Tone.background,
         ) {
             val auth by Td.auth.collectAsState()
             Box(Modifier.fillMaxSize()) {
@@ -334,8 +343,11 @@ private fun Browse(state: ShellState, player: PlayerContent) {
     }
 
     val account by chats.accountHeader.collectAsState()
+    // With the picture under the window (LocalVideoBehindPage), the page is kept but not drawn
+    // while a video plays, so the picture shows through around the player's controls.
+    val seeThrough = LocalVideoBehindPage.current && state.nowPlaying != null
     Box(Modifier.fillMaxSize()) {
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize().then(if (seeThrough) Modifier.drawWithContent { } else Modifier)) {
             // The detail pane docks beside the page where both fit, so the grid stays in view and
             // in reach (a click on another poster swaps the pane), and goes over the page where
             // they do not.
@@ -426,7 +438,7 @@ private fun Browse(state: ShellState, player: PlayerContent) {
         // search, and closing the player is simply taking this away.
         val playing = state.nowPlaying
         if (playing != null) {
-            Box(Modifier.fillMaxSize().background(Tone.background)) {
+            Box(Modifier.fillMaxSize().then(if (seeThrough) Modifier else Modifier.background(Tone.background))) {
                 BackHandler { state.closePlayer() }
                 player(playing) { state.closePlayer() }
             }

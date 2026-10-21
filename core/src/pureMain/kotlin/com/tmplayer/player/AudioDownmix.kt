@@ -1,0 +1,150 @@
+package com.tmplayer.player
+
+/**
+ * Which decoded audio layouts get folded to stereo before they reach the AudioTrack, and how.
+ *
+ * Some phones cannot play a multichannel track through the platform mixer: the audio server
+ * invalidates the AudioTrack repeatedly and playback stutters until the renderer gives up. So the
+ * fold happens here instead, in the audio processor chain, on any device that is not a television.
+ * A television keeps every channel, because there multichannel goes out over HDMI and works.
+ */
+object AudioDownmix {
+
+    const val STEREO = 2
+
+    /** The widest layout Media3's own constant power helper will build a fold for. */
+    const val MAX_CONSTANT_POWER = 6
+
+    /**
+     * Every layout a matrix is registered for.
+     *
+     * Deliberately far wider than the layouts anyone expects to meet. [ChannelMixingAudioProcessor]
+     * refuses to configure for a channel count it holds no matrix for, and refusing is fatal: the
+     * renderer dies and the viewer is told the video is broken. Covering every count up to
+     * [MAX_LAYOUT] leaves none that can end a video.
+     */
+    const val MAX_LAYOUT = 32
+
+    /** How a given layout is handled: the matrix to register, described without Media3 types. */
+    sealed interface Fold {
+        /** Hand the channels through untouched. Media3 recognises the square matrix and skips it. */
+        data class Untouched(val channels: Int) : Fold
+
+        /** Media3's own constant power fold to stereo, for the layouts it has coefficients for. */
+        data class ConstantPower(val channels: Int) : Fold
+
+        /**
+         * A fold this file builds: the dialogue forward fold for the surround layouts whose
+         * channel order is fixed ([dialogueCoefficients]), and the alternating one for the rest.
+         */
+        data class Wide(val channels: Int, val coefficients: FloatArray) : Fold {
+            // Data classes compare arrays by identity, which would make two equal folds unequal and
+            // is exactly the sort of thing a test notices and nothing else does.
+            override fun equals(other: Any?): Boolean = other is Wide &&
+                other.channels == channels &&
+                other.coefficients.contentEquals(coefficients)
+
+            override fun hashCode(): Int = 31 * channels + coefficients.contentHashCode()
+        }
+    }
+
+    /**
+     * The matrices the processor needs, or empty when it should not be in the chain at all.
+     *
+     * The question asked is "is this a television?", not "how many channels does the output take?".
+     * The channel count Media3 reports cannot be trusted: a phone may claim more than stereo from a
+     * profile its audio server then fails to play. A television is the case where multichannel
+     * demonstrably works, over HDMI to whatever is wired up, so that is the case that keeps its
+     * channels.
+     */
+    fun folds(television: Boolean): List<Fold> = if (television) emptyList() else stereoFolds()
+
+    /**
+     * Whether to fold at all: the viewer's own answer from Settings when there is one, and
+     * otherwise the device's default, for the reason [folds] gives: a phone folds, a television
+     * keeps its channels. A soundbar that cannot take what the film carries, or a phone wired to
+     * a receiver, is why the answer is the viewer's to change.
+     */
+    fun wanted(choice: Boolean?, television: Boolean): Boolean = choice ?: !television
+
+    /** Every matrix of the stereo fold, for a player that [wanted] one. */
+    fun stereoFolds(): List<Fold> {
+        return (1..MAX_LAYOUT).map { channels ->
+            val dialogue = dialogueCoefficients(channels)
+            when {
+                channels <= STEREO -> Fold.Untouched(channels)
+                dialogue != null -> Fold.Wide(channels, dialogue)
+                channels <= MAX_CONSTANT_POWER -> Fold.ConstantPower(channels)
+                else -> Fold.Wide(channels, wideCoefficients(channels))
+            }
+        }
+    }
+
+    /** The centre channel's share of each side: full, where the dialogue lives. */
+    const val CENTRE = 1f
+
+    /** Each surround channel to its own side, 3 dB down, as ITU's fold has them. */
+    const val SURROUND = 0.7071f
+
+    /** The low effects channel, kept low: phone speakers cannot play it, and it eats headroom. */
+    const val LOW_EFFECTS = 0.35f
+
+    /**
+     * A dialogue forward fold for the surround layouts Android (and FFmpeg's decoders, which the
+     * DTS and TrueHD tracks go through) put in a fixed order, or null for any other count.
+     *
+     * Media3's own fold (and every textbook one) puts the centre 3 dB under the fronts. The centre
+     * is where a film keeps its dialogue, and films already mix it low against the music and the
+     * effects, so folded to two speakers the voices sank under everything else. Here the centre
+     * goes to both sides at full ([CENTRE]), the fronts stay as they are, the surrounds go to their
+     * own side 3 dB down and the low effects channel well down. The sum can pass full scale on a
+     * loud scene; the soft limit after the fold (VolumeBoostProcessor) catches that instead of
+     * clipping it.
+     *
+     * The orders, by channel count: 3 is FL FR FC; 5 is FL FR FC BL BR; 6 (5.1) is FL FR FC LFE BL
+     * BR; 7 (6.1) is FL FR FC LFE BL BR BC; 8 (7.1) is FL FR FC LFE BL BR SL SR. Quad (4) has no
+     * centre and keeps Media3's fold. The alternating fold ([wideCoefficients]) used to take 7.1
+     * too, which sent the centre to the left side alone, at half its level.
+     */
+    fun dialogueCoefficients(channels: Int): FloatArray? {
+        val fl = floatArrayOf(1f, 0f)
+        val fr = floatArrayOf(0f, 1f)
+        val fc = floatArrayOf(CENTRE, CENTRE)
+        val lfe = floatArrayOf(LOW_EFFECTS, LOW_EFFECTS)
+        val left = floatArrayOf(SURROUND, 0f)
+        val right = floatArrayOf(0f, SURROUND)
+        val back = floatArrayOf(SURROUND * SURROUND, SURROUND * SURROUND)
+        val rows = when (channels) {
+            3 -> listOf(fl, fr, fc)
+            5 -> listOf(fl, fr, fc, left, right)
+            6 -> listOf(fl, fr, fc, lfe, left, right)
+            7 -> listOf(fl, fr, fc, lfe, left, right, back)
+            8 -> listOf(fl, fr, fc, lfe, left, right, left, right)
+            else -> return null
+        }
+        return rows.flatMap { it.asList() }.toFloatArray()
+    }
+
+    /**
+     * A stereo fold for a layout nothing here knows the channel order of.
+     *
+     * Every layout with a documented order alternates left and right, so even numbered channels go
+     * left and odd numbered ones go right. That is a real stereo image for anything following that
+     * pattern and a safe fold for anything that does not.
+     *
+     * The gain is constant power: each output's coefficients square and sum to one, so a fold of
+     * twelve channels is no louder than a fold of six and neither of them clips.
+     */
+    fun wideCoefficients(channels: Int): FloatArray {
+        val perSide = FloatArray(STEREO) { side ->
+            val count = (channels - side + 1) / STEREO
+            if (count <= 0) 0f else (1.0 / kotlin.math.sqrt(count.toDouble())).toFloat()
+        }
+        // Row major, as Media3 reads it: every input channel's pair of output coefficients in turn.
+        return FloatArray(channels * STEREO) { index ->
+            val input = index / STEREO
+            val output = index % STEREO
+            if (input % STEREO == output) perSide[output] else 0f
+        }
+    }
+}

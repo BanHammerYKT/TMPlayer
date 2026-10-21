@@ -1,0 +1,22 @@
+{
+  "name": "TMPlayer Beta",
+  "short_name": "TMPlayer Beta",
+  "description": "A player for the videos already in your own Telegram chats, in the browser. Unofficial, not affiliated with Telegram.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "lang": "en",
+  "dir": "auto",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "categories": ["entertainment", "video"],
+  "background_color": "#0C0E10",
+  "theme_color": "#0C0E10",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
