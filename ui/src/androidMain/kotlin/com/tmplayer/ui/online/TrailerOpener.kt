@@ -30,3 +30,28 @@ internal fun rememberTrailerOpener(): (MetaTrailer) -> Boolean {
         }
     }
 }
+
+/**
+ * On a television, the YouTube app before anything else: its own client is made for the remote
+ * and plays every trailer, which YouTube's embedded player in a WebView does not on many TVs (a
+ * press that seemed to do nothing). Only the `vnd.youtube:` link, which only a YouTube app
+ * answers, so a TV without one goes on to the in-app player rather than to a browser it may not
+ * have. Null on a phone, which keeps the trailer inside the app.
+ */
+@Composable
+internal fun rememberTrailerAppFirst(): ((MetaTrailer) -> Boolean)? {
+    val context = LocalContext.current
+    return remember(context) {
+        if (!com.tmplayer.data.FormFactor.isTv(context)) return@remember null
+        { trailer: MetaTrailer ->
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(trailer.appUri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                true
+            } catch (e: ActivityNotFoundException) {
+                false
+            } catch (e: SecurityException) {
+                false
+            }
+        }
+    }
+}

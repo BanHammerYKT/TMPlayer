@@ -175,7 +175,6 @@ private const val EXIT_WINDOW_MS = 2_000L
  * the player is up almost at once, passes in silence. Short enough that a slow one is explained
  * before the viewer has decided their press was missed.
  */
-private const val PREPARE_CHIP_AFTER_MS = 400L
 
 /** A small store for asks that happen once per install, and so are not settings or in backups. */
 private const val ONCE_PREFS = "once"
@@ -379,8 +378,16 @@ class MainActivity : ComponentActivity() {
      * A language picked on Android's own page for this app (Android 13 and later) while it was in
      * the background becomes the in-app choice. See [AppLocales].
      */
+    /** The player has the screen now; its own loader takes over from the press's spinner. */
+    override fun onStop() {
+        super.onStop()
+        com.tmplayer.ui.components.PlayPress.end()
+    }
+
     override fun onResume() {
         super.onResume()
+        // Back from the player (or never left): no press of Play is still on its way.
+        com.tmplayer.ui.components.PlayPress.end()
         lifecycleScope.launch {
             val store = SettingsStore(this@MainActivity)
             runCatching { AppLocales.adopt(this@MainActivity, store.language.first())?.let { store.setLanguage(it) } }
@@ -816,6 +823,7 @@ private fun Root() {
 
     var connectionNotice by remember { mutableStateOf(ConnectionNotice.Hidden) }
     var wasOffline by remember { mutableStateOf(false) }
+    var wasDisconnected by remember { mutableStateOf(false) }
     LaunchedEffect(networkStatus, telegramConnected, auth) {
         val effectivelyOffline = networkStatus == NetworkStatus.Offline && !telegramConnected
         when {
@@ -830,11 +838,30 @@ private fun Root() {
             wasOffline -> {
                 connectionNotice = ConnectionNotice.Hidden
                 wasOffline = false
+                wasDisconnected = false
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
                     homeViewModel.refresh()
                     updates.checkIfDue()
                     toast(L.mainBackOnline)
+                }
+            }
+            // Online, signed in, and the line to Telegram is down: back from the background, most
+            // often. What is on screen stays; after a short settle a small "Connecting" pill says
+            // why nothing new arrives, as Telegram's own title does. Retry and the proxy wait for
+            // a real failure (Td.unreachable).
+            auth is AuthState.Ready && !telegramConnected -> {
+                delay(CONNECTING_SETTLE_MS)
+                wasDisconnected = true
+                connectionNotice = ConnectionNotice.Connecting
+            }
+            wasDisconnected -> {
+                // The line is back: the lists refresh quietly in place, no toast.
+                connectionNotice = ConnectionNotice.Hidden
+                wasDisconnected = false
+                if (auth is AuthState.Ready) {
+                    chatsViewModel.load()
+                    homeViewModel.refresh()
                 }
             }
             else -> connectionNotice = ConnectionNotice.Hidden
@@ -1009,6 +1036,7 @@ private fun Root() {
             // to it: it needs no connection, no room, and it is not the cache's to claim.
             if (LocalDownloads.fileFor(settings, item.chatId, item.messageId) != null) {
                 withContext(Dispatchers.Main) {
+                    com.tmplayer.ui.components.PlayPress.open()
                     context.startActivity(PlayerActivity.intent(context, item, chatTitle))
                 }
                 return@withContext
@@ -1061,6 +1089,7 @@ private fun Root() {
                 // The player claims the cache for itself the moment it opens, which is what keeps
                 // a series honest. This only has to leave the record alone for a kept download.
                 if (!kept) scope.launch { settings.rememberCachedVideo(item, chatTitle) }
+                com.tmplayer.ui.components.PlayPress.open()
                 context.startActivity(PlayerActivity.intent(context, item, chatTitle))
             }
 
@@ -1106,18 +1135,16 @@ private fun Root() {
         // and press again, so a second press while one is in flight is ignored.
         if (preparing && !confirmed) return
         preparing = true
+        // Answered at once: the page's Play pill spins and, past a beat, a "Starting" pill says
+        // which video is on its way (PlayPress, StartingStatus). It stays until the shell leaves
+        // the screen for the player, or goes at once when nothing is going to open.
+        val press = com.tmplayer.ui.components.PlayPress.begin(item.title)
         scope.launch {
-            // Only said out loud when it is actually slow. On the common path the player is up
-            // before this fires, and a chip that flashes on every press is worse than no chip.
-            val chip = launch {
-                delay(PREPARE_CHIP_AFTER_MS)
-                toast(L.mainStarting(title = item.title))
-            }
             try {
                 playNow(item, confirmed, chatTitle)
             } finally {
-                chip.cancel()
                 preparing = false
+                if (!com.tmplayer.ui.components.PlayPress.opened) com.tmplayer.ui.components.PlayPress.end(press)
             }
         }
     }
@@ -1199,11 +1226,15 @@ private fun Root() {
         // both got through and opened the player twice.
         if (openingStored || preparing) return
         openingStored = true
+        // The wait for Telegram's fresh copy is part of the press too.
+        val press = com.tmplayer.ui.components.PlayPress.begin(stored.title)
         scope.launch {
             try {
                 openStoredNow(stored, chatTitle)
             } finally {
                 openingStored = false
+                // play() took the press over with its own; this one only ends a lookup that failed.
+                com.tmplayer.ui.components.PlayPress.end(press)
             }
         }
     }
@@ -1235,7 +1266,9 @@ private fun Root() {
         // Once Telegram is reached, the loader waits on for Home's first whole screen (rows and the
         // carousel's first picture), at most HOLD_MAX_MS, so Home appears finished.
         var homeHoldOver by remember { mutableStateOf(false) }
-        val reached = auth is AuthState.Ready
+        // The QR code stays up for a moment after it is scanned, marked "Scanned" (rememberScanHold).
+        val shownAuth = com.tmplayer.ui.auth.rememberScanHold(auth)
+        val reached = shownAuth is AuthState.Ready
         LaunchedEffect(reached) {
             if (!reached) return@LaunchedEffect
             kotlinx.coroutines.delay(com.tmplayer.ui.browse.HomeFirstPaint.HOLD_MAX_MS)
@@ -1243,7 +1276,7 @@ private fun Root() {
         }
         val holdForHome = reached && !setupPending && !(appLock?.onOpen == true && !appUnlocked) && !homeHoldOver && !com.tmplayer.ui.browse.HomeFirstPaint.ready
         com.tmplayer.ui.components.BrandLoaderHandOff(
-            label = com.tmplayer.ui.auth.loaderLabel(auth, LocalStrings.current)
+            label = com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
                 ?: if (holdForHome) LocalStrings.current.loginGettingReady else null,
             modifier = Modifier.zIndex(1f),
             // The second line is the live step, drawn by ConnectingHelp under it.
@@ -1256,7 +1289,7 @@ private fun Root() {
                 sendLogs = { com.tmplayer.ui.settings.SendLogsButton(Modifier.padding(top = 8.dp)) },
             )
         }
-        if (auth !is AuthState.Ready) {
+        if (shownAuth !is AuthState.Ready) {
             // Signing out drops straight back to the login screen, so forget where we were.
             LaunchedEffect(Unit) {
                 screen = Screen.Chats
@@ -1276,7 +1309,7 @@ private fun Root() {
                         .then(if (keyboard) Modifier else Modifier.consumeWindowInsets(WindowInsets.navigationBars)),
                 ) {
                     LoginScreen(
-                        state = auth,
+                        state = shownAuth,
                         submitError = signInError,
                         onSubmitPassword = { password ->
                             signInError = null
@@ -1289,6 +1322,10 @@ private fun Root() {
                         onChooseMethod = { method ->
                             signInError = null
                             scope.launch { Td.chooseSignInMethod(method) }
+                        },
+                        onRefreshQr = {
+                            signInError = null
+                            scope.launch { Td.refreshQrCode() }
                         },
                         onSubmitPhoneNumber = { number ->
                             signInError = null
@@ -1314,20 +1351,43 @@ private fun Root() {
                             signInError = null
                             scope.launch { signInError = Td.submitEmailCode(code) }
                         },
+                        onRun = { block ->
+                            signInError = null
+                            scope.launch { signInError = block() }
+                        },
                     )
                 }
                 if (!keyboard) {
-                    androidx.compose.material3.Text(
-                        L.authUnofficial,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                        color = Tone.muted,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier
+                    // Under every sign in screen: the line Telegram's terms ask for, and the proxy
+                    // settings, for a network where Telegram is only reached through one. Before
+                    // this the proxy was offered only once the line was already known to be down.
+                    androidx.compose.foundation.layout.Column(
+                        Modifier
                             .fillMaxWidth()
                             .windowInsetsPadding(WindowInsets.navigationBars)
                             .padding(horizontal = 24.dp)
-                            .padding(top = 10.dp, bottom = if (FormFactor.isTv(context)) Tv.SafeV else 10.dp),
-                    )
+                            .padding(top = 6.dp, bottom = if (FormFactor.isTv(context)) Tv.SafeV else 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        val openProxies = { com.tmplayer.ui.connect.ProxyScreenState.open = true }
+                        if (FormFactor.isTv(context)) {
+                            // A real button on a remote, one press down from the form's own.
+                            com.tmplayer.ui.components.TmSecondaryButton(onClick = openProxies) {
+                                androidx.tv.material3.Text(LocalStrings.current.loginProxySettings)
+                            }
+                        } else {
+                            androidx.compose.material3.TextButton(onClick = openProxies) {
+                                androidx.compose.material3.Text(LocalStrings.current.loginProxySettings)
+                            }
+                        }
+                        androidx.compose.material3.Text(
+                            L.authUnofficial,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = Tone.muted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
             ConnectionStatus(
@@ -2160,6 +2220,14 @@ private fun Root() {
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 20.dp),
         )
+        // Over the connection notice's place, a little higher when both are up.
+        com.tmplayer.ui.components.StartingStatus(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(2f)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = if (connectionNotice == ConnectionNotice.Hidden) 20.dp else 76.dp, start = 16.dp, end = 16.dp),
+        )
         // The network is up and Telegram has not answered for a while: blocked, most likely,
         // which the offline pill above never says, since the device is not offline.
         val unreachable by Td.unreachable.collectAsStateWithLifecycle()
@@ -2177,6 +2245,9 @@ private fun Root() {
 }
 
 private const val OFFLINE_SETTLE_MS = 750L
+
+/** How long a lost line may take to come back before the "Connecting" pill shows. */
+private const val CONNECTING_SETTLE_MS = 2_500L
 
 /** How long the chat list is up before the support card may slide in. */
 private const val SUPPORT_CARD_DELAY_MS = 4_000L

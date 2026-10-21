@@ -345,6 +345,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** Night mode for sound, as the viewer left it, read before the player is built. */
     private var nightModeOn = false
 
+    /** Even out volume, read with the others before the player is built; see [VolumeBoostProcessor.level]. */
+    private var evenVolumeOn = true
+
     /**
      * Skip silence, switched under the speeds and kept as a setting. Media3 drops the quiet stretches
      * in the audio sink's own chain, so it works on the PCM the sink plays and does nothing to a
@@ -805,6 +808,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 openInAnotherApp = { savable == true },
                 volumeBoost = { volumeBoostOn },
                 nightMode = { nightModeOn },
+                evenVolume = { evenVolumeOn },
                 sleepTimer = ::sleepTimerDetail,
                 onSleepTimer = ::setSleepTimer,
                 sleepChoice = ::sleepChoice,
@@ -1175,6 +1179,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             downmixChoice = runCatching { settings.downmixChoiceNow() }.getOrNull()
             volumeBoostOn = runCatching { settings.volumeBoostNow() }.getOrDefault(false)
             nightModeOn = runCatching { settings.nightModeNow() }.getOrDefault(false)
+            evenVolumeOn = runCatching { settings.evenVolumeNow() }.getOrDefault(true)
             skipSilence = runCatching { settings.skipSilenceNow() }.getOrDefault(false)
             subtitleStyle = runCatching { settings.subtitleStyleNow() }.getOrDefault(SubtitleStyle())
             applySubtitleStyle()
@@ -2075,6 +2080,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 val boost = VolumeBoostProcessor().also {
                     it.enabled = volumeBoostOn
                     it.night = nightModeOn
+                    it.level = evenVolumeOn
                     volumeBoost = it
                 }
                 val processors = if (folds.isEmpty()) {
@@ -4514,6 +4520,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             if (lock) item.setIcon(R.drawable.ic_lock)
             if (entry == PhoneMenuEntry.VolumeBoost) item.setCheckable(true).setChecked(volumeBoostOn)
             if (entry == PhoneMenuEntry.NightMode) item.setCheckable(true).setChecked(nightModeOn)
+            if (entry == PhoneMenuEntry.EvenVolume) item.setCheckable(true).setChecked(evenVolumeOn)
         }
         androidx.core.view.MenuCompat.setGroupDividerEnabled(items, true)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) menu.setForceShowIcon(true)
@@ -4524,6 +4531,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 PhoneMenuEntry.PictureShape -> showSheet { it.showShape(videoScale, ::applyScale) }
                 PhoneMenuEntry.VolumeBoost -> toggleVolumeBoost()
                 PhoneMenuEntry.NightMode -> toggleNightMode()
+                PhoneMenuEntry.EvenVolume -> toggleEvenVolume()
                 PhoneMenuEntry.SleepTimer -> showSheet { it.showSleep(sleepTimerDetail(), sleepChoice(), ::setSleepTimer) }
                 PhoneMenuEntry.AbLoop -> pressLoop()
                 PhoneMenuEntry.NextChapter -> stepChapter(forward = true)
@@ -4560,6 +4568,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             PlayerMenuEntry.MarkWatched -> toggleWatched()
             PlayerMenuEntry.VolumeBoost -> toggleVolumeBoost()
             PlayerMenuEntry.NightMode -> toggleNightMode()
+            PlayerMenuEntry.EvenVolume -> toggleEvenVolume()
             PlayerMenuEntry.AbLoop -> pressLoop()
             PlayerMenuEntry.NextChapter -> stepChapter(forward = true)
             PlayerMenuEntry.PreviousChapter -> stepChapter(forward = false)
@@ -4836,6 +4845,18 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         volumeBoost?.night = on
         showGestureFeedback(if (on) L.playerNightModeOn else L.playerNightModeOff)
         lifecycleScope.launch { runCatching { settings.setNightMode(on) } }
+    }
+
+    /**
+     * The menu's Even out volume: a quiet track lifted towards the level of other videos, on the
+     * sound already playing (the lift moves slowly, so it does not jump), and kept for every video.
+     */
+    private fun toggleEvenVolume() {
+        val on = !evenVolumeOn
+        evenVolumeOn = on
+        volumeBoost?.level = on
+        showGestureFeedback(if (on) L.playerEvenVolumeOn else L.playerEvenVolumeOff)
+        lifecycleScope.launch { runCatching { settings.setEvenVolume(on) } }
     }
 
     /** What the menu says about a running sleep timer, or null when there is none. */

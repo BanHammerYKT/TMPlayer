@@ -5,6 +5,12 @@ import com.tmplayer.data.AuthFlow
 import com.tmplayer.data.AuthState
 import com.tmplayer.data.CodeDelivery
 import com.tmplayer.data.CodeInfo
+import com.tmplayer.data.Country
+import com.tmplayer.data.CountryRow
+import com.tmplayer.data.EmailReset
+import com.tmplayer.data.Failures
+import com.tmplayer.data.PhoneCountries
+import com.tmplayer.data.SignInWaits
 import com.tmplayer.data.SignInMethod
 import com.tmplayer.data.TdAuthorization
 import com.tmplayer.i18n.L
@@ -249,6 +255,84 @@ class WebAuth(private val td: WebTd, private val scope: CoroutineScope) {
         }
     }
 
+    /** Telegram's countries with their dial codes, for the picker; empty until TDLib answers. */
+    suspend fun countries(): List<Country> {
+        val r = td.tryCall("getCountries") ?: return emptyList()
+        return PhoneCountries.fromRows(
+            r.objects("countries").map {
+                CountryRow(it.str("country_code"), it.str("name"), it.arr("calling_codes").map { c -> (c as? kotlinx.serialization.json.JsonPrimitive)?.content.orEmpty() }, it.bool("is_hidden"))
+            },
+        )
+    }
+
+    /** The country TDLib guesses from the connection, as an ISO code, or "". */
+    suspend fun guessedCountry(): String = td.tryCall("getCountryCode")?.str("text").orEmpty()
+
+    /** TDLib's layout for [national] after [dial] ("+44"), with "-" for digits to come; see PhoneFormat. */
+    suspend fun formatPhone(dial: String, national: String): String? {
+        if (dial.isEmpty()) return null
+        val r = td.tryCall("getPhoneNumberInfo") { put("phone_number_prefix", "+$dial$national") } ?: return null
+        return r.str("formatted_phone_number").takeIf { r.str("country_calling_code") == dial && it.isNotBlank() }
+    }
+
+    /** "Forgot password": Telegram mails a recovery code to the account's recovery address. */
+    suspend fun forgotPassword(): String? {
+        val asked = _state.value as? AuthState.Password ?: return null
+        val pattern = asked.recoveryEmail ?: return L.loginRecoveryNoEmail
+        return attempt({}) {
+            td.call("requestAuthenticationPasswordRecovery")
+            _state.value = AuthState.PasswordRecovery(pattern)
+        }
+    }
+
+    suspend fun submitRecoveryCode(code: String): String? {
+        val asked = _state.value as? AuthState.PasswordRecovery ?: return null
+        val clean = code.trim()
+        return attempt({ _state.value = asked.copy(wrong = true) }) {
+            td.call("checkAuthenticationPasswordRecoveryCode") { put("recovery_code", clean) }
+            _state.value = asked.copy(code = clean, wrong = false)
+        }
+    }
+
+    /** A blank [newPassword] turns two-step verification off, which the screen says first. */
+    suspend fun finishRecovery(newPassword: String, hint: String): String? {
+        val asked = _state.value as? AuthState.PasswordRecovery ?: return null
+        val code = asked.code ?: return null
+        return attempt({}) {
+            td.call("recoverAuthenticationPassword") {
+                put("recovery_code", code)
+                put("new_password", newPassword)
+                put("new_hint", if (newPassword.isEmpty()) "" else hint.trim())
+            }
+        }
+    }
+
+    /** Back from the recovery to the password question, which TDLib never left. */
+    fun backToPassword() {
+        if (_state.value !is AuthState.PasswordRecovery) return
+        last?.let { apply(it) }
+    }
+
+    /**
+     * Telegram's own account reset, for somebody with neither the password nor a recovery email:
+     * deletes the account's chats and messages. Only called after the second confirmation.
+     */
+    suspend fun resetAccount(): String? {
+        if (_state.value !is AuthState.Password) return null
+        return try {
+            td.call("deleteAccount") {
+                put("reason", "Forgot password")
+                put("password", "")
+            }
+            null
+        } catch (e: TdError) {
+            SignInWaits.resetWaitSeconds(e.message)?.let { L.loginResetAccountWait(Failures.waitPhrase(it)) } ?: humanise(e)
+        }
+    }
+
+    /** Asks Telegram to reset the login email ([EmailReset.Available]). */
+    suspend fun resetEmail(): String? = attempt({}) { td.call("resetAuthenticationEmailAddress") }
+
     suspend fun submitPassword(password: String): String? {
         val hint = (_state.value as? AuthState.Password)?.hint.orEmpty()
         return attempt({ _state.value = AuthState.Password(hint, wrong = true) }) {
@@ -276,10 +360,13 @@ class WebAuth(private val td: WebTd, private val scope: CoroutineScope) {
             "authorizationStateWaitPhoneNumber" -> TdAuthorization.WaitPhoneNumber
             "authorizationStateWaitCode" -> TdAuthorization.WaitCode(codeInfo(o.obj("code_info") ?: JsonObject(emptyMap())))
             "authorizationStateWaitOtherDeviceConfirmation" -> TdAuthorization.WaitOtherDevice(o.str("link"))
-            "authorizationStateWaitPassword" -> TdAuthorization.WaitPassword(o.str("password_hint"))
+            "authorizationStateWaitPassword" -> TdAuthorization.WaitPassword(
+                hint = o.str("password_hint"),
+                recoveryEmail = o.str("recovery_email_address_pattern").takeIf { o.bool("has_recovery_email_address") },
+            )
             "authorizationStateWaitEmailAddress" -> TdAuthorization.WaitEmailAddress
             "authorizationStateWaitEmailCode" -> o.obj("code_info").let {
-                TdAuthorization.WaitEmailCode(it?.str("email_address_pattern").orEmpty(), it?.int("length") ?: 0)
+                TdAuthorization.WaitEmailCode(it?.str("email_address_pattern").orEmpty(), it?.int("length") ?: 0, emailReset(o.obj("email_address_reset_state")))
             }
             "authorizationStateWaitRegistration" -> TdAuthorization.WaitRegistration
             "authorizationStateWaitPremiumPurchase" -> TdAuthorization.WaitPremiumPurchase
@@ -298,7 +385,14 @@ class WebAuth(private val td: WebTd, private val scope: CoroutineScope) {
                 length = type?.int("length") ?: 0,
                 timeout = info.int("timeout"),
                 next = info.obj("next_type")?.let(::delivery),
+                hasNext = info.obj("next_type") != null,
             )
+        }
+
+        fun emailReset(o: JsonObject?): EmailReset = when (o?.type) {
+            "emailAddressResetStateAvailable" -> EmailReset.Available(o.int("wait_period"))
+            "emailAddressResetStatePending" -> EmailReset.Pending(o.int("reset_in"))
+            else -> EmailReset.None
         }
 
         fun delivery(type: JsonObject?): CodeDelivery = when (type?.type) {
@@ -343,12 +437,8 @@ class WebAuth(private val td: WebTd, private val scope: CoroutineScope) {
                 "PHONE_CODE_EXPIRED" in message || "CODE_EXPIRED" in message -> L.errorsCodeExpired
                 "PASSWORD_HASH_INVALID" in message -> L.errorsWrongPassword
                 "EMAIL_INVALID" in message -> L.errorsEmailInvalid
-                message.startsWith("Too Many Requests") || "FLOOD_WAIT" in message -> {
-                    val seconds = Regex("""(\d+)""").findAll(message).lastOrNull()?.value?.toLongOrNull() ?: 60
-                    L.errorsFloodWait(L.messages.formatter.duration(seconds.coerceAtLeast(60)))
-                }
                 message.isBlank() -> L.errorsNotConnected
-                else -> message
+                else -> Failures.humanise(message)
             }
         }
     }

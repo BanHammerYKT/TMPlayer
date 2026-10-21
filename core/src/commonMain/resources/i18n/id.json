@@ -945,7 +945,6 @@
     "size_smaller": "Lebih kecil"
   },
   "keep": {
-    "cannot_post": "Kamu tidak bisa memposting di chat itu.",
     "export_failed": "Tidak bisa menyalin: {reason}",
     "export_folder": "Salin ke folder",
     "export_folder_detail": "Salinan unduhan di mana pun kamu pilih",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Salinan di Movies/TMPlayer, untuk aplikasi lain",
     "exported_folder": "Disalin ke {folder}",
     "exported_gallery": "Disimpan ke Movies/TMPlayer",
-    "exporting": "Menyalin {title}",
-    "failed": "Tidak bisa meneruskan: {reason}",
-    "forward_chat": "Teruskan ke chat",
-    "forward_chat_detail": "Membagikan postingan, tidak ada yang diunduh",
-    "forward_none": "Tidak ada chat untuk meneruskannya.",
-    "forward_saved": "Teruskan ke Pesan Tersimpan",
-    "forward_saved_detail": "Menyimpannya di Telegram-mu sendiri, tidak ada yang diunduh",
-    "forward_search": "Cari chat",
-    "forward_title": "Teruskan ke",
-    "forwarded_saved": "Diteruskan ke Pesan Tersimpan",
-    "forwarded_to": "Diteruskan ke {chat}",
-    "forwarding": "Meneruskan",
-    "not_forwardable": "Telegram tidak mengizinkan postingan ini diteruskan.",
-    "protected": "Chat ini tidak mengizinkan videonya diteruskan atau disimpan."
+    "exporting": "Menyalin {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

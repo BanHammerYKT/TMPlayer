@@ -65,7 +65,6 @@ import com.tmplayer.ui.browse.DETAIL_PANE_WIDTH
 import com.tmplayer.ui.browse.DetailRow
 import com.tmplayer.ui.browse.MediaDetailPanel
 import com.tmplayer.ui.browse.detailRow
-import com.tmplayer.ui.browse.refusedForwarding
 import com.tmplayer.ui.components.rememberToast
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
@@ -191,7 +190,6 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             matched = matched,
             wrongMatch = correction?.wrongMatch == true,
             comments = comments,
-            canForward = true,
             // A copy of the finished download in a folder the viewer picks (CP82).
             canExport = true,
         ),
@@ -205,9 +203,8 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
     var confirmingRemove by remember(item.id) { mutableStateOf(false) }
     // "Rename" is asked over the pane too, which closes once the title is saved.
     var renaming by remember(item.id) { mutableStateOf(false) }
-    // The comments' videos and the chat picker open over the pane, which stays until they close.
+    // The comments' videos open over the pane, which stays until they close.
     var commentsOpen by remember(item.id) { mutableStateOf(false) }
-    var forwardOpen by remember(item.id) { mutableStateOf(false) }
 
     fun run(action: DetailAction) {
         if (action == DetailAction.RemoveDownload) {
@@ -220,10 +217,6 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
         }
         if (action == DetailAction.CommentVideos) {
             commentsOpen = true
-            return
-        }
-        if (action == DetailAction.ForwardToChat) {
-            forwardOpen = true
             return
         }
         close()
@@ -289,8 +282,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                     runCatching { state.settings.correct(com.tmplayer.data.VideoCorrections.filesOf(item)) { it.copy(wrongMatch = wrong) } }
                 }
             }
-            DetailAction.Rename, DetailAction.CommentVideos, DetailAction.ForwardToChat -> Unit
-            DetailAction.ForwardToSaved -> forwardTo(item, null, toast)
+            DetailAction.Rename, DetailAction.CommentVideos -> Unit
             DetailAction.ExportCopy -> outlives.launch {
                 val file = record?.localPath?.let(::File)?.takeIf { it.isFile }
                 if (file == null) {
@@ -319,7 +311,6 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
     val freeLabel = DiskInfo.freeLabel(free)
     val rows: List<DetailRow> = actions.map { action ->
         val row = detailRow(action, s, point, chat?.title ?: title, onSelect = { run(action) }, free = freeLabel)
-            .refusedForwarding(item) { toast(it) }
             // The desktop's own copy goes to a folder, not a gallery.
             .let { if (it.action == DetailAction.ExportCopy) it.copy(label = s.keepExportFolder, detail = s.keepExportFolderDetail, icon = TmIcons.Folder) else it }
         // The desktop's own words where it has them: the queue lives on the Downloads page.
@@ -394,9 +385,6 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             onPlay = { video -> close(); com.tmplayer.ui.browse.LinkRequests.play(video) },
             onDismiss = { commentsOpen = false },
         )
-    }
-    if (forwardOpen) {
-        ForwardDialog(item, onDismiss = { forwardOpen = false })
     }
 
     if (renaming) {

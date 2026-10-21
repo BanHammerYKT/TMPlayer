@@ -945,7 +945,6 @@
     "size_smaller": "Мельче"
   },
   "keep": {
-    "cannot_post": "Вы не можете публиковать в этом чате.",
     "export_failed": "Не удалось скопировать: {reason}",
     "export_folder": "Копировать в папку",
     "export_folder_detail": "Копия загрузки в любом выбранном месте",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Копия в Movies/TMPlayer, для других приложений",
     "exported_folder": "Скопировано в {folder}",
     "exported_gallery": "Сохранено в Movies/TMPlayer",
-    "exporting": "Копирование: {title}",
-    "failed": "Не удалось переслать: {reason}",
-    "forward_chat": "Переслать в чат",
-    "forward_chat_detail": "Пересылает пост, ничего не скачивается",
-    "forward_none": "Нет чата, в который можно переслать.",
-    "forward_saved": "Переслать в Сохранённые сообщения",
-    "forward_saved_detail": "Сохраняет в вашем Telegram, ничего не скачивается",
-    "forward_search": "Найти чат",
-    "forward_title": "Переслать в",
-    "forwarded_saved": "Переслано в Сохранённые сообщения",
-    "forwarded_to": "Переслано в {chat}",
-    "forwarding": "Пересылка",
-    "not_forwardable": "Telegram не разрешает пересылать этот пост.",
-    "protected": "Этот чат запрещает пересылать и сохранять его видео."
+    "exporting": "Копирование: {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

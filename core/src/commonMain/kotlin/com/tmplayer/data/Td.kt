@@ -116,6 +116,16 @@ object Td {
     /** Bumped by [retryConnecting], so the stall count starts again while the state stays put. */
     private val connectAttempt = MutableStateFlow(0)
 
+    /**
+     * Whether any of the app's screens is on view ([onForegroundChanged]). Time spent in the
+     * background never counts towards [unreachable]: Android holds a backgrounded app's sockets
+     * and TDLib backs off, so the line is down for reasons that say nothing about the network.
+     */
+    private val foreground = MutableStateFlow(true)
+
+    /** Bumped each time the app comes back into view, so the [unreachable] count starts afresh. */
+    private val foregroundEpoch = MutableStateFlow(0)
+
     /** The client [retryConnecting] is closing, whose aborted requests are not a sign in failure. */
     @Volatile
     private var retiring: TdlClient? = null
@@ -267,9 +277,11 @@ object Td {
             // Signed in, the network up as far as the platform knows, and still no line: the
             // blocked network that otherwise reads as a slow one. A network that is really gone
             // has the offline notice already, so it is left to that.
-            val held = combine(_auth, _link, _network, connectAttempt) { auth, link, network, attempt ->
+            // Only while the app is on view, and counted from its return: a phone that was in a
+            // pocket comes back with its line down, and that is a reconnect, not a blocked network.
+            val held = combine(_auth, _link, _network, connectAttempt, combine(foreground, foregroundEpoch, ::Pair)) { auth, link, network, attempt, (shown, epoch) ->
                 val up = network.status != NetworkStatus.Offline && link != TelegramLink.WaitingForNetwork
-                (auth is AuthState.Ready && !link.isUp && up) to attempt
+                (shown && auth is AuthState.Ready && !link.isUp && up) to (attempt to epoch)
             }.distinctUntilChanged().map { it.first }
             AuthStall.watchWaiting(held, _unreachable, UNREACHABLE_MS)
         }
@@ -500,7 +512,12 @@ object Td {
                     // A client being replaced answers its open requests with an error; that is the
                     // retry working, not the sign in failing.
                     if (result is TdlResult.Failure && td === current && td !== retiring) {
-                        _auth.value = AuthState.Failed(Failures.humanise(result.message))
+                        // A flood wait carries its length, which the screen counts down before it
+                        // offers the code again, rather than a Try again that fails the same way.
+                        _auth.value = AuthState.Failed(
+                            Failures.humanise(result.message),
+                            Failures.floodWaitSeconds(result.message) ?: 0,
+                        )
                     }
                 }
             }
@@ -701,14 +718,126 @@ object Td {
     /** Submits the two-step verification password. Returns null on success, an error otherwise. */
     suspend fun submitPassword(password: String): String? {
         val td = current ?: return L.errorsNotConnected
-        val hint = (_auth.value as? AuthState.Password)?.hint.orEmpty()
-        return when (val result = td.checkAuthenticationPassword(password)) {
+        val asked = _auth.value as? AuthState.Password ?: AuthState.Password("")
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.checkAuthenticationPassword(password) }
+            ?: return L.errorsNoAnswer
+        return when (result) {
             is TdlResult.Success -> null
             is TdlResult.Failure -> {
-                _auth.value = AuthState.Password(hint, wrong = true)
+                _auth.value = asked.copy(wrong = true)
                 if (result.message == "PASSWORD_HASH_INVALID") L.errorsWrongPassword else Failures.humanise(result.message)
             }
         }
+    }
+
+    /**
+     * "Forgot password" on the two-step verification step: Telegram mails a recovery code to the
+     * account's recovery address ([AuthState.Password.recoveryEmail]). Null on success, with the
+     * screen moved to [AuthState.PasswordRecovery]; an error otherwise.
+     */
+    suspend fun forgotPassword(): String? {
+        val td = current ?: return L.errorsNotConnected
+        val asked = _auth.value as? AuthState.Password ?: return null
+        val pattern = asked.recoveryEmail ?: return L.loginRecoveryNoEmail
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.requestAuthenticationPasswordRecovery() }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> {
+                _auth.value = AuthState.PasswordRecovery(pattern)
+                null
+            }
+            is TdlResult.Failure -> Failures.humanise(result.message)
+        }
+    }
+
+    /** Checks the mailed recovery code; on success the screen asks for a new password, or none. */
+    suspend fun submitRecoveryCode(code: String): String? {
+        val td = current ?: return L.errorsNotConnected
+        val asked = _auth.value as? AuthState.PasswordRecovery ?: return null
+        val clean = code.trim()
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.checkAuthenticationPasswordRecoveryCode(clean) }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> {
+                _auth.value = asked.copy(code = clean, wrong = false)
+                null
+            }
+            is TdlResult.Failure -> {
+                _auth.value = asked.copy(wrong = true)
+                if (result.message.contains("CODE_INVALID")) L.errorsWrongCode else Failures.humanise(result.message)
+            }
+        }
+    }
+
+    /**
+     * Finishes the recovery with [newPassword] and its [hint]. A blank password turns two-step
+     * verification off, which the screen says in so many words before this is called.
+     */
+    suspend fun finishPasswordRecovery(newPassword: String, hint: String): String? {
+        val td = current ?: return L.errorsNotConnected
+        val asked = _auth.value as? AuthState.PasswordRecovery ?: return null
+        val code = asked.code ?: return null
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) {
+            td.recoverAuthenticationPassword(code, newPassword, if (newPassword.isEmpty()) "" else hint.trim())
+        } ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> null
+            is TdlResult.Failure -> Failures.humanise(result.message)
+        }
+    }
+
+    /** Back from the recovery to the password question, which TDLib never left. */
+    suspend fun backToPassword() {
+        if (_auth.value !is AuthState.PasswordRecovery) return
+        replay()
+    }
+
+    /**
+     * The last way in for somebody with neither the password nor a recovery email: Telegram's own
+     * account reset, which deletes the account's messages and chats. Only ever called after the
+     * screen has said exactly that and the viewer has confirmed it. A recently used account is
+     * reset only after a waiting period; Telegram then refuses with `2FA_CONFIRM_WAIT_<seconds>`,
+     * which comes back here as the sentence saying how long.
+     */
+    suspend fun resetAccount(): String? {
+        val td = current ?: return L.errorsNotConnected
+        if (_auth.value !is AuthState.Password) return null
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.deleteAccount("Forgot password", "") }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> null
+            is TdlResult.Failure -> SignInWaits.resetWaitSeconds(result.message)
+                ?.let { L.loginResetAccountWait(Failures.waitPhrase(it)) }
+                ?: Failures.humanise(result.message)
+        }
+    }
+
+    /**
+     * Asks Telegram to reset the login email of an account it signs in by email
+     * ([EmailReset.Available]). TDLib answers with a new email code state that carries the wait.
+     */
+    suspend fun resetEmailAddress(): String? {
+        val td = current ?: return L.errorsNotConnected
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.resetAuthenticationEmailAddress() }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> null
+            is TdlResult.Failure -> Failures.humanise(result.message)
+        }
+    }
+
+    /**
+     * TDLib's layout for a national number being typed after [dial]: separators where its country
+     * puts them and a "-" for each digit to come ([PhoneFormat]). Null when it has none. Answered
+     * from TDLib's own tables, before sign in and with no line to Telegram.
+     */
+    suspend fun formatPhone(dial: String, national: String): String? {
+        val td = current ?: return null
+        if (dial.isEmpty()) return null
+        return td.getPhoneNumberInfo("+$dial$national").valueOrNull
+            ?.takeIf { it.countryCallingCode == dial }
+            ?.formattedPhoneNumber
+            ?.takeIf { it.isNotBlank() }
     }
 
     suspend fun logOut() {
@@ -723,6 +852,13 @@ object Td {
      * account or cannot remember the password has nothing to press. Logging out here throws away
      * an attempt rather than an account, since nobody is signed in yet.
      */
+    /**
+     * A new QR code on request ("Get a new code"). TDLib takes requestQrCodeAuthentication only
+     * from its first question, not while a code is up, so the sign in starts over with the QR
+     * method kept, which asks for a fresh code at once.
+     */
+    suspend fun refreshQrCode() = restartSignIn(SignInMethod.Qr)
+
     suspend fun restartSignIn(next: SignInMethod = SignInMethod.Undecided) {
         method = next
         methodAfterRestart = next
@@ -801,6 +937,23 @@ object Td {
         if (!facts.isSwitchFrom(before)) return
         val td = current ?: return
         scope.launch { tellNetworkType(td) }
+    }
+
+    /**
+     * The app came into view ([visible]) or left it. Coming back with no line, TDLib is told the
+     * network again, which reopens its connections at once rather than after the backoff it built
+     * up while the app was in the background: what Telegram's own apps do on resume. A line that
+     * is already up is left alone, since the call drops every connection.
+     */
+    fun onForegroundChanged(visible: Boolean) {
+        if (foreground.value == visible) return
+        foreground.value = visible
+        if (!visible) return
+        foregroundEpoch.value++
+        val td = current ?: return
+        if (_auth.value !is AuthState.Ready || _link.value.isUp) return
+        Logger.i(TAG, "back in view with no line; reopening connections")
+        scope.launch { tellNetworkType(td, force = true) }
     }
 
     private suspend fun tellNetworkType(td: TdlClient, force: Boolean = false) {
@@ -1255,7 +1408,7 @@ object Td {
     const val SIGN_IN_STALL_MS = 12_000L
 
     /** How long a signed in session goes without a line before [unreachable] says so. */
-    private const val UNREACHABLE_MS = 15_000L
+    private const val UNREACHABLE_MS = 20_000L
 
     /** How long a typed answer (a number, an email) waits for Telegram before the screen says so. */
     private const val SUBMIT_TIMEOUT_MS = 20_000L

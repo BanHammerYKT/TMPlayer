@@ -945,7 +945,6 @@
     "size_smaller": "작게"
   },
   "keep": {
-    "cannot_post": "그 채팅에는 게시할 수 없어요.",
     "export_failed": "복사하지 못했어요: {reason}",
     "export_folder": "폴더에 복사",
     "export_folder_detail": "원하는 곳에 다운로드 사본 저장",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "다른 앱에서 쓸 수 있도록 Movies/TMPlayer에 사본 저장",
     "exported_folder": "{folder}에 복사했어요",
     "exported_gallery": "Movies/TMPlayer에 저장했어요",
-    "exporting": "{title} 복사 중",
-    "failed": "전달하지 못했어요: {reason}",
-    "forward_chat": "채팅으로 전달",
-    "forward_chat_detail": "게시물을 공유해요. 아무것도 다운로드하지 않아요",
-    "forward_none": "전달할 채팅이 없어요.",
-    "forward_saved": "저장한 메시지로 전달",
-    "forward_saved_detail": "내 Telegram에 보관해요. 아무것도 다운로드하지 않아요",
-    "forward_search": "채팅 찾기",
-    "forward_title": "전달 대상",
-    "forwarded_saved": "저장한 메시지로 전달했어요",
-    "forwarded_to": "{chat}(으)로 전달했어요",
-    "forwarding": "전달하는 중",
-    "not_forwardable": "Telegram에서 이 게시물의 전달을 허용하지 않아요.",
-    "protected": "이 채팅은 영상의 전달이나 저장을 허용하지 않아요."
+    "exporting": "{title} 복사 중"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

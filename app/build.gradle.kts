@@ -303,6 +303,9 @@ dependencies {
         val catalog = project.extensions.getByType<VersionCatalogsExtension>().named("libs")
         implementation(catalog.findLibrary("play-services-cast-framework").get())
         implementation(libs.androidx.mediarouter)
+        // SMS User Consent for the sign in code (ui/auth/SmsCodeConsent.kt in src/cast): no SMS
+        // permission, the viewer allows each message in a system prompt.
+        implementation(catalog.findLibrary("play-services-auth-api-phone").get())
     }
 
     // Crash reporting, off unless the viewer turns it on in Settings. Nothing here runs at

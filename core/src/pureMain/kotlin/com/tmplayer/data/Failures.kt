@@ -2,7 +2,7 @@ package com.tmplayer.data
 
 import com.tmplayer.i18n.L
 import com.tmplayer.platform.Logger
-import java.io.IOException
+import com.tmplayer.platform.IOException
 
 /**
  * Turns whatever went wrong into a sentence a viewer can act on.
@@ -103,13 +103,14 @@ object Failures {
     fun floodWaitSeconds(raw: String?): Int? =
         raw?.let { FLOOD.find(it)?.groupValues?.get(1)?.toIntOrNull() }
 
-    private fun floodMessage(seconds: Int): String {
-        val wait = when {
-            seconds < 60 -> L.unitSeconds(seconds)
-            seconds < 3600 -> L.unitMinutes(seconds / 60)
-            else -> L.unitHours(seconds / 3600)
-        }
-        return L.errorsFloodWait(wait)
+    private fun floodMessage(seconds: Int): String = L.errorsFloodWait(waitPhrase(seconds))
+
+    /** A wait in the largest unit that fits it: "42 seconds", "5 minutes", "3 hours", "7 days". */
+    fun waitPhrase(seconds: Int): String = when {
+        seconds < 60 -> L.unitSeconds(seconds)
+        seconds < 3600 -> L.unitMinutes(seconds / 60)
+        seconds < 2 * 86_400 -> L.unitHours(seconds / 3600)
+        else -> L.unitDays(seconds / 86_400)
     }
 
     private val FLOOD = Regex("""(?:FLOOD_WAIT_|retry after )(\d+)""", RegexOption.IGNORE_CASE)

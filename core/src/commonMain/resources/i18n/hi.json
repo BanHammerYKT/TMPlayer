@@ -945,7 +945,6 @@
     "size_smaller": "छोटा"
   },
   "keep": {
-    "cannot_post": "आप उस चैट में पोस्ट नहीं कर सकते।",
     "export_failed": "कॉपी नहीं हो सका: {reason}",
     "export_folder": "किसी फ़ोल्डर में कॉपी करें",
     "export_folder_detail": "डाउनलोड की एक कॉपी, जहाँ आप चाहें",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Movies/TMPlayer में एक कॉपी, दूसरे ऐप के लिए",
     "exported_folder": "{folder} में कॉपी हुआ",
     "exported_gallery": "Movies/TMPlayer में सेव हुआ",
-    "exporting": "{title} कॉपी हो रहा है",
-    "failed": "फ़ॉरवर्ड नहीं हो सका: {reason}",
-    "forward_chat": "किसी चैट में फ़ॉरवर्ड करें",
-    "forward_chat_detail": "पोस्ट शेयर करता है, कुछ डाउनलोड नहीं होता",
-    "forward_none": "फ़ॉरवर्ड करने के लिए कोई चैट नहीं।",
-    "forward_saved": "सेव्ड मैसेज में फ़ॉरवर्ड करें",
-    "forward_saved_detail": "इसे आपके अपने Telegram में रखता है, कुछ डाउनलोड नहीं होता",
-    "forward_search": "चैट ढूँढ़ें",
-    "forward_title": "इसमें फ़ॉरवर्ड करें",
-    "forwarded_saved": "सेव्ड मैसेज में फ़ॉरवर्ड हुआ",
-    "forwarded_to": "{chat} में फ़ॉरवर्ड हुआ",
-    "forwarding": "फ़ॉरवर्ड हो रहा है",
-    "not_forwardable": "Telegram इस पोस्ट को फ़ॉरवर्ड करने नहीं देता।",
-    "protected": "यह चैट अपने वीडियो फ़ॉरवर्ड या सेव करने नहीं देती।"
+    "exporting": "{title} कॉपी हो रहा है"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

@@ -26,6 +26,9 @@ import dev.g000sha256.tdl.dto.AuthorizationStateWaitPhoneNumber
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitPremiumPurchase
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitRegistration
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitTdlibParameters
+import dev.g000sha256.tdl.dto.EmailAddressResetState
+import dev.g000sha256.tdl.dto.EmailAddressResetStateAvailable
+import dev.g000sha256.tdl.dto.EmailAddressResetStatePending
 
 /**
  * TDLib's authorization states as tdl-coroutines hands them over, mapped onto the TDLib-neutral
@@ -45,14 +48,21 @@ object AuthReducer {
         is AuthorizationStateWaitPhoneNumber -> TdAuthorization.WaitPhoneNumber
         is AuthorizationStateWaitCode -> TdAuthorization.WaitCode(codeInfo(state.codeInfo))
         is AuthorizationStateWaitOtherDeviceConfirmation -> TdAuthorization.WaitOtherDevice(state.link)
-        is AuthorizationStateWaitPassword -> TdAuthorization.WaitPassword(state.passwordHint)
+        is AuthorizationStateWaitPassword -> TdAuthorization.WaitPassword(
+            hint = state.passwordHint,
+            recoveryEmail = state.recoveryEmailAddressPattern.takeIf { state.hasRecoveryEmailAddress },
+        )
         is AuthorizationStateReady -> TdAuthorization.Ready
         is AuthorizationStateLoggingOut -> TdAuthorization.LoggingOut
         is AuthorizationStateClosing -> TdAuthorization.Closing
         is AuthorizationStateClosed -> TdAuthorization.Closed
         is AuthorizationStateWaitEmailAddress -> TdAuthorization.WaitEmailAddress
         is AuthorizationStateWaitEmailCode ->
-            TdAuthorization.WaitEmailCode(state.codeInfo.emailAddressPattern, state.codeInfo.length)
+            TdAuthorization.WaitEmailCode(
+                state.codeInfo.emailAddressPattern,
+                state.codeInfo.length,
+                emailReset(state.emailAddressResetState),
+            )
         is AuthorizationStateWaitRegistration -> TdAuthorization.WaitRegistration
         is AuthorizationStateWaitPremiumPurchase -> TdAuthorization.WaitPremiumPurchase
         else -> TdAuthorization.Unknown
@@ -71,7 +81,14 @@ object AuthReducer {
         length = length(info.type),
         timeout = info.timeout,
         next = info.nextType?.let(::delivery),
+        hasNext = info.nextType != null,
     )
+
+    fun emailReset(state: EmailAddressResetState?): EmailReset = when (state) {
+        is EmailAddressResetStateAvailable -> EmailReset.Available(state.waitPeriod)
+        is EmailAddressResetStatePending -> EmailReset.Pending(state.resetIn)
+        else -> EmailReset.None
+    }
 
     fun delivery(type: AuthenticationCodeType): CodeDelivery = when (type) {
         is AuthenticationCodeTypeTelegramMessage -> CodeDelivery.TelegramApp

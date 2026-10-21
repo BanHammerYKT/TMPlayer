@@ -57,8 +57,12 @@ sealed interface AuthState {
     /** Telegram wants an answer and the user has not said which way they want to give it. */
     data object ChooseMethod : AuthState
 
-    /** Scan [link] with Telegram on your phone: Settings -> Devices -> Link Desktop Device. */
-    data class Qr(val link: String) : AuthState
+    /**
+     * Scan [link] with Telegram on your phone: Settings -> Devices -> Link Desktop Device.
+     * [scanned] only on the screen's own copy held for a moment after the scan ([rememberScanHold]
+     * in :ui); TDLib never reports one.
+     */
+    data class Qr(val link: String, val scanned: Boolean = false) : AuthState
 
     /** Waiting for a phone number, in international form. */
     data class Phone(val wrong: Boolean = false) : AuthState
@@ -81,6 +85,11 @@ sealed interface AuthState {
         val timeout: Int = 0,
         /** What asking again would send, when that differs from what was sent. */
         val next: CodeDelivery? = null,
+        /**
+         * Whether TDLib will send the code again at all: only when it has a next route, the same
+         * route included. With none, `resendAuthenticationCode` is refused, so no button is shown.
+         */
+        val canResend: Boolean = false,
     ) : AuthState
 
     /**
@@ -94,14 +103,59 @@ sealed interface AuthState {
      * a text for some accounts. [pattern] is the address with most of it starred out, as Telegram
      * gives it; [length] is the number of digits, zero when not said.
      */
-    data class EmailCode(val pattern: String, val length: Int = 0, val wrong: Boolean = false) : AuthState
+    data class EmailCode(
+        val pattern: String,
+        val length: Int = 0,
+        val wrong: Boolean = false,
+        /** Whether the address can be reset, and when, as TDLib reports it. */
+        val reset: EmailReset = EmailReset.None,
+    ) : AuthState
 
-    /** Two-step verification is on; [hint] is the user's own password hint (may be blank). */
-    data class Password(val hint: String, val wrong: Boolean = false) : AuthState
+    /**
+     * Two-step verification is on; [hint] is the user's own password hint (may be blank).
+     * [recoveryEmail] is the starred out recovery address when the account has one, which is
+     * what "Forgot password" mails a code to; null when it has none.
+     */
+    data class Password(
+        val hint: String,
+        val wrong: Boolean = false,
+        val recoveryEmail: String? = null,
+    ) : AuthState
+
+    /**
+     * "Forgot password": Telegram mailed a recovery code to [pattern]. TDLib stays on its
+     * password question meanwhile, so this is the client's own step, set by the client rather
+     * than by [AuthFlow]. Once the code is accepted ([code] set) the viewer may choose a new
+     * password, or none, which turns two-step verification off.
+     */
+    data class PasswordRecovery(
+        val pattern: String,
+        val code: String? = null,
+        val wrong: Boolean = false,
+    ) : AuthState
 
     data object Ready : AuthState
 
-    data class Failed(val message: String) : AuthState
+    /**
+     * [waitSeconds] when Telegram said how long to wait before trying again (a flood wait), so the
+     * screen can count it down rather than offer a Try again that will fail the same way.
+     */
+    data class Failed(val message: String, val waitSeconds: Int = 0) : AuthState
+}
+
+/**
+ * Whether the login email of an account Telegram signs in by email can be reset, which is the
+ * way out for somebody who no longer has that mailbox. TDLib reports it on the email code step.
+ */
+sealed interface EmailReset {
+    /** No reset on offer. */
+    data object None : EmailReset
+
+    /** A reset may be asked for now; Telegram then waits [waitSeconds] before carrying it out. */
+    data class Available(val waitSeconds: Int) : EmailReset
+
+    /** A reset is under way and completes in [resetInSeconds]; a code then comes by text. */
+    data class Pending(val resetInSeconds: Int) : EmailReset
 }
 
 /** The side effect [AuthReducer] wants the client to perform. */
@@ -134,9 +188,9 @@ sealed interface TdAuthorization {
     data object WaitPhoneNumber : TdAuthorization
     data class WaitCode(val info: CodeInfo) : TdAuthorization
     data class WaitOtherDevice(val link: String) : TdAuthorization
-    data class WaitPassword(val hint: String) : TdAuthorization
+    data class WaitPassword(val hint: String, val recoveryEmail: String? = null) : TdAuthorization
     data object WaitEmailAddress : TdAuthorization
-    data class WaitEmailCode(val pattern: String, val length: Int) : TdAuthorization
+    data class WaitEmailCode(val pattern: String, val length: Int, val reset: EmailReset = EmailReset.None) : TdAuthorization
     data object WaitRegistration : TdAuthorization
     data object WaitPremiumPurchase : TdAuthorization
     data object Ready : TdAuthorization
@@ -156,6 +210,8 @@ data class CodeInfo(
     val length: Int,
     val timeout: Int,
     val next: CodeDelivery?,
+    /** Whether TDLib has any next route at all, the same one included. */
+    val hasNext: Boolean = next != null,
 )
 
 /**
@@ -187,7 +243,8 @@ object AuthFlow {
         is TdAuthorization.WaitOtherDevice -> AuthStep(AuthState.Qr(state.link), AuthAction.None)
 
         // Telegram mandates this screen when the account has two-step verification enabled.
-        is TdAuthorization.WaitPassword -> AuthStep(AuthState.Password(state.hint), AuthAction.None)
+        is TdAuthorization.WaitPassword ->
+            AuthStep(AuthState.Password(hint = state.hint, recoveryEmail = state.recoveryEmail), AuthAction.None)
 
         TdAuthorization.Ready -> AuthStep(AuthState.Ready, AuthAction.OnReady)
 
@@ -199,7 +256,8 @@ object AuthFlow {
         // An account Telegram signs in by email: an address first if it has none, then the code.
         TdAuthorization.WaitEmailAddress -> AuthStep(AuthState.EmailAddress(), AuthAction.None)
 
-        is TdAuthorization.WaitEmailCode -> AuthStep(AuthState.EmailCode(state.pattern, state.length), AuthAction.None)
+        is TdAuthorization.WaitEmailCode ->
+            AuthStep(AuthState.EmailCode(pattern = state.pattern, length = state.length, reset = state.reset), AuthAction.None)
 
         // A number with no account behind it. Signing up is the Telegram app's job.
         TdAuthorization.WaitRegistration -> AuthStep(AuthState.Failed(L.errorsNoAccount), AuthAction.None)
@@ -234,6 +292,7 @@ object AuthFlow {
             // A next type equal to the current one says nothing: the button would offer to send
             // the same thing by the same route, which is what plain "Resend" already means.
             next = info.next?.takeIf { it != info.delivery },
+            canResend = info.hasNext,
         )
 
     private val UNSUPPORTED_STEP: String get() = L.errorsUnsupportedSignInStep

@@ -61,12 +61,6 @@ enum class DetailAction {
     /** "Videos in the comments": the videos posted under a channel post (CP81). */
     CommentVideos,
 
-    /** Forwards the post to the account's Saved Messages, nothing downloaded (CP82). */
-    ForwardToSaved,
-
-    /** Forwards the post to a chat picked from a list (CP82). */
-    ForwardToChat,
-
     /** Copies the finished download out: the phone's gallery, or a folder on the desktop (CP82). */
     ExportCopy,
 }
@@ -107,11 +101,6 @@ data class DetailContext(
     val wrongMatch: Boolean = false,
     /** How many comments the post has (a channel post with a discussion group), 0 for none. */
     val comments: Int = 0,
-    /**
-     * The platform can forward from here (signed in, with a chat list to pick from). Offered even
-     * for a chat that restricts saving, whose rows then say why they cannot be used.
-     */
-    val canForward: Boolean = false,
     /** The platform can copy a finished download out (the phone's gallery, a desktop folder). */
     val canExport: Boolean = false,
 )
@@ -149,11 +138,6 @@ object DetailActions {
         if (context.canHandOff && context.canBeSaved && whole) {
             add(DetailAction.Share)
             add(DetailAction.OpenElsewhere)
-        }
-        // Keeping it without a download: the post forwarded, which copies nothing to the device.
-        if (context.canForward) {
-            add(DetailAction.ForwardToSaved)
-            add(DetailAction.ForwardToChat)
         }
         if (context.canExport && KeepRules.mayExport(context.canBeSaved, context.inDownloads)) add(DetailAction.ExportCopy)
         if (context.comments > 0) add(DetailAction.CommentVideos)

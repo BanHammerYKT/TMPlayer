@@ -33,7 +33,10 @@ object AudioDownmix {
         /** Media3's own constant power fold to stereo, for the layouts it has coefficients for. */
         data class ConstantPower(val channels: Int) : Fold
 
-        /** A fold this file builds, for the layouts Media3 will not build one for. */
+        /**
+         * A fold this file builds: the dialogue forward fold for the surround layouts whose
+         * channel order is fixed ([dialogueCoefficients]), and the alternating one for the rest.
+         */
         data class Wide(val channels: Int, val coefficients: FloatArray) : Fold {
             // Data classes compare arrays by identity, which would make two equal folds unequal and
             // is exactly the sort of thing a test notices and nothing else does.
@@ -67,12 +70,59 @@ object AudioDownmix {
     /** Every matrix of the stereo fold, for a player that [wanted] one. */
     fun stereoFolds(): List<Fold> {
         return (1..MAX_LAYOUT).map { channels ->
+            val dialogue = dialogueCoefficients(channels)
             when {
                 channels <= STEREO -> Fold.Untouched(channels)
+                dialogue != null -> Fold.Wide(channels, dialogue)
                 channels <= MAX_CONSTANT_POWER -> Fold.ConstantPower(channels)
                 else -> Fold.Wide(channels, wideCoefficients(channels))
             }
         }
+    }
+
+    /** The centre channel's share of each side: full, where the dialogue lives. */
+    const val CENTRE = 1f
+
+    /** Each surround channel to its own side, 3 dB down, as ITU's fold has them. */
+    const val SURROUND = 0.7071f
+
+    /** The low effects channel, kept low: phone speakers cannot play it, and it eats headroom. */
+    const val LOW_EFFECTS = 0.35f
+
+    /**
+     * A dialogue forward fold for the surround layouts Android (and FFmpeg's decoders, which the
+     * DTS and TrueHD tracks go through) put in a fixed order, or null for any other count.
+     *
+     * Media3's own fold (and every textbook one) puts the centre 3 dB under the fronts. The centre
+     * is where a film keeps its dialogue, and films already mix it low against the music and the
+     * effects, so folded to two speakers the voices sank under everything else. Here the centre
+     * goes to both sides at full ([CENTRE]), the fronts stay as they are, the surrounds go to their
+     * own side 3 dB down and the low effects channel well down. The sum can pass full scale on a
+     * loud scene; the soft limit after the fold (VolumeBoostProcessor) catches that instead of
+     * clipping it.
+     *
+     * The orders, by channel count: 3 is FL FR FC; 5 is FL FR FC BL BR; 6 (5.1) is FL FR FC LFE BL
+     * BR; 7 (6.1) is FL FR FC LFE BL BR BC; 8 (7.1) is FL FR FC LFE BL BR SL SR. Quad (4) has no
+     * centre and keeps Media3's fold. The alternating fold ([wideCoefficients]) used to take 7.1
+     * too, which sent the centre to the left side alone, at half its level.
+     */
+    fun dialogueCoefficients(channels: Int): FloatArray? {
+        val fl = floatArrayOf(1f, 0f)
+        val fr = floatArrayOf(0f, 1f)
+        val fc = floatArrayOf(CENTRE, CENTRE)
+        val lfe = floatArrayOf(LOW_EFFECTS, LOW_EFFECTS)
+        val left = floatArrayOf(SURROUND, 0f)
+        val right = floatArrayOf(0f, SURROUND)
+        val back = floatArrayOf(SURROUND * SURROUND, SURROUND * SURROUND)
+        val rows = when (channels) {
+            3 -> listOf(fl, fr, fc)
+            5 -> listOf(fl, fr, fc, left, right)
+            6 -> listOf(fl, fr, fc, lfe, left, right)
+            7 -> listOf(fl, fr, fc, lfe, left, right, back)
+            8 -> listOf(fl, fr, fc, lfe, left, right, left, right)
+            else -> return null
+        }
+        return rows.flatMap { it.asList() }.toFloatArray()
     }
 
     /**

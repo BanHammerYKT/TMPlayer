@@ -14,11 +14,12 @@ class VolumeBoostProcessorTest {
     /** 48 kHz mono 16 bit. */
     private val format = AudioProcessor.AudioFormat(48_000, 1, C.ENCODING_PCM_16BIT)
 
-    private fun processor(on: Boolean, night: Boolean = false) = VolumeBoostProcessor().apply {
+    private fun processor(on: Boolean, night: Boolean = false, level: Boolean = false) = VolumeBoostProcessor().apply {
         configure(format)
         flush()
         enabled = on
         this.night = night
+        this.level = level
     }
 
     /** A steady square wave at [level] of full scale, which keeps the peak follower simple. */

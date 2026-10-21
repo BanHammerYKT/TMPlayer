@@ -945,7 +945,6 @@
     "size_smaller": "Kleiner"
   },
   "keep": {
-    "cannot_post": "Du kannst in diesem Chat nichts posten.",
     "export_failed": "Kopieren fehlgeschlagen: {reason}",
     "export_folder": "In einen Ordner kopieren",
     "export_folder_detail": "Eine Kopie des Downloads, wo du willst",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Eine Kopie in Movies/TMPlayer, für andere Apps",
     "exported_folder": "Nach {folder} kopiert",
     "exported_gallery": "In Movies/TMPlayer gespeichert",
-    "exporting": "{title} wird kopiert",
-    "failed": "Weiterleiten fehlgeschlagen: {reason}",
-    "forward_chat": "An einen Chat weiterleiten",
-    "forward_chat_detail": "Teilt den Beitrag, nichts wird heruntergeladen",
-    "forward_none": "Kein Chat zum Weiterleiten.",
-    "forward_saved": "An Gespeicherte Nachrichten",
-    "forward_saved_detail": "Behält ihn in deinem eigenen Telegram, nichts wird heruntergeladen",
-    "forward_search": "Chat suchen",
-    "forward_title": "Weiterleiten an",
-    "forwarded_saved": "An Gespeicherte Nachrichten weitergeleitet",
-    "forwarded_to": "An {chat} weitergeleitet",
-    "forwarding": "Wird weitergeleitet",
-    "not_forwardable": "Telegram erlaubt nicht, diesen Beitrag weiterzuleiten.",
-    "protected": "Dieser Chat erlaubt kein Weiterleiten oder Speichern seiner Videos."
+    "exporting": "{title} wird kopiert"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

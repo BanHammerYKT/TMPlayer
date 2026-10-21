@@ -945,7 +945,6 @@
     "size_smaller": "Nhỏ hơn"
   },
   "keep": {
-    "cannot_post": "Bạn không thể đăng trong cuộc trò chuyện đó.",
     "export_failed": "Không sao chép được: {reason}",
     "export_folder": "Sao chép vào thư mục",
     "export_folder_detail": "Một bản sao của video đã tải ở nơi bạn chọn",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Một bản sao trong Movies/TMPlayer, cho các ứng dụng khác",
     "exported_folder": "Đã sao chép vào {folder}",
     "exported_gallery": "Đã lưu vào Movies/TMPlayer",
-    "exporting": "Đang sao chép {title}",
-    "failed": "Không chuyển tiếp được: {reason}",
-    "forward_chat": "Chuyển tiếp tới cuộc trò chuyện",
-    "forward_chat_detail": "Chia sẻ bài đăng, không tải gì xuống",
-    "forward_none": "Không có cuộc trò chuyện nào để chuyển tiếp.",
-    "forward_saved": "Chuyển tiếp tới Tin nhắn đã lưu",
-    "forward_saved_detail": "Giữ trong Telegram của riêng bạn, không tải gì xuống",
-    "forward_search": "Tìm cuộc trò chuyện",
-    "forward_title": "Chuyển tiếp tới",
-    "forwarded_saved": "Đã chuyển tiếp tới Tin nhắn đã lưu",
-    "forwarded_to": "Đã chuyển tiếp tới {chat}",
-    "forwarding": "Đang chuyển tiếp",
-    "not_forwardable": "Telegram không cho phép chuyển tiếp bài đăng này.",
-    "protected": "Cuộc trò chuyện này không cho phép chuyển tiếp hay lưu video của nó."
+    "exporting": "Đang sao chép {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

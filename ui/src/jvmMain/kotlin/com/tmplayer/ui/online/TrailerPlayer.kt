@@ -7,6 +7,15 @@ import com.tmplayer.online.MetaTrailer
 @Composable
 internal fun rememberInAppTrailers(): Boolean = false
 
+/** Nothing comes before the browser on a desktop. */
+@Composable
+internal fun rememberTrailerAppFirst(): ((MetaTrailer) -> Boolean)? = null
+
 @Composable
 @Suppress("UNUSED_PARAMETER")
-internal fun TrailerPlayer(trailer: MetaTrailer, onClose: () -> Unit, onOpenElsewhere: () -> Unit) = Unit
+internal fun TrailerPlayer(
+    trailer: MetaTrailer,
+    onClose: () -> Unit,
+    onOpenElsewhere: () -> Unit,
+    fallback: @Composable () -> Unit,
+) = Unit

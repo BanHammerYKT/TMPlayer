@@ -25,9 +25,11 @@ import dev.g000sha256.tdl.dto.AuthorizationStateWaitPremiumPurchase
 import dev.g000sha256.tdl.dto.AuthorizationStateWaitRegistration
 import dev.g000sha256.tdl.dto.EmailAddressAuthenticationCodeInfo
 import dev.g000sha256.tdl.dto.EmailAddressResetStateAvailable
+import dev.g000sha256.tdl.dto.EmailAddressResetStatePending
 import dev.g000sha256.tdl.dto.FormattedText
 import dev.g000sha256.tdl.dto.TermsOfService
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -60,7 +62,7 @@ class AuthReducerTest {
         val step = AuthReducer.reduce(
             AuthorizationStateWaitPassword("my cat", true, false, "a**@b.com"),
         )
-        assertEquals(AuthState.Password("my cat"), step.state)
+        assertEquals(AuthState.Password("my cat", recoveryEmail = "a**@b.com"), step.state)
         assertEquals(AuthAction.None, step.action)
     }
 
@@ -176,6 +178,14 @@ class AuthReducerTest {
             30,
         )
         assertEquals(null, AuthReducer.codeState(codeInfo).next)
+        // Still sent again, by the same route: the resend button stays.
+        assertTrue(AuthReducer.codeState(codeInfo).canResend)
+    }
+
+    @Test
+    fun `with no next route TDLib will not resend, so no resend is offered`() {
+        val codeInfo = AuthenticationCodeInfo("+447700900000", AuthenticationCodeTypeSms(5), null, 0)
+        assertFalse(AuthReducer.codeState(codeInfo).canResend)
     }
 
     @Test
@@ -226,7 +236,7 @@ class AuthReducerTest {
             AuthorizationStateWaitPassword("my cat", true, false, "a**@b.com"),
             SignInMethod.Phone,
         )
-        assertEquals(AuthState.Password("my cat"), step.state)
+        assertEquals(AuthState.Password("my cat", recoveryEmail = "a**@b.com"), step.state)
         assertEquals(AuthAction.None, step.action)
     }
 
@@ -245,7 +255,7 @@ class AuthReducerTest {
                 AuthorizationStateWaitEmailCode(false, false, EmailAddressAuthenticationCodeInfo("a***@gmail.com", 6), EmailAddressResetStateAvailable(0)),
                 method,
             )
-            assertEquals(AuthState.EmailCode("a***@gmail.com", 6), code.state)
+            assertEquals(AuthState.EmailCode("a***@gmail.com", 6, reset = EmailReset.Available(0)), code.state)
             assertEquals(AuthAction.None, code.action)
         }
     }
@@ -279,5 +289,25 @@ class AuthReducerTest {
                 assertTrue("${state::class.simpleName} with $method", step.action != AuthAction.None)
             }
         }
+    }
+
+    @Test
+    fun `a password without a recovery email offers no recovery address`() {
+        val step = AuthReducer.reduce(AuthorizationStateWaitPassword("", false, false, ""), SignInMethod.Qr)
+        assertEquals(AuthState.Password(""), step.state)
+    }
+
+    @Test
+    fun `an email reset under way carries the time left as TDLib reports it`() {
+        val pending = AuthReducer.reduce(
+            AuthorizationStateWaitEmailCode(false, false, EmailAddressAuthenticationCodeInfo("a***@b.c", 6), EmailAddressResetStatePending(3600)),
+            SignInMethod.Phone,
+        )
+        assertEquals(EmailReset.Pending(3600), (pending.state as AuthState.EmailCode).reset)
+        val none = AuthReducer.reduce(
+            AuthorizationStateWaitEmailCode(false, false, EmailAddressAuthenticationCodeInfo("a***@b.c", 6), null),
+            SignInMethod.Phone,
+        )
+        assertEquals(EmailReset.None, (none.state as AuthState.EmailCode).reset)
     }
 }
