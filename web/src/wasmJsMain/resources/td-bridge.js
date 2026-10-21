@@ -7,7 +7,9 @@
 //   TmTd.start(optionsJson, onUpdate)     one client per page; onUpdate gets each update as text
 //   TmTd.send(queryJson)                  Promise<string>: the result, or an "error" object as text
 //   TmTd.readBase64(fileId, priority)     Promise<string>: a small file downloaded whole, base64
-//   TmTd.readRange(fileId, offset, count) Promise<ArrayBuffer>: up to count bytes at offset
+//   TmTd.readRange(fileId, offset, count, background)
+//                                         Promise<ArrayBuffer>: up to count bytes at offset; a
+//                                         background read takes only what TDLib already has
 //   TmTd.fileInfo(fileId)                 Promise<object>: TDLib's file object
 //   TmTd.warm(fileId, size, head, tail)   fetches a file's head and tail ahead of a play
 //   TmTd.stop(fileId)                     stops fetching ahead once a video closes
@@ -18,6 +20,8 @@
 // bounded window ahead of it (downloadFile with offset and limit), reads wait for TDLib's file
 // updates until the bytes are there, and the window moves on as the reads do. Reads of one file
 // are serialized: TDLib ends a waiting download when another with different bounds arrives.
+// Only the reads the player waits on take that queue; read-ahead never waits and never points
+// TDLib anywhere, so it can neither hold a waiting read up nor drag the window back.
 (function () {
   'use strict';
 
@@ -29,10 +33,13 @@
   const WINDOW = (mobile ? 24 : 64) * 1024 * 1024;
   const MIN_READ = 256 * 1024;
   const WAIT_MS = 30000;
+  // How long a read waits for TDLib's next file update before it asks again.
+  const POLL_MS = 1000;
 
   let client = null;
   const queues = new Map();
   const windows = new Map();
+  const sizes = new Map();
   const waiters = new Map();
   const listeners = new Set();
   // The last few hundred streaming decisions, for the playback details panel and the tests.
@@ -40,6 +47,19 @@
   function trace(what, fileId, a, b) {
     if (log.length > 400) log.splice(0, 100);
     log.push([Math.round(performance.now()), what, fileId, a, b]);
+  }
+
+  // Which scripts Telegram's text has used so far, for the page's fonts (WebFonts.due): the
+  // emoji and East Asian fonts are megabytes each and are fetched only once one is needed.
+  const scripts = (window.TmScripts = window.TmScripts || {});
+  const SCRIPT_TESTS = [
+    ['emoji', /\p{Extended_Pictographic}/u],
+    ['kana', /[\u3040-\u30ff]/],
+    ['hangul', /[\uac00-\ud7af\u1100-\u11ff]/],
+    ['han', /[\u3400-\u9fff]/],
+  ];
+  function scan(text) {
+    for (const [name, re] of SCRIPT_TESTS) if (!scripts[name] && re.test(text)) scripts[name] = true;
   }
 
   function serial(fileId, job) {
@@ -135,26 +155,53 @@
     return part.data.arrayBuffer();
   }
 
+  /** The file's size and whether it is all here, asking TDLib only until it is known. */
+  async function shape(fileId) {
+    const known = sizes.get(fileId);
+    if (known && known.complete) return known;
+    const f = await file(fileId);
+    const s = { size: f.size || f.expected_size || 0, complete: !!(f.local && f.local.is_downloading_completed) };
+    if (s.size > 0) sizes.set(fileId, s);
+    return s;
+  }
+
   async function readRangeNow(fileId, offset, count, retried) {
-    let f = await file(fileId);
-    const size = f.size || f.expected_size || 0;
+    const f = await shape(fileId);
+    const size = f.size;
     if (size > 0 && offset >= size) return new ArrayBuffer(0);
     if (size > 0) count = Math.min(count, size - offset);
     const want = Math.min(count, MIN_READ);
     let have = 0;
-    if (f.local && f.local.is_downloading_completed) {
+    if (f.complete) {
       have = count;
     } else {
       const started = Date.now();
+      let quiet = 0;
       while (true) {
         have = await prefix(fileId, offset);
         trace('prefix', fileId, offset, have);
         if (have >= want) break;
-        if (!covered(fileId, offset, want)) await pointAt(fileId, offset, size, 32);
-        const updated = await waitFile(fileId, 2000);
+        if (!covered(fileId, offset, want)) {
+          await pointAt(fileId, offset, size, 32);
+          quiet = 0;
+        }
+        const updated = await waitFile(fileId, POLL_MS);
         if (updated && updated.local && updated.local.is_downloading_completed) {
+          sizes.set(fileId, { size: size, complete: true });
           have = count;
           break;
+        }
+        // TDLib can end a download on its own (a cancelled or replaced request, a dropped
+        // connection) while the window here still says it is coming: after a few quiet seconds
+        // with nothing downloading, it is pointed at the bytes again.
+        if (!updated || !updated.local || !updated.local.is_downloading_active) {
+          if (++quiet >= 3) {
+            const now = await file(fileId);
+            if (!now.local || !now.local.is_downloading_active) windows.delete(fileId);
+            quiet = 0;
+          }
+        } else {
+          quiet = 0;
         }
         if (Date.now() - started > WAIT_MS) {
           if (have > 0) break;
@@ -175,6 +222,7 @@
       // and fetch it afresh.
       if (retried) throw e;
       windows.delete(fileId);
+      sizes.delete(fileId);
       await call({ '@type': 'deleteFile', file_id: fileId }).catch(() => {});
       return readRangeNow(fileId, offset, count, true);
     }
@@ -209,6 +257,8 @@
           } catch (e) {
             return;
           }
+          if (type === 'updateNewChat' || type === 'updateChatTitle' || type === 'updateNewMessage' ||
+            type === 'updateChatLastMessage' || type === 'updateUser') scan(text);
           try {
             onUpdate(text);
           } catch (e) {
@@ -225,7 +275,12 @@
       } catch (e) {
         return Promise.resolve(errorText(e));
       }
-      return call(query).then((r) => JSON.stringify(r, replacer), (e) => errorText(e));
+      return call(query).then((r) => {
+        const text = JSON.stringify(r, replacer);
+        // Message lists and chats answered to a request carry titles and file names too.
+        if (r && /^(messages|foundChatMessages|foundMessages|chat|chats|messageProperties)$/.test(r['@type'])) scan(text);
+        return text;
+      }, (e) => errorText(e));
     },
 
     readBase64(fileId, priority) {
@@ -259,8 +314,16 @@
       return file(fileId);
     },
 
-    readRange(fileId, offset, count) {
-      return serial(fileId, () => readRangeNow(fileId, offset, count, false));
+    readRange(fileId, offset, count, background) {
+      if (!background) return serial(fileId, () => readRangeNow(fileId, offset, count, false));
+      // Read-ahead: what TDLib already has at offset, now, or nothing.
+      return (async () => {
+        const f = await shape(fileId);
+        if (f.size > 0 && offset >= f.size) return new ArrayBuffer(0);
+        const n = Math.min(count, f.size > 0 ? f.size - offset : count, f.complete ? count : await prefix(fileId, offset));
+        if (n < count) return new ArrayBuffer(0);
+        return readPart(fileId, offset, n);
+      })().catch(() => new ArrayBuffer(0));
     },
 
     // A video about to be played (a card held under the pointer or the focus for a moment, the
@@ -291,11 +354,13 @@
     // gets the whole connection.
     stop(fileId) {
       windows.delete(fileId);
+      sizes.delete(fileId);
       return call({ '@type': 'cancelDownloadFile', file_id: fileId, only_if_pending: false }).catch(() => {});
     },
 
     forget(fileId) {
       windows.delete(fileId);
+      sizes.delete(fileId);
       return call({ '@type': 'deleteFile', file_id: fileId }).catch(() => {});
     },
 

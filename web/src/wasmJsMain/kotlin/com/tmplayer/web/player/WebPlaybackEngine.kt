@@ -203,7 +203,9 @@ class WebPlaybackEngine : PlaybackEngine {
             muted = b("muted"),
             speed = d("speed").toFloat().takeIf { it > 0f } ?: 1f,
             error = null,
-            chapters = (o["chapters"] as? JsonArray).orEmpty().mapNotNull { c ->
+            // The lists come only when they changed (video-host.js), so a position update parses
+            // a few numbers rather than every track and chapter four times a second.
+            chapters = if (!o.containsKey("chapters")) before.chapters else (o["chapters"] as? JsonArray).orEmpty().mapNotNull { c ->
                 val co = c as? JsonObject ?: return@mapNotNull null
                 Chapter(
                     title = (co["title"] as? JsonPrimitive)?.content?.takeIf { it.isNotBlank() },
@@ -211,6 +213,7 @@ class WebPlaybackEngine : PlaybackEngine {
                 )
             },
         )
+        if (!o.containsKey("audio") && !o.containsKey("subtitles")) return
         val list = ArrayList<MediaTrack>()
         audioIds.clear()
         subtitleIds.clear()

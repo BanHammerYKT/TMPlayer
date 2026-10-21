@@ -12,6 +12,23 @@
   const E = window.TmEngines;
   let current = null;
 
+  // Once WebCodecs has said it cannot decode HEVC here, the next HEVC video starts on the software
+  // decoder rather than failing the same way and opening the file a second time. Per browser, kept
+  // for the session.
+  const HEVC = /(hevc|x265|h\.?265)/i;
+  function noHardware() {
+    try {
+      return sessionStorage.getItem('tm.nohw.hevc') === '1';
+    } catch (e) {
+      return false;
+    }
+  }
+  function markNoHardware() {
+    try {
+      sessionStorage.setItem('tm.nohw.hevc', '1');
+    } catch (e) {}
+  }
+
   // Compose for Web starts every frame from opaque white (glClearColor 1,1,1,1) and has no switch
   // for a clear canvas. While a video plays under it, the canvas is cleared transparent instead,
   // so it shows the picture wherever the player's controls draw nothing; the clear colour Skia
@@ -49,18 +66,22 @@
       document.body.insertBefore(this.stage, document.body.firstChild);
       document.documentElement.classList.add('tm-video-open');
       this.timer = 0;
-      this.start(spec.engine || E.choose(spec), spec.startSec || 0);
+      const kind = spec.engine || E.choose(spec);
+      this.start(kind, spec.startSec || 0, kind === 'movi' && noHardware() && HEVC.test(spec.name || ''));
     }
 
     async start(kind, at, software) {
       if (this.closed) return;
       this.tried.add(kind + (software ? '-sw' : ''));
       if (this.engine) {
+        if (this.engine.watch) this.engine.watch.disconnect();
         this.engine.dispose();
         this.engine.el.remove();
         this.engine = null;
       }
       this.failed = null;
+      this.started = false;
+      this.lists = '';
       this.send();
       let engine;
       if (kind === 'movi') {
@@ -88,6 +109,18 @@
       const on = (name, fn) => el.addEventListener(name, (e) => {
         if (this.engine === engine) fn(e);
       });
+      on('playing', () => {
+        this.started = true;
+      });
+      if (engine.kind === 'movi') {
+        // movi's own buffering state, debounced by its spinnerdelay; its readyState drops during
+        // its internal seeks too, which would turn the spinner on and off again.
+        const watch = new MutationObserver(() => {
+          if (this.engine === engine) this.sendSoon();
+        });
+        watch.observe(el, { attributes: true, attributeFilter: ['class'] });
+        engine.watch = watch;
+      }
       ['playing', 'pause', 'play', 'waiting', 'seeking', 'seeked', 'canplay', 'durationchange', 'loadedmetadata',
         'trackschange', 'volumechange', 'ended', 'ratechange', 'resize'].forEach((n) => on(n, () => this.send()));
       on('timeupdate', () => this.sendSoon());
@@ -114,6 +147,16 @@
         on('errordisplay', (e) => {
           const d = e.detail || {};
           if (d.canTrySoftware && !engine.software && !this.tried.has('movi-sw')) {
+            if (HEVC.test(this.spec.name || '')) markNoHardware();
+            // In place where movi can: it is often decoding in software already, and a new
+            // element would open and seek the whole file again.
+            if (typeof el.enableSoftwareDecoding === 'function') {
+              engine.software = true;
+              this.tried.add('movi-sw');
+              el.enableSoftwareDecoding().catch(() => this.start('movi', this.time() || this.spec.startSec || 0, true));
+              this.send();
+              return;
+            }
             this.start('movi', this.time() || this.spec.startSec || 0, true);
             return;
           }
@@ -183,6 +226,9 @@
       const e = this.engine;
       const audio = e ? e.audioTracks() : [];
       const subs = e ? e.subtitleTracks() : [];
+      const chapters = e ? e.chapters() : [];
+      const busy = !m || !this.started ||
+        (e.kind === 'movi' ? m.classList.contains('is-buffering') || m.readyState < 2 : m.readyState < 3 || m.seeking);
       const state = {
         type: 'state',
         engine: e ? e.kind + (e.software ? '-sw' : '') : '',
@@ -191,7 +237,7 @@
         dur: this.duration(),
         buf: this.buffered(),
         playing: this.want,
-        buffering: !!(m && !this.failed && (m.readyState < 3 || m.seeking) && this.want && !m.ended),
+        buffering: !this.failed && this.want && !(m && m.ended) && busy,
         seeking: !!(m && m.seeking),
         ended: !!(m && m.ended),
         w: m ? m.videoWidth || 0 : 0,
@@ -200,10 +246,15 @@
         muted: !!(m && m.muted),
         speed: m ? m.playbackRate || 1 : 1,
         failed: this.failed,
-        audio: audio,
-        subtitles: subs,
-        chapters: e ? e.chapters() : [],
       };
+      // The lists only when they changed: Kotlin keeps the last ones it was sent.
+      const lists = JSON.stringify([audio, subs, chapters]);
+      if (lists !== this.lists) {
+        this.lists = lists;
+        state.audio = audio;
+        state.subtitles = subs;
+        state.chapters = chapters;
+      }
       this.onState(JSON.stringify(state));
     }
 
@@ -311,6 +362,7 @@
       clearTimeout(this.timer);
       clearTimeout(this.silenceCheck);
       if (this.engine) {
+        if (this.engine.watch) this.engine.watch.disconnect();
         this.engine.dispose();
         this.engine.el.remove();
       }

@@ -17,11 +17,12 @@
     return [-1, 0];
   }
 
-  async function read(source, offset, length) {
+  /** A background read (read-ahead) takes only bytes TDLib already has, or none. */
+  async function read(source, offset, length, background) {
     const [i, at] = locate(source.sizes, offset);
     if (i < 0) return new ArrayBuffer(0);
     const n = Math.min(length, source.sizes[i] - at);
-    return window.TmTd.readRange(source.ids[i], at, n);
+    return window.TmTd.readRange(source.ids[i], at, n, !!background);
   }
 
   if ('serviceWorker' in navigator) {

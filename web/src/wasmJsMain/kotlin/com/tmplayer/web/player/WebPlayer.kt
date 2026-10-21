@@ -132,8 +132,8 @@ object WebPlayer {
 
     fun close() = jsClose()
 
-    private const val WARM_HEAD = 2.0 * 1024 * 1024
-    private const val WARM_TAIL = 1.0 * 1024 * 1024
+    private const val WARM_HEAD = 4.0 * 1024 * 1024
+    private const val WARM_TAIL = 2.0 * 1024 * 1024
 
     /** "native" or "movi": the engine [video] would start in. */
     fun engineFor(video: WebVideo): String = jsChoose(
@@ -148,8 +148,8 @@ object WebPlayer {
     )
 
     /**
-     * A card held under the pointer or the focus for a moment: the head of the file and its last
-     * megabyte (where MP4 and MKV often keep their index) are fetched ahead, as reelbox does, and
+     * A card held under the pointer or the focus for a moment: the head of the file and its last two
+     * megabytes (where MP4 and MKV often keep their index) are fetched ahead, as reelbox does, and
      * the decoder starts loading if the file will need it.
      */
     fun warm(video: WebVideo) {

@@ -350,7 +350,10 @@ fun WebPlayerScreen(
                 },
                 subtitlesButton = true,
             )
-            FeedbackLayer(flash, spinner = failure == null && (status.buffering || !status.opened), chip = null)
+            // One loader at a time: the centre button turns into the spinner while the controls are
+            // up, and this one stands in for it only while they are down, as on the desktop.
+            val controlsShown = controlsUp || !status.playing || menu != null
+            FeedbackLayer(flash, spinner = failure == null && (status.buffering || !status.opened) && !controlsShown, chip = null)
             resumedFrom?.let { from ->
                 if (status.opened) {
                     ResumeNotice(

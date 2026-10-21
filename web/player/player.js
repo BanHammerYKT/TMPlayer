@@ -153,12 +153,27 @@
   const BASE = (document.currentScript && document.currentScript.src) || new URL('player/player.js', document.baseURI).href;
 
   let moviLoading = null;
+  let moviModule = null;
   function loadMovi() {
     if (!moviLoading) {
       const url = new URL('movi/element.slim.js', BASE).href;
-      moviLoading = import(url).then(() => customElements.whenDefined('movi-player'));
+      moviLoading = import(url).then((mod) => {
+        moviModule = mod;
+        return customElements.whenDefined('movi-player');
+      });
     }
     return moviLoading;
+  }
+
+  /** The script and then its 5 MB wasm, compiled while the page is idle, ahead of the first video. */
+  function preloadMovi() {
+    return loadMovi().then(() => {
+      const mod = moviModule;
+      if (!mod || !mod.loadWasmModule) return;
+      const go = () => mod.loadWasmModule().catch(() => {});
+      if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 3000 });
+      else setTimeout(go, 500);
+    });
   }
 
   class NativeEngine {
@@ -268,11 +283,19 @@
   class MoviEngine {
     constructor(software) {
       const el = document.createElement('movi-player');
+      // Each element turns movi's logging up to DEBUG as it is made (MoviElement's constructor),
+      // and FFmpeg then writes to the console on every read and packet: errors only.
+      if (moviModule && moviModule.Logger) moviModule.Logger.setLevel(moviModule.LogLevel.ERROR);
       el.setAttribute('wasmurl', new URL('movi/movi.wasm', BASE).href);
+      // Start playing as soon as it opens: without autoplay or a poster movi seeks to 0 to paint
+      // a first frame and the play that follows seeks to 0 again, two index reads before frame 0.
+      el.setAttribute('autoplay', '');
+      // Volume, speed and the rest are TMPlayer's (applyPrefs); movi's own store would race them.
+      el.setAttribute('persist', '');
       el.setAttribute('nohotkeys', '');
       el.setAttribute('playsinline', '');
       el.setAttribute('noerrorscreen', '');
-      el.setAttribute('controlslist', 'nospinner nocenterplay');
+      el.setAttribute('controlslist', 'nospinner nocenterplay nounmutepill');
       el.setAttribute('spinnerdelay', '0.5');
       el.setAttribute('subtitleedge', 'outline');
       if (software) el.setAttribute('sw', '');
@@ -1611,7 +1634,7 @@
     },
     /** Starts movi-player's download in the background (a card hovered, or the app idle). */
     preload() {
-      loadMovi().catch(() => {});
+      preloadMovi().catch(() => {});
     },
   };
 })();
