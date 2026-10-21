@@ -43,6 +43,13 @@ external object TmHost : JsAny {
     fun notify(title: String, body: String): Boolean
     fun askNotify(): Promise<JsString>
     fun notifyPermission(): String
+    fun isIos(): Boolean
+    fun isStandalone(): Boolean
+    fun canInstall(): Boolean
+    fun install(): Promise<JsBoolean>
+    fun coarsePointer(): Boolean
+    fun finePointer(): Boolean
+    fun onPointerChange(handler: () -> Unit)
     fun registerWorker()
     fun online(): Boolean
     fun onOnline(handler: (Boolean) -> Unit)

@@ -27,6 +27,17 @@
   }
 
   let popHandler = null;
+
+  // Installing: Chromium offers its own prompt, kept here until the app's Install button asks
+  // for it; iOS has none, so the app shows how to add it to the Home Screen instead.
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    installPrompt = e;
+  });
+  window.addEventListener('appinstalled', () => {
+    installPrompt = null;
+  });
   window.addEventListener('popstate', () => {
     // The player's own history entry (web/player/player.js) is not one of the app's screens.
     if (window.__tmSkipPop) {
@@ -168,6 +179,8 @@
       const m = document.querySelector('meta[name="theme-color"]');
       if (m) m.setAttribute('content', color);
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      // The ground around the canvas (the notch, the home indicator) matches the app's own.
+      document.documentElement.style.setProperty('--bg', color);
     },
     setTitle(text) {
       document.title = text ? text + ' - TMPlayer Web' : 'TMPlayer Web';
@@ -226,6 +239,53 @@
       } catch (e) {
         return 'unsupported';
       }
+    },
+
+    isIos() {
+      return /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    },
+    isStandalone() {
+      try {
+        return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+      } catch (e) {
+        return false;
+      }
+    },
+    canInstall() {
+      return installPrompt != null;
+    },
+    async install() {
+      if (!installPrompt) return false;
+      const p = installPrompt;
+      installPrompt = null;
+      p.prompt();
+      try {
+        const r = await p.userChoice;
+        return r.outcome === 'accepted';
+      } catch (e) {
+        return false;
+      }
+    },
+    coarsePointer() {
+      try {
+        return window.matchMedia('(pointer: coarse)').matches;
+      } catch (e) {
+        return false;
+      }
+    },
+    finePointer() {
+      try {
+        return window.matchMedia('(any-pointer: fine)').matches;
+      } catch (e) {
+        return true;
+      }
+    },
+    onPointerChange(handler) {
+      try {
+        window.matchMedia('(pointer: coarse)').addEventListener('change', () => handler());
+        window.matchMedia('(any-pointer: fine)').addEventListener('change', () => handler());
+      } catch (e) {}
     },
 
     registerWorker() {

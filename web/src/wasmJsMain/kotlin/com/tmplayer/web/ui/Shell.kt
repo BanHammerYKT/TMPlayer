@@ -105,6 +105,7 @@ private fun Content(app: WebAppState, nav: Nav, route: Route, bottomPadding: Dp)
     when (route) {
         is Route.Chats -> {
             TopTitle(s.navChats)
+            InstallBanner(app)
             ChatList(app, route.list, bottomPadding) { nav.push(Route.Chat(it.id)) }
         }
         is Route.Chat -> {
@@ -260,13 +261,13 @@ fun ChatRow(app: WebAppState, chat: WebChat, onOpen: () -> Unit) {
         )
         if (chat.unread > 0) {
             Box(
-                Modifier.clip(CircleShape).background(if (chat.muted) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.primary)
+                Modifier.clip(CircleShape).background(if (chat.muted) MaterialTheme.colorScheme.surfaceContainerHighest else MaterialTheme.colorScheme.primary)
                     .padding(horizontal = 7.dp, vertical = 2.dp),
             ) {
                 Text(
                     LocalStrings.current.formatter.number(chat.unread),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimary,
+                    color = if (chat.muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary,
                 )
             }
         }
