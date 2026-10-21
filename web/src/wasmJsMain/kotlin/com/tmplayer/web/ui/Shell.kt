@@ -70,10 +70,11 @@ private data class Dest(val route: Route, val label: String, val icon: ImageVect
 @Composable
 fun Shell(app: WebAppState) {
     val s = LocalStrings.current
-    val nav = remember { Nav(Route.Chats()) }
+    val nav = remember { Nav(Route.Home) }
     val dests = listOf(
+        Dest(Route.Home, s.browseTabHome, WebIcons.Home),
         Dest(Route.Chats(), s.navChats, WebIcons.Chats),
-        Dest(Route.Watched, s.navWatch, WebIcons.Play),
+        Dest(Route.Search, s.commonSearch, WebIcons.Search),
         Dest(Route.Settings, s.navSettings, WebIcons.Settings),
     )
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -105,7 +106,6 @@ private fun Content(app: WebAppState, nav: Nav, route: Route, bottomPadding: Dp)
     when (route) {
         is Route.Chats -> {
             TopTitle(s.navChats)
-            InstallBanner(app)
             ChatList(app, route.list, bottomPadding) { nav.push(Route.Chat(it.id)) }
         }
         is Route.Chat -> {
@@ -115,9 +115,13 @@ private fun Content(app: WebAppState, nav: Nav, route: Route, bottomPadding: Dp)
                 ChatGrid(app, chat) { video, all -> play(app, video, all, chat) }
             }
         }
-        Route.Watched -> {
-            TopTitle(s.navWatch)
-            Placeholder(s.browseEmptyContinue)
+        Route.Home -> {
+            TopTitle(s.browseTabHomeHeading)
+            HomeScreen(app, bottomPadding) { nav.push(Route.Chat(it.id)) }
+        }
+        Route.Search -> {
+            TopTitle(s.commonSearch)
+            SearchScreen(app, bottomPadding) { nav.push(Route.Chat(it.id)) }
         }
         Route.Settings -> {
             TopTitle(s.navSettings)
