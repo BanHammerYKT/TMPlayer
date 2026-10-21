@@ -157,6 +157,10 @@ internal fun PlaybackRows(state: ShellState, jumps: Map<SetupStep, JumpTarget>) 
     Toggle(s.settingsDownmix, if (desktop.downmix) s.settingsDownmixOn else s.settingsDownmixOff, desktop.downmix, icon = TmIcons.VolumeUp) { on ->
         state.extras.prefs.update { it.copy(downmix = on) }
     }
+    val evenVolume by settings.evenVolume.collectAsState(initial = true)
+    Toggle(s.playerEvenVolume, if (evenVolume) s.settingsEvenVolumeOn else s.settingsEvenVolumeOff, evenVolume, icon = TmIcons.VolumeUp) { on ->
+        scope.launch { settings.setEvenVolume(on) }
+    }
     AudioLanguageSetting(settings, trackPrefs, scope)
     Toggle(
         s.settingsSoftwareDecoding,

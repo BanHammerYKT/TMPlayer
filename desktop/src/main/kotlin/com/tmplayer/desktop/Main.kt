@@ -176,6 +176,11 @@ fun main(args: Array<String>) {
             val windowState = remember { WindowMemory.load() }
             LaunchedEffect(windowState) { WindowMemory.follow(windowState) }
             val shell = remember { ShellState(settings, DesktopServices.downloads, DesktopServices.watched, bookmarks = DesktopServices.bookmarks) }
+            // A card under the pointer or a key on it warms its stream (PlaybackWarmup, StreamWarmup).
+            androidx.compose.runtime.DisposableEffect(shell) {
+                com.tmplayer.data.PlaybackWarmup.warmer = com.tmplayer.data.PlaybackWarmup.Warmer { shell.warmStream(it) }
+                onDispose { com.tmplayer.data.PlaybackWarmup.warmer = null }
+            }
             val quit = {
                 // Saving is a courtesy; a failure there must never keep the app from closing.
                 runCatching { WindowMemory.save(windowState) }

@@ -148,6 +148,7 @@ import androidx.compose.runtime.withFrameNanos
 import com.tmplayer.data.LocalDownloads
 import com.tmplayer.data.MediaFeedEntry
 import com.tmplayer.data.MediaItem
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.data.MediaMapper
 import com.tmplayer.data.OfflineDownloads
 import com.tmplayer.data.Series
@@ -2084,7 +2085,8 @@ internal fun MediaCard(
         dense = dense,
         poster = poster,
         selected = selected,
-        modifier = modifier,
+        // Every video card, in a chat's grid, Home and search: its stream warmed on focus or press.
+        modifier = modifier.then(Modifier.warmUpOnIntent(item)),
         meta = meta ?: { ink -> MetaLine(item, watched, ink, finished = finished, poster = poster) },
     ) {
         MediaArt(

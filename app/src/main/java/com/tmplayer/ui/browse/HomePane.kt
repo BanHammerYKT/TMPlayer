@@ -606,7 +606,7 @@ private fun LazyListScope.entries(
                 dense = touch,
                 poster = poster,
                 // Its first bytes asked for while the card is in focus or under the finger.
-                modifier = modifier.warmUpOnIntent(entry.item),
+                modifier = modifier,
             )
             is ShelfEntry.Show -> {
                 val progress = remember(entry.series, watch) { watch.progress(entry.series) }

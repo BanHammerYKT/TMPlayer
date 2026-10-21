@@ -920,6 +920,8 @@ internal fun Poster(
         if (hovered) {
             delay(HOVER_INTENT_MS)
             lifted = true
+            // The same intent warms its stream, so a click a moment later starts sooner.
+            state.warmStream(item)
         } else {
             lifted = false
         }

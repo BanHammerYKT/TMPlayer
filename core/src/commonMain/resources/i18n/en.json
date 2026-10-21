@@ -2068,6 +2068,8 @@
     "downmix_detail": "Fold surround sound into two speakers or headphones",
     "downmix_off": "Off: surround sound goes out as it is",
     "downmix_on": "Surround sound is folded into two channels",
+    "even_volume_off": "Every video plays at its own level",
+    "even_volume_on": "Quiet films are lifted to the level of other videos",
     "favourites_clear_detail": "The chats themselves stay where they are, in the chat list.",
     "favourites_clear_message": "{count, plural, one {The one starred chat loses its star and Favourites empties.} other {All # chats lose their star and Favourites empties.}}",
     "favourites_clear_title": "Clear favourites?",

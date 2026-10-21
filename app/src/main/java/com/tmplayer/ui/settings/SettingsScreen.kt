@@ -310,6 +310,7 @@ fun SettingsScreen(
     val tvChannelsSupported = remember { TvChannelsPublisher.supported(context) }
     val touchPrefs by settings.touchPrefs.collectAsStateWithLifecycle(initialValue = TouchPrefs())
     val downmixChoice by settings.downmixChoice.collectAsStateWithLifecycle(initialValue = null)
+    val evenVolume by settings.evenVolume.collectAsStateWithLifecycle(initialValue = true)
     val backgroundAudio by settings.backgroundAudio.collectAsStateWithLifecycle(initialValue = false)
     val subtitleStyle by settings.subtitleStyle.collectAsStateWithLifecycle(initialValue = SubtitleStyle())
     val trackPrefs by settings.trackPreferences.collectAsStateWithLifecycle(initialValue = TrackPreferences())
@@ -847,6 +848,16 @@ fun SettingsScreen(
                         icon = ImageVector.vectorResource(R.drawable.ic_audio_language),
                         checked = downmix,
                         onToggle = { scope.launch { settings.setDownmix(!downmix) } },
+                    )
+                }
+                // On by default; the player's menu has the same line for the video playing now.
+                item {
+                    ToggleRow(
+                        title = s.playerEvenVolume,
+                        subtitle = if (evenVolume) s.settingsEvenVolumeOn else s.settingsEvenVolumeOff,
+                        icon = ImageVector.vectorResource(R.drawable.ic_volume),
+                        checked = evenVolume,
+                        onToggle = { scope.launch { settings.setEvenVolume(!evenVolume) } },
                     )
                 }
                 // The phone only: a television has no screen to turn off and nothing else to switch to.

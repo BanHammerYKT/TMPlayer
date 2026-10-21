@@ -67,6 +67,15 @@ class App : Application() {
                 AppLocales.apply(this@App, saved)
             }
         }
+        // A card in focus or under the finger warms its stream, unless the file is whole here
+        // already (a download, the watch cache) or is pieces played joined.
+        com.tmplayer.data.PlaybackWarmup.warmer = com.tmplayer.data.PlaybackWarmup.Warmer { item ->
+            if (item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
+            backgroundScope.launch {
+                val local = runCatching { com.tmplayer.data.Td.localFileAvailability(item.fileId) }.getOrNull()
+                if (local != com.tmplayer.data.LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
+            }
+        }
         // The stream warm-up stays out of Low storage mode and of "Save mobile data" on a metered
         // line, whatever asks for it ([com.tmplayer.player.StreamWarmup]).
         backgroundScope.launch {
