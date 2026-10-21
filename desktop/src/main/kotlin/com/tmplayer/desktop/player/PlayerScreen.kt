@@ -1098,6 +1098,21 @@ fun PlayerScreen(
     }
 
     /** One step later ([direction] 1) or earlier (-1); 0 puts the subtitles back in step. */
+    /**
+     * Subtitles a size bigger or smaller from the keyboard: the one subtitle look every video
+     * shares, so it is written to the setting, which the video playing takes up at once.
+     */
+    fun stepSubtitleSize(direction: Int) {
+        val sizes = com.tmplayer.player.SubtitleSize.entries
+        val now = engine.state.value.subtitleStyle
+        val next = sizes[(now.size.ordinal + direction).coerceIn(0, sizes.size - 1)]
+        showFlash(Flash.Kind.Text, L.commonWithDetail(L.settingsSubtitleSize, next.label))
+        if (next == now.size) return
+        val style = now.copy(size = next)
+        engine.setSubtitleStyle(style)
+        scope.launch { runCatching { settings.setSubtitleStyle(style) } }
+    }
+
     fun stepSubtitleDelay(direction: Int) {
         val ms = if (direction == 0) 0L else SyncDelays.step(engine.state.value.subtitleDelayMs, direction)
         engine.setSubtitleDelay(ms)
@@ -1310,6 +1325,7 @@ fun PlayerScreen(
             PlayerAction.AudioNext -> cycleTrack(TrackType.Audio, true)
             PlayerAction.AudioPrevious -> cycleTrack(TrackType.Audio, false)
             is PlayerAction.SubtitleDelay -> stepSubtitleDelay(action.direction)
+            is PlayerAction.SubtitleSize -> stepSubtitleSize(action.direction)
             is PlayerAction.AudioDelay -> stepAudioDelay(action.direction)
             PlayerAction.SpeedUp -> setSpeed(SeekMath.fineSpeed(status.speed, up = true))
             PlayerAction.SpeedDown -> setSpeed(SeekMath.fineSpeed(status.speed, up = false))
