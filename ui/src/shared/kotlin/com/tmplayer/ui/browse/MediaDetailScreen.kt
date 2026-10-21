@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -368,14 +369,25 @@ private fun TitleBlock(page: DetailPage) {
         if (eyebrow.isNotEmpty()) {
             Text(eyebrow, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Tone.accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        Text(
-            heading,
-            style = MaterialTheme.typography.displaySmall.trackedFor(heading),
-            color = Tone.text,
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.semantics { heading() },
-        )
+        // The film's or show's title logo from TMDB where it has one, read out as the name.
+        val tv = !isTouch()
+        com.tmplayer.ui.online.TitleArt(
+            meta,
+            maxWidth = if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
+            maxHeight = if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT,
+            modifier = Modifier.clearAndSetSemantics {
+                heading()
+                contentDescription = heading
+            },
+        ) {
+            Text(
+                heading,
+                style = MaterialTheme.typography.displaySmall.trackedFor(heading),
+                color = Tone.text,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

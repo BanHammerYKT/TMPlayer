@@ -36,6 +36,14 @@ object EpisodeNames {
     }
 
     /**
+     * Episode [number] of [season] in the provider's list for that season ([listed], as
+     * [OnlineMetadata.season] answers it): its still and overview for the episode rows. Null when
+     * the provider does not list it.
+     */
+    fun listed(season: Int, number: Int, listed: List<MetaEpisode>?): MetaEpisode? =
+        listed?.firstOrNull { it.season == season && it.number == number }
+
+    /**
      * The name a series list gives episode [number] of [season], from the provider's list for that
      * season ([listed], as [OnlineMetadata.season] answers it), or null when the provider has none
      * worth showing: then the row keeps its own "Episode 5". A placeholder the provider writes for

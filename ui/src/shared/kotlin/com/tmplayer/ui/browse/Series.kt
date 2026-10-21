@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import com.tmplayer.ui.components.BackdropSource
 import com.tmplayer.ui.components.CoverArt
@@ -330,6 +331,14 @@ fun EpisodeRow(
      * null for the plain "Episode 5". The S1 E5 line above it stays either way.
      */
     name: String? = null,
+    /**
+     * The episode as the provider lists it ([com.tmplayer.online.EpisodeNames.listed]): its still
+     * is drawn over the video's own frame once it arrives, so the provider's picture comes first
+     * and the frame only stands where it has none.
+     */
+    guide: com.tmplayer.online.MetaEpisode? = null,
+    /** The provider's few lines about the episode under its facts, on the show's own page. */
+    showOverview: Boolean = false,
 ) {
     val shape = RoundedCornerShape(Corner.Medium)
     val card = modifier
@@ -337,7 +346,11 @@ fun EpisodeRow(
         .clip(shape)
         .background(if (current) Tone.accent.copy(alpha = 0.14f) else Tone.surface)
         .border(1.dp, if (current) Tone.accent.copy(alpha = 0.5f) else Tone.outline, shape)
-    EpisodeLine(episode, chosen, point, finished, upNext, onClick, card.then(lineModifier), onLongClick, current, holdOk, name)
+    EpisodeLine(
+        episode, chosen, point, finished, upNext, onClick, card.then(lineModifier), onLongClick, current, holdOk, name,
+        still = guide?.stillUrl,
+        overview = guide?.overview?.trim()?.takeIf { showOverview && it.isNotEmpty() },
+    )
 }
 
 /**
@@ -433,6 +446,8 @@ private fun EpisodeLine(
     current: Boolean = false,
     holdOk: Boolean = false,
     name: String? = null,
+    still: String? = null,
+    overview: String? = null,
 ) {
     val s = LocalStrings.current
     val tv = !isTouch()
@@ -466,6 +481,8 @@ private fun EpisodeLine(
                 .clip(RoundedCornerShape(Corner.Small)),
         ) {
             MediaArt(item.miniThumbnail, item.thumbnailFileId, Modifier.fillMaxSize(), cover = cover, compactCover = true)
+            // The provider's still for the episode, over the frame once it is decoded.
+            com.tmplayer.ui.online.MetaPicture(still, Modifier.fillMaxSize(), maxWidth = EPISODE_STILL_WIDTH)
             val fraction = when {
                 point != null && point.fraction > 0f -> point.fraction
                 finished -> 1f
@@ -542,9 +559,28 @@ private fun EpisodeLine(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            overview?.let {
+                Text(
+                    it,
+                    style = if (tv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                    color = Tone.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }
+
+/** The decode width of an episode's still: the row's art is at most about 200 dp wide. */
+private const val EPISODE_STILL_WIDTH = 400
+
+/** The widest and tallest a title logo is set at the head of a show's page or a video's. */
+internal val TITLE_LOGO_WIDTH = 320.dp
+internal val TITLE_LOGO_HEIGHT = 96.dp
+internal val TITLE_LOGO_WIDTH_TV = 380.dp
+internal val TITLE_LOGO_HEIGHT_TV = 120.dp
 
 /**
  * The show's play pill, naming what it starts: "Resume S01E04 · 12 min left" for an episode left
@@ -763,14 +799,25 @@ fun SeriesPanel(
         }
         val heading: @Composable () -> Unit = {
             val title = meta?.title?.takeIf { it.isNotBlank() } ?: series.title
-            Text(
-                title,
-                style = MaterialTheme.typography.displaySmall.trackedFor(title),
-                color = Tone.text,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.semantics { heading() },
-            )
+            // The show's title logo from TMDB where it has one, the name in type until it is
+            // decoded and wherever it has none; read out as the name either way.
+            com.tmplayer.ui.online.TitleArt(
+                meta,
+                maxWidth = if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
+                maxHeight = if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT,
+                modifier = Modifier.clearAndSetSemantics {
+                    heading()
+                    contentDescription = title
+                },
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.displaySmall.trackedFor(title),
+                    color = Tone.text,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         val poster: @Composable () -> Unit = {
             meta?.posterUrl?.let { url ->
@@ -928,6 +975,8 @@ fun SeriesPanel(
                     lineModifier = (if (next != null && episode.sameAs(next)) Modifier.focusRequester(upNextFocus) else Modifier)
                         .focusRequester(rowFocus),
                     name = EpisodeNames.listName(episode.season, episode.episode, names),
+                    guide = EpisodeNames.listed(episode.season, episode.episode, names),
+                    showOverview = true,
                 )
             }
             // The cast and "More like this" after the episodes: composed only once scrolled to.

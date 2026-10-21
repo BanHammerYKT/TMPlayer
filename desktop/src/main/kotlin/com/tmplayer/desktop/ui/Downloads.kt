@@ -869,7 +869,8 @@ private fun VideoRow(
 
 /**
  * A video's small 2:3 poster, the one History's and a chat's rows wear (the phone's download cards
- * too): its picture, or the generated cover with no name on it, since the title is beside it.
+ * too): the provider's poster where the title is matched, else its picture, or the generated
+ * cover with no name on it, since the title is beside it.
  */
 @Composable
 private fun Thumb(item: MediaItem, pick: Pick? = null) {
@@ -883,7 +884,8 @@ private fun Thumb(item: MediaItem, pick: Pick? = null) {
             .clip(shape)
             .then(if (pick?.picked == true) Modifier.border(2.dp, Tone.accent, shape) else Modifier),
     ) {
-        PosterArt(item.miniThumbnail, item.thumbnailFileId, shown, null, Modifier.fillMaxSize(), compactCover = true)
+        val meta = com.tmplayer.ui.online.rememberMeta(item, showOnly = true)
+        PosterArt(item.miniThumbnail, item.thumbnailFileId, shown, meta?.posterUrl, Modifier.fillMaxSize(), compactCover = true)
         if (pick != null && pick.shown) {
             val s = LocalStrings.current
             // The tick, on the poster as a photo grid has it: there under the pointer and once

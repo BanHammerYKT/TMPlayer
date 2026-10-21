@@ -217,6 +217,7 @@ fun EpisodesPanel(
                         current = isPlaying,
                         holdOk = true,
                         name = com.tmplayer.online.EpisodeNames.listName(episode.season, episode.episode, names),
+                        guide = com.tmplayer.online.EpisodeNames.listed(episode.season, episode.episode, names),
                         modifier = Modifier.padding(pad).secondaryClick { actions.onToggleWatched(chosen) },
                         lineModifier = if (isPlaying) {
                             Modifier.focusRequester(currentFocus).onFocusChanged { currentFocused = it.isFocused }
