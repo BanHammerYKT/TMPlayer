@@ -60,7 +60,7 @@ class TdDataSource(td: TdlClient) : BaseDataSource(true) {
 
         // A finished file needs nothing from TDLib, not even a download request, which would
         // only re-enter its scheduler for bytes that are already sitting on disk.
-        if (!bytes.completed) blocking(OPEN_TIMEOUT_MS) { bytes.requestDownloadFrom(position) }
+        if (!bytes.completed) blocking(OPEN_TIMEOUT_MS) { bytes.requestUnlessOnDisk(position) }
 
         opened = true
         transferStarted(dataSpec)

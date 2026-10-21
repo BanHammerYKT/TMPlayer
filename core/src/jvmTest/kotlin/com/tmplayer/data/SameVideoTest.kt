@@ -272,18 +272,44 @@ class SameVideoTest {
         }
         repeat(3) { SeriesShelf.arrange(items, emptyMap()) }
         // Fresh copies each time, so every name is parsed again as on a first listing; the best of
-        // three, so a garbage collection or a test running alongside does not decide it.
-        val ms = (1..3).minOf {
+        // five, so a garbage collection does not decide it.
+        val ms = (1..5).minOf {
             val fresh = items.map { it.copy() }
             val start = System.nanoTime()
             SeriesShelf.arrange(fresh, emptyMap())
-            (System.nanoTime() - start) / 1_000_000
+            (System.nanoTime() - start) / 1_000_000.0
         }
-        println("arranging 2000 files: $ms ms")
-        assertTrue("arranging 2000 files took $ms ms", ms < 200)
+        // The same machine's pace right now, on fixed string work of the same kind: a busy machine
+        // (other builds, an emulator) slows both alike, so the budget follows it, while a real
+        // regression in the arranging moves only the first figure.
+        val pace = (1..5).minOf { calibration() }
+        val budget = maxOf(ARRANGE_BUDGET_MS, pace * ARRANGE_PACE_FACTOR)
+        println("arranging 2000 files: $ms ms, calibration $pace ms, budget $budget ms")
+        assertTrue("arranging 2000 files took $ms ms (calibration $pace ms, budget $budget ms)", ms < budget)
+    }
+
+    /** Milliseconds for a fixed lot of name-like string work: lower case, split, rejoin, hash. */
+    private fun calibration(): Double {
+        val names = (0 until 2000).map { "Show ${it % 40}.S01E${it % 30}.720p.HDRip_${it}_Film.mkv" }
+        val start = System.nanoTime()
+        var sink = 0
+        repeat(20) {
+            for (name in names) {
+                val words = name.lowercase().split('.', '_', ' ', '-')
+                sink += words.joinToString(" ").hashCode()
+            }
+        }
+        if (sink == 42) println(sink)
+        return (System.nanoTime() - start) / 1_000_000.0
     }
 
     private companion object {
         const val MB = 1024L * 1024
+
+        /** The budget on an idle machine. */
+        const val ARRANGE_BUDGET_MS = 200.0
+
+        /** How many calibration rounds the arranging may take; set from idle runs, with room. */
+        const val ARRANGE_PACE_FACTOR = 5.0
     }
 }

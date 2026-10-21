@@ -68,6 +68,23 @@ class TdStreamBytes(private val td: TdlClient, val fileId: Int) : StreamBytes {
 
     override suspend fun askAgain(position: Long) = window.askAgainFrom(position)
 
+    /** See [StreamBytes.readOnDisk]: TDLib is asked only what it has, never for a download. */
+    override suspend fun readOnDisk(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
+        if (position >= size) return -1
+        val file = td.getFile(fileId).valueOrNull ?: return 0
+        val run = if (file.local.isDownloadingCompleted) {
+            size - position
+        } else {
+            td.getFileDownloadedPrefixSize(fileId, position).valueOrNull?.size ?: 0L
+        }
+        if (run <= 0) return 0
+        val path = file.local.path.takeIf { it.isNotBlank() } ?: return 0
+        val want = minOf(length.toLong(), run).toInt()
+        return FileChannel.open(Paths.get(path), StandardOpenOption.READ).use { channel ->
+            channel.read(ByteBuffer.wrap(buffer, offset, want), position).coerceAtLeast(0)
+        }
+    }
+
     override fun close() = window.close()
 
     private companion object {

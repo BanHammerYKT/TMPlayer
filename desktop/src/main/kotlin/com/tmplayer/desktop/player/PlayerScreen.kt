@@ -304,6 +304,11 @@ fun PlayerScreen(
     val storyboard = remember(boardFiles, scrubPictures) {
         boardFiles?.takeIf { scrubPictures }?.let { files -> DesktopStoryboard(files) { engine.state.value.durationMs.takeIf { it > 0 } ?: current.item.durationSec * 1000L } }
     }
+    // The video's own frames for the hover where there is no storyboard: a second decoder over
+    // what is on the disk (see [PlaybackEngine.previewFrame]).
+    val frameSource = remember(current.item.id, scrubPictures) {
+        if (!scrubPictures) null else FrameSource { at -> engine.previewFrame(at, FRAME_WIDTH_PX, FRAME_HEIGHT_PX) }
+    }
     var resumedFrom by remember { mutableStateOf<Long?>(null) }
     var autoplayNext by remember { mutableStateOf(true) }
     var nextUpDismissed by remember { mutableStateOf(false) }
@@ -1576,6 +1581,7 @@ fun PlayerScreen(
             CompositionLocalProvider(
                 LocalPlayerCopies provides PlayerCopies(copies, current.item.id, qualities, current.item.playingQuality),
                 LocalStoryboard provides storyboard,
+                LocalFrameSource provides frameSource,
             ) { PlayerOverlay(
                 visible = showControls,
                 status = status,
@@ -2047,6 +2053,10 @@ private const val RESUME_TICK_MS = 10_000L
 
 /** How long the opening waits for the message to be read again before it picks a copy (CP80). */
 private const val POST_READ_MS = 2_500L
+
+/** The hover frame asked of the preview decoder: twice the 160 dp tip at 1x, room for 2x. */
+private const val FRAME_WIDTH_PX = 320
+private const val FRAME_HEIGHT_PX = 180
 private const val NEXT_UP_LEAD_MS = 30_000L
 
 /** How long the card counts down from the start of timed credits before the next episode. */

@@ -137,7 +137,7 @@
         -->
         <activity
             android:name=".player.PlayerActivity"
-            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection"
             android:exported="false"
             android:screenOrientation="fullUser"
             android:supportsPictureInPicture="true"
