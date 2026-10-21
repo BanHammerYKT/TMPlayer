@@ -198,7 +198,7 @@ object HomeRows {
         recentMinStarred: Int = RECENT_MIN_STARRED,
         starred: Set<Long>? = null,
         autoFill: Boolean = false,
-    ): List<HomeRow> = buildList {
+    ): List<HomeRow> = buildList<HomeRow> {
         val seen = HashSet<String>()
 
         val distinct = continueWatching.distinctBy { keyOf(it.chatId, it.messageId) }
@@ -309,6 +309,19 @@ object HomeRows {
             }
         }
 
+    }.let { rows -> if (autoFill) moviesAndShowsFirst(rows) else rows }
+
+    /**
+     * Movies and Shows straight under Continue watching (and the carousel), ahead of Watch later
+     * and New episodes: the order the viewer asked for (user, 2026-10-21). They are built after
+     * those rows, which they leave out, and moved up here.
+     */
+    private fun moviesAndShowsFirst(rows: List<HomeRow>): List<HomeRow> {
+        val across = rows.filterIsInstance<HomeRow.Across>()
+        if (across.isEmpty()) return rows
+        val rest = rows.filterNot { it is HomeRow.Across }
+        val at = rest.indexOfLast { it is HomeRow.Continue || it is HomeRow.Recent } + 1
+        return rest.take(at) + across + rest.drop(at)
     }
 
     /**

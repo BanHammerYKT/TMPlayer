@@ -63,6 +63,7 @@ class HomeAutoFillTest {
         assertFalse("not every chat is starred", recent.starredOnly)
         val across = rows.filterIsInstance<HomeRow.Across>()
         assertEquals(listOf(HomeRow.Across.Kind.Videos, HomeRow.Across.Kind.Shows), across.map { it.kind })
+        assertEquals("right under the carousel", listOf("recent", "across-videos", "across-shows"), rows.take(3).map { it.key })
         across.forEach { row -> assertTrue(row.entries.all { HomeRows.kindOf(it) == row.kind }) }
         val chatRows = rows.filterIsInstance<HomeRow.Chat>()
         chatRows.forEach { row -> assertTrue(row.entries.all { HomeRows.kindOf(it) == row.kind }) }
