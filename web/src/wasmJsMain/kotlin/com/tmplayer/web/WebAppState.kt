@@ -5,6 +5,7 @@ import com.tmplayer.web.data.WebFiles
 import com.tmplayer.web.data.WebLookups
 import com.tmplayer.web.data.WebPrefs
 import com.tmplayer.web.data.WebResume
+import com.tmplayer.web.data.WebSponsoredMessages
 import com.tmplayer.web.data.WebVideos
 import com.tmplayer.web.td.WebAuth
 import com.tmplayer.web.td.WebTd
@@ -20,6 +21,7 @@ class WebAppState(val scope: CoroutineScope) {
     val videos = WebVideos(td)
     val resume = WebResume(prefs)
     val lookups = WebLookups(td, chats)
+    val sponsored = WebSponsoredMessages(td)
 
     fun start() {
         auth.onReady = { chats.onSignedIn() }

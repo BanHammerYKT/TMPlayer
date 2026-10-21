@@ -122,6 +122,23 @@ object WebVideoMapper {
 /** Reading a chat's videos: Telegram's own video and document filters, merged newest first. */
 class WebVideos(private val td: WebTd) {
 
+    /** A search inside one chat: Telegram matches the caption as well as the file name. */
+    suspend fun searchIn(chatId: Long, query: String, protectedChat: Boolean, untitled: String, limit: Int = 100): List<WebVideo> {
+        suspend fun find(filter: String): List<JsonObject> = td.tryCall("searchChatMessages") {
+            putLong("chat_id", chatId)
+            put("query", query.trim())
+            putLong("from_message_id", 0)
+            put("offset", 0)
+            put("limit", limit)
+            putJsonObject("filter") { put("@type", filter) }
+        }?.objects("messages").orEmpty()
+        return (find("searchMessagesFilterVideo") + find("searchMessagesFilterDocument"))
+            .mapNotNull { WebVideoMapper.fromMessage(it, protectedChat, untitled) }
+            .distinctBy { it.key }
+            .sortedByDescending { it.messageId }
+    }
+
+
     /**
      * One page from [fromVideo] and [fromDocument] (each a message id, 0 for the newest; -1 when that
      * filter has nothing more), merged by date.
