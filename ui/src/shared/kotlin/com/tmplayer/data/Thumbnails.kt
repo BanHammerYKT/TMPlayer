@@ -96,7 +96,10 @@ object Thumbnails {
         cache.get(key)?.let { return it }
 
         val path = withContext(Dispatchers.IO) { downloadThumbnail(fileId) } ?: return null
-        return withContext(Dispatchers.IO) {
+        // Another tile with the same video (Home's rows and the carousel share many) may have
+        // decoded it while this one waited for the file.
+        cache.get(key)?.let { return it }
+        return withContext(decoding) {
             runCatching { decodeTdImage(fileId, path, lighter(MAX_THUMBNAIL_WIDTH)) }.getOrNull()?.also { cache.put(key, it) }
         }
     }
@@ -146,8 +149,9 @@ object Thumbnails {
         val maxWidth = lighter(wanted)
         val key = onlineKey(url, maxWidth)
         cache.get(key)?.let { return it }
-        return withContext(Dispatchers.IO) {
-            val file = runCatching { fetch() }.getOrNull() ?: return@withContext null
+        val file = withContext(Dispatchers.IO) { runCatching { fetch() }.getOrNull() } ?: return null
+        cache.get(key)?.let { return it }
+        return withContext(decoding) {
             runCatching { decodeImageFile(file.path, maxWidth, alpha) }.getOrNull()?.also { cache.put(key, it) }
         }
     }
@@ -198,6 +202,15 @@ object Thumbnails {
 
     @Volatile
     private var fixedBudget = 0
+
+    /**
+     * Where pictures are decoded: a few at a time, off the I/O pool. Decoding is work for the
+     * processor, and a fast scroll used to start one for every tile at once on the I/O pool's
+     * sixty-four threads, which on a four core stick left the frames waiting behind them. Queued
+     * here, the decode of a tile already scrolled away is dropped before it starts, since
+     * [withContext] checks for cancellation as it is dispatched.
+     */
+    private val decoding = Dispatchers.Default.limitedParallelism(DECODE_PARALLELISM)
 
     private suspend fun downloadThumbnail(fileId: Int): String? {
         val td = Td.awaitAuthorizedSession().client
@@ -253,6 +266,7 @@ object Thumbnails {
     /** The narrowest a picture is decoded at under [light]. */
     private const val LIGHT_MIN_WIDTH = 160
     private const val THUMBNAIL_PRIORITY = 4
+    private const val DECODE_PARALLELISM = 3
     private const val DOWNLOAD_TIMEOUT_MS = 20_000L
 }
 
