@@ -66,6 +66,11 @@
       document.body.insertBefore(this.stage, document.body.firstChild);
       document.documentElement.classList.add('tm-video-open');
       this.timer = 0;
+      // While the video opens nothing else fires for seconds at a time, so the opening loader
+      // gets the byte count twice a second until the first frame.
+      this.pulse = setInterval(() => {
+        if (!this.started) this.send();
+      }, 500);
       const kind = spec.engine || E.choose(spec);
       this.start(kind, spec.startSec || 0, kind === 'movi' && noHardware() && HEVC.test(spec.name || ''));
     }
@@ -246,6 +251,7 @@
         muted: !!(m && m.muted),
         speed: m ? m.playbackRate || 1 : 1,
         failed: this.failed,
+        readBytes: (window.TgSource && window.TgSource.stats && window.TgSource.stats.bytes) || 0,
       };
       // The lists only when they changed: Kotlin keeps the last ones it was sent.
       const lists = JSON.stringify([audio, subs, chapters]);
@@ -360,6 +366,7 @@
       if (this.closed) return;
       this.closed = true;
       clearTimeout(this.timer);
+      clearInterval(this.pulse);
       clearTimeout(this.silenceCheck);
       if (this.engine) {
         if (this.engine.watch) this.engine.watch.disconnect();

@@ -1686,6 +1686,8 @@
     "lighter_picked_data": "Playing Telegram's {quality} to save mobile data",
     "lighter_picked_slow": "Playing Telegram's {quality} for a slow connection",
     "load_subtitle_file": "Load a subtitle file",
+    "loader_finding": "Finding {time}",
+    "loader_reading": "Reading the video",
     "loader_starting": "Starting",
     "loading_rate": "Loading  ·  {rate}",
     "lock_screen": "Lock the screen",

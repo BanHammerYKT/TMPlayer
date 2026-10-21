@@ -101,6 +101,9 @@ fun WebPlayerScreen(
     // The first frame is in: the video opened and either plays or was held paused. Latched, so a
     // later stall shows the buffering spinner and never the opening card again.
     var started by remember(item) { mutableStateOf(false) }
+    // Where the video opens, for the opening card's "Finding 13:54"; kept apart from the resume
+    // notice, which can go while the card is still up.
+    var openingStartMs by remember(item) { mutableStateOf(0L) }
     LaunchedEffect(item, status.opened, status.buffering, status.playing) {
         if (status.opened && (!status.buffering || !status.playing)) started = true
     }
@@ -155,6 +158,7 @@ fun WebPlayerScreen(
             runCatching { settings.resumeStartFor(item) }.getOrDefault(0L)
         }
         if (start > 0) resumedFrom = start
+        openingStartMs = start
         val desktop = prefs.now
         engine.open(
             WebMedia(item),
@@ -371,7 +375,21 @@ fun WebPlayerScreen(
                 isDownload = false,
                 onBack = onClose,
                 onRetry = engine::retry,
-                speedNotes = false,
+                startMs = openingStartMs,
+                // What the page measures: its reader's bytes, the video opened and seeking, and
+                // the buffer ahead of the start point.
+                signals = {
+                    val st = engine.state.value
+                    val start = openingStartMs
+                    com.tmplayer.player.OpeningProgress.Signals(
+                        readBytes = engine.readBytes,
+                        opened = st.opened,
+                        seekDone = if (start > 0) st.opened && !st.seekPending && st.bufferedMs > st.positionMs else null,
+                        bufferedMs = if (st.opened) (st.bufferedMs - st.positionMs).coerceAtLeast(0) else -1L,
+                        bufferTargetMs = WEB_START_BUFFER_MS,
+                        bytesPerSec = if (item.durationSec > 0) item.sizeBytes / item.durationSec else 0L,
+                    )
+                },
             )
             resumedFrom?.let { from ->
                 if (status.opened) {
@@ -432,4 +450,7 @@ private const val GET_APP = "https://tmplayer.org/download/"
 private const val RESUME_TICK_MS = 5_000L
 private const val CONTROLS_IDLE_MS = 3_000L
 private const val SUBTITLE_STEP_MS = 100L
+
+/** What the page's video wants ahead of the start point before it plays, as the card's buffer. */
+private const val WEB_START_BUFFER_MS = 1_000L
 

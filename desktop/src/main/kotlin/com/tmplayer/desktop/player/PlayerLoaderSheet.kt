@@ -41,6 +41,7 @@ import com.tmplayer.data.MediaItem
 import com.tmplayer.data.OpeningStall
 import com.tmplayer.data.Td
 import com.tmplayer.data.Thumbnails
+import com.tmplayer.player.OpeningProgress
 import com.tmplayer.player.SpeedMeter
 import com.tmplayer.player.StreamStats
 import com.tmplayer.ui.i18n.LocalStrings
@@ -54,9 +55,11 @@ import kotlinx.coroutines.delay
  * [Phase.Loading], faded off when playback begins. A back arrow sits in the corner for the mouse;
  * Escape and the mouse's back button keep working as before.
  *
- * [downloaded] is how much of the file is on the disk, which feeds both the wait's slow-speed note
- * (after three seconds, and only once it means something) and, during a whole-file download
- * before playing, the progress line. Otherwise the line follows the player's buffer.
+ * The line is [OpeningProgress]'s, filled in stages from [signals] (bytes handed to the player,
+ * the engine opened, the buffer ahead) and reaching the end as the sheet goes, on the first frame.
+ * During a whole-file download before playing it is the file's share instead. [downloaded] is how
+ * much of the file is on the disk; it and the bytes read feed the wait's speed note, shown after
+ * [OpeningProgress.SPEED_NOTE_AFTER_MS] once it means something.
  *
  * Both also tell it whether anything is arriving. After [OpeningStall.STALL_MS] with neither
  * moving, the sheet says so over the loader, in the words the line to Telegram earns, with Try
@@ -85,6 +88,10 @@ internal fun BoxScope.LoaderSheet(
      * wait's note could only ever say "slow" there, so it is left off.
      */
     speedNotes: Boolean = true,
+    /** What the opening can measure now, read a few times a second; null for nothing (the line eases). */
+    signals: (() -> OpeningProgress.Signals)? = null,
+    /** Where the video starts, for "Finding 13:54"; 0 for the start. */
+    startMs: Long = 0,
 ) {
     val s = LocalStrings.current
     val loading = phase as? Phase.Loading
@@ -100,42 +107,66 @@ internal fun BoxScope.LoaderSheet(
         if (frame.height > 0 && frame.width.toFloat() / frame.height >= 1.3f) value = frame
     }
 
-    // The speed, from the bytes on the disk, for the slow wait's note.
+    // The speed, from the bytes on the disk and the bytes handed to the player, for the slow wait's note.
     val meter = remember(item.fileId) { SpeedMeter() }
+    val readMeter = remember(item.fileId) { SpeedMeter() }
     var note by remember(item.fileId) { mutableStateOf<String?>(null) }
     val fraction by rememberUpdatedState(downloaded)
     val real by rememberUpdatedState(isDownload)
     val buffered by rememberUpdatedState(bufferedMs)
+    val measure by rememberUpdatedState(signals)
+    val seeks by rememberUpdatedState(startMs > 0)
+    // The line, in stages ([OpeningProgress]); a new one for each wait.
+    var opening by remember(item.fileId) { mutableStateOf(OpeningProgress()) }
+    var line by remember(item.fileId) { mutableStateOf(0f) }
+    var stage by remember(item.fileId) { mutableStateOf(OpeningProgress.Stage.Connecting) }
     var stalled by remember(item.fileId) { mutableStateOf(false) }
     // Bumped by Try again, so the count starts over though the sheet never left Loading.
     var tries by remember(item.fileId) { mutableStateOf(0) }
     LaunchedEffect(item.fileId, loading != null, tries) {
         stalled = false
-        if (loading == null) return@LaunchedEffect
+        if (loading == null) {
+            line = opening.finish()
+            return@LaunchedEffect
+        }
+        if (opening.value >= 1f) {
+            opening = OpeningProgress()
+            line = 0f
+            stage = OpeningProgress.Stage.Connecting
+        }
         val started = System.currentTimeMillis()
         var lastAt = started
         var lastFraction = fraction
         var lastBuffered = buffered
+        var lastRead = 0L
+        readMeter.reset()
         while (true) {
             val now = System.currentTimeMillis()
-            if (fraction != lastFraction || buffered > lastBuffered) {
+            val sig = measure?.invoke() ?: OpeningProgress.Signals()
+            if (fraction != lastFraction || buffered > lastBuffered || sig.readBytes > lastRead) {
                 lastAt = now
                 lastFraction = fraction
                 lastBuffered = buffered
+                lastRead = sig.readBytes
             }
+            opening.seeks = seeks
+            line = opening.update(sig, now)
+            stage = opening.stage
             stalled = OpeningStall.stalled(opening = true, local = (fraction ?: 0f) >= 1f, lastProgressAtMs = lastAt, nowMs = now)
             fraction?.let { meter.sample((it * item.sizeBytes).toLong(), now) }
-            val rate = meter.bytesPerSec
+            readMeter.sample(sig.readBytes, now)
+            val rate = maxOf(meter.bytesPerSec, readMeter.bytesPerSec)
             // The line as measured while bytes move, for choosing a lighter copy next time (CP80).
-            if (fraction != null && fraction != 1f && now == lastAt) com.tmplayer.player.LineSpeed.note(rate)
+            // TDLib's bytes only: the player's reads include the start already on the disk.
+            if (fraction != null && fraction != 1f && now == lastAt) com.tmplayer.player.LineSpeed.note(meter.bytesPerSec)
             note = if (!speedNotes) {
                 null
-            } else if (now - started > SLOW_MS && rate >= StreamStats.MIN_MEANINGFUL_SPEED && (fraction ?: 1f) < 1f) {
+            } else if (now - started > SLOW_MS && rate >= StreamStats.MIN_MEANINGFUL_SPEED && (fraction ?: 0f) < 1f) {
                 val figure = s.formatter.speed(rate)
-                val line = if (real) s.playerDownloadingRate(figure) else s.playerCachingRate(figure)
+                val said = if (real) s.playerDownloadingRate(figure) else s.playerCachingRate(figure)
                 // Telegram's own cap on an account without Premium (CP83): said, nothing offered.
-                if (com.tmplayer.data.Td.speedLimitedNow()) line + "\n" + s.playerSpeedLimited else line
-            } else if (now - started > SLOW_MS && (fraction ?: 0f) < 1f) {
+                if (com.tmplayer.data.Td.speedLimitedNow()) said + "\n" + s.playerSpeedLimited else said
+            } else if (now - started > SLOW_MS && (fraction ?: 0f) < 1f && rate < StreamStats.MIN_MEANINGFUL_SPEED) {
                 // Nothing measurable arriving yet: said quietly, long before the stall sheet.
                 s.connectSlowTitle
             } else {
@@ -145,11 +176,14 @@ internal fun BoxScope.LoaderSheet(
         }
     }
 
-    val routine = shown.message == s.playerOpeningVideo || shown.message == s.playerConnectingTelegram
-    val status = if (routine) s.playerLoaderStarting else shown.message
-    // A whole-file download before playing counts the file; anything else counts the buffer.
+    val startClock = startMs.takeIf { it > 0 }?.let { SeekMath.clock(it) }
+    val routine = shown.message == s.playerOpeningVideo || shown.message == s.playerConnectingTelegram ||
+        (startClock != null && shown.message == s.playerResumingFrom(startClock))
+    // The stage's own words: "Starting", "Reading the video", "Finding 13:54", "Buffering".
+    val status = if (routine) OpeningProgress.wordsFor(stage, s, startClock) else shown.message
+    // A whole-file download before playing counts the file; anything else is the staged line.
     val wholeFile = shown.message.startsWith(s.playerDownloadingWholeVideo)
-    val progress = if (wholeFile) downloaded ?: 0f else (bufferedMs / BUFFER_TARGET_MS.toFloat()).coerceIn(0f, 1f)
+    val progress = if (wholeFile) downloaded ?: 0f else line
 
     AnimatedVisibility(loading != null, Modifier.matchParentSize(), enter = fadeIn(tween(0)), exit = fadeOut(tween(250))) {
         BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -274,8 +308,5 @@ private fun BoxScope.StalledPanel(
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 }
 
-private const val SLOW_MS = 3_000L
-private const val TICK_MS = 500L
-
-/** What mpv likes in hand before it starts, as the line's whole length. */
-private const val BUFFER_TARGET_MS = 5_000L
+private const val SLOW_MS = OpeningProgress.SPEED_NOTE_AFTER_MS
+private const val TICK_MS = 250L

@@ -267,6 +267,9 @@ fun PlayerScreen(
     var ignoreSavedPosition by remember(media) { mutableStateOf(startFromBeginning) }
     var attempt by remember { mutableIntStateOf(0) }
     var phase by remember { mutableStateOf<Phase>(Phase.Loading(s.playerOpeningVideo)) }
+    // The opening's start point and [StreamReads] when it began, for the loader's staged line.
+    var openingStartMs by remember { mutableStateOf(0L) }
+    val openingBytesAt = remember { longArrayOf(0L) }
     var episodes by remember { mutableStateOf(Episodes()) }
     // Every copy of the video playing that the player knows of: what the opening page handed over
     // (CopyHandoff, possibly across chats) and, for an episode, its copies once the show is found.
@@ -441,6 +444,8 @@ fun PlayerScreen(
 
     LaunchedEffect(current, attempt) {
         phase = Phase.Loading(if (item.chatId != 0L) s.playerConnectingTelegram else s.playerOpeningVideo)
+        openingBytesAt[0] = StreamReads.delivered.get()
+        openingStartMs = 0L
         // Telegram's own lighter copy (CP80), chosen before anything is opened: the one asked for
         // on the detail page or the copies menu, else one the line measured on this run carries
         // when it is too slow for the upload. Never for a download or an upload already here.
@@ -512,6 +517,7 @@ fun PlayerScreen(
         }.getOrDefault(0L)
         val reopening = reopenAt != null
         reopenAt = null
+        openingStartMs = start
         trackChoice = runCatching { settings.trackChoice(seriesKey) }.getOrDefault(TrackChoice())
         // A resumed video goes back to the tracks and speed it was playing with. See [ResumeState].
         val resumed = if (start > 0 && hasMessage(item)) {
@@ -1822,6 +1828,20 @@ fun PlayerScreen(
                     null
                 },
                 lighter = lighterAction,
+                startMs = openingStartMs,
+                // What the opening measures: mpv's reads, whether it has opened, its cache ahead.
+                signals = {
+                    val st = engine.state.value
+                    val it = current.item
+                    com.tmplayer.player.OpeningProgress.Signals(
+                        readBytes = StreamReads.delivered.get() - openingBytesAt[0],
+                        onDisk = (downloaded ?: 0f) >= 1f || !current.fromTelegram,
+                        opened = st.opened,
+                        bufferedMs = if (st.opened) (st.bufferedMs - st.positionMs).coerceAtLeast(0) else -1L,
+                        bufferTargetMs = MPV_START_BUFFER_MS,
+                        bytesPerSec = if (it.durationSec > 0) it.sizeBytes / it.durationSec else 0L,
+                    )
+                },
             )
 
             // A stall while playing that runs on says why, with the opening's three ways on.
@@ -2053,6 +2073,9 @@ private const val RESUME_TICK_MS = 10_000L
 
 /** How long the opening waits for the message to be read again before it picks a copy (CP80). */
 private const val POST_READ_MS = 2_500L
+
+/** What mpv waits for in its cache before it plays (its `cache-pause-wait`), as the loader's buffer. */
+private const val MPV_START_BUFFER_MS = 1_000L
 
 /** The hover frame asked of the preview decoder: twice the 160 dp tip at 1x, room for 2x. */
 private const val FRAME_WIDTH_PX = 320

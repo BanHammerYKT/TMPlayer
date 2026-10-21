@@ -100,6 +100,15 @@ class WebPlaybackEngine : PlaybackEngine {
     private val _failure = MutableStateFlow<String?>(null)
     val failure: StateFlow<String?> = _failure.asStateFlow()
 
+    /**
+     * Bytes the page's reader (web/player/tg-source.js) has handed the player since this video
+     * opened, for the opening loader's line and speed. The page's count is for the whole tab, so
+     * this one starts from the first figure it sends, which comes before the video's first read.
+     */
+    var readBytes: Long = 0
+        private set
+    private var readBytesAt = -1L
+
     /** "native", "movi" or "movi-sw": which engine draws the picture, for Playback details. */
     var engineName: String = ""
         private set
@@ -187,6 +196,9 @@ class WebPlaybackEngine : PlaybackEngine {
         fun b(key: String) = (o[key] as? JsonPrimitive)?.booleanOrNull ?: false
         fun i(key: String) = (o[key] as? JsonPrimitive)?.intOrNull ?: 0
         engineName = (o["engine"] as? JsonPrimitive)?.content.orEmpty()
+        val total = d("readBytes").toLong()
+        if (readBytesAt < 0) readBytesAt = total
+        readBytes = (total - readBytesAt).coerceAtLeast(0)
         val before = _state.value
         _state.value = before.copy(
             opened = b("opened"),
