@@ -29,6 +29,12 @@ data class MetaQuery(
     val anime: Boolean = false,
     val tmdbId: Int? = null,
     val kind: MetaKind = if (season != null || episode != null) MetaKind.Show else MetaKind.Film,
+    /**
+     * The audio languages the name lists after its title, ISO 639-1 ("Tamil-Hindi" gives `ta`,
+     * `hi`): a hint for which of two titles of the same name and year is meant, never a reason to
+     * take one. Not part of [cacheKey], so answers already kept stand.
+     */
+    val languages: List<String> = emptyList(),
 ) {
     /** True when an episode's own name and words are wanted, not only the show's. */
     val wantsEpisode: Boolean get() = kind == MetaKind.Show && episode != null
@@ -90,6 +96,7 @@ data class MetaQuery(
                 tmdbId = forced,
                 // A daily show named by its air date is a show, though it names no episode number.
                 kind = if (parsed.isSeries) MetaKind.Show else MetaKind.Film,
+                languages = (MediaName.languages(name) + (caption?.let { MediaName.languages(it.replace(FORCED, " ")) } ?: emptyList())).distinct(),
             )
         }
     }
@@ -231,6 +238,42 @@ object MetaMatch {
             normalise(name) == target || (yearAgrees && overlap(wanted, name) >= 0.6)
         }
     }
+}
+
+/**
+ * Which of a search's results is the title asked for, once [MetaMatch] has said which may be:
+ * the same words before most of them, the same year before a year one off, a title made in one
+ * of the languages the file lists before one that is not, and otherwise the provider's own order
+ * (its relevance and popularity). "Clap 2022 Tamil-Hindi" so takes the 2022 film called exactly
+ * that over an older "Clap" or a "Clap Clap", and of two films of one name and year, the Tamil one.
+ */
+object MetaPick {
+
+    fun best(query: MetaQuery, candidates: List<MetaCandidate>, show: Boolean): MetaCandidate? =
+        candidates.withIndex()
+            .filter { MetaMatch.accepts(query.title, query.year, it.value.names, it.value.year, show) }
+            .maxWithOrNull(compareBy<IndexedValue<MetaCandidate>> { score(query, it.value) }.thenByDescending { it.index })
+            ?.value
+
+    /** Higher is closer. The weights keep the order above: words, then year, then language. */
+    fun score(query: MetaQuery, candidate: MetaCandidate): Int {
+        val target = MetaMatch.normalise(query.title)
+        var score = 0
+        if (candidate.names.any { it.isNotBlank() && MetaMatch.normalise(it) == target }) score += EXACT_WORDS
+        val wanted = query.year
+        val year = candidate.year
+        if (wanted != null && year != null) {
+            if (wanted == year) score += SAME_YEAR else if (kotlin.math.abs(wanted - year) <= 1) score += NEAR_YEAR
+        }
+        val original = candidate.originalLanguage.lowercase()
+        if (original.isNotEmpty() && original in query.languages) score += LANGUAGE
+        return score
+    }
+
+    private const val EXACT_WORDS = 8
+    private const val SAME_YEAR = 4
+    private const val NEAR_YEAR = 1
+    private const val LANGUAGE = 2
 }
 
 /** What is known of a title's logo: its address, or null for a title that has none. */

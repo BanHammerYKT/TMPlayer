@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -43,8 +44,10 @@ data class Cover(
  * thumbnail. A grey square with one letter on it reads as broken, and a chat of forty of them as a
  * chat that failed to load, so a file with no picture gets a cover that looks intended instead.
  *
- * A diagonal gradient in one of eight dark pairs, chosen by the chat and the title so a file
- * keeps its colour and every part of one course shares it; the title at the bottom start, white,
+ * A diagonal gradient in one of eight dark pairs, chosen by the title alone so a file keeps its
+ * colour, every part of one course shares it, and the same film posted in two chats wears the same
+ * one; a soft light in the top start corner, so the cover has depth rather than a flat fill; the
+ * title at the bottom start, white,
  * over [Scrims.tileFoot]; and where the name carries an episode, a part, a lecture or a chapter
  * number, that number set large and faint at the top end, so a course reads as a numbered set.
  *
@@ -65,7 +68,20 @@ fun GeneratedCover(
 ) {
     val (start, end) = CoverArt.Pairs[cover.pair]
     val inset = if (compact) 8.dp else 12.dp
-    Box(modifier.background(Brush.linearGradient(listOf(start, end)))) {
+    Box(
+        modifier
+            .background(Brush.linearGradient(listOf(start, end)))
+            .drawBehind {
+                // A light falling from the top start corner, over the gradient and under the words.
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(OnArt.copy(alpha = GLOW_ALPHA), Color.Transparent),
+                        center = androidx.compose.ui.geometry.Offset(size.width * 0.15f, size.height * 0.1f),
+                        radius = maxOf(size.width, size.height) * 0.85f,
+                    ),
+                )
+            },
+    ) {
         cover.number?.let { number ->
             Text(
                 number.toString(),
@@ -148,20 +164,26 @@ object CoverArt {
         return Cover(
             title = title,
             number = parsed.episode ?: numeral(name) ?: caption?.let(::numeral),
-            pair = pairIndex(chatId, title),
+            pair = pairIndex(title),
             chatInitial = chatTitle?.let(::initial),
         )
     }
 
     /**
-     * Which of the [Pairs] a title in a chat wears. A hash of the two, so it is the same on every
-     * launch and every device, and every episode of a show (whose parsed titles match) shares it.
+     * Which of the [Pairs] a title wears. A hash of its words, case and spacing aside, so it is the
+     * same on every launch, every device and in every chat, and every episode of a show (whose
+     * parsed titles match) shares it. The hash is spread before it is folded, since titles that
+     * differ by one letter at the end would otherwise sit in neighbouring pairs.
      */
-    fun pairIndex(chatId: Long, title: String): Int {
-        val chat = (chatId xor (chatId ushr 32)).toInt()
-        val words = title.trim().lowercase(Locale.ROOT).hashCode()
-        return Math.floorMod(chat * 31 + words, Pairs.size)
+    fun pairIndex(title: String): Int {
+        var h = title.trim().lowercase(Locale.ROOT).replace(SPACES, " ").hashCode()
+        h = h xor (h ushr 16)
+        h *= 0x45d9f3b
+        h = h xor (h ushr 16)
+        return Math.floorMod(h, Pairs.size)
     }
+
+    private val SPACES = Regex("""\s+""")
 
     /**
      * The number a course or a set of parts puts in its names: "Lecture 07" gives 7, "Part 4" 4,
@@ -192,6 +214,9 @@ object CoverArt {
 
 /** How faint the big number is: a mark on the colour, never competing with the title. */
 private const val NUMERAL_ALPHA = 0.22f
+
+/** The light in the top start corner: enough to give the colour depth, never a bright spot. */
+private const val GLOW_ALPHA = 0.10f
 
 /** The chat's initial sits on a disc of white at this alpha. */
 private const val INITIAL_FILL_ALPHA = 0.18f

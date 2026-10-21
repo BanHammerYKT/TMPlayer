@@ -37,7 +37,8 @@ import kotlinx.coroutines.withContext
 /**
  * The picture on a film's or a show's 2:3 poster card, by the best thing there is:
  *
- * 1. the online poster, when posters and overviews are on and the providers know the title;
+ * 1. the online poster, when posters and overviews are on and the providers know the title (one
+ *    already on this device spares the Telegram thumbnail's download);
  * 2. a portrait Telegram thumbnail, which fills the card as it is;
  * 3. a landscape thumbnail, shown whole across the middle of the card over a soft field of the
  *    same picture ([Thumbnails.backdrop], a 32 px decode stretched, no blur call), so nothing of
@@ -65,7 +66,14 @@ fun PosterArt(
         value = withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) }
     }
     var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
-    LaunchedEffect(thumbnailFileId) { if (full == null) full = Thumbnails.full(thumbnailFileId) }
+    LaunchedEffect(thumbnailFileId, posterUrl) {
+        if (full != null) return@LaunchedEffect
+        // The provider's poster comes first: when it is on this device already, it is what the
+        // card shows, and the video's own thumbnail is not fetched from Telegram at all.
+        val online = com.tmplayer.online.OnlineMetadata.current
+        if (posterUrl != null && online != null && withContext(Dispatchers.IO) { online.hasImage(posterUrl) }) return@LaunchedEffect
+        full = Thumbnails.full(thumbnailFileId)
+    }
     val picture = full ?: mini
     Box(modifier.background(Tone.surface)) {
         Crossfade(targetState = picture, animationSpec = Motion.standard(), label = "posterPicture") { shown ->

@@ -247,22 +247,35 @@ private object PicturePerf {
 }
 
 /**
- * A video tile's picture: [content] (the thumbnail, as a rule) with the show's or film's wide
- * picture over it once it arrives, where [LocalOnlineArt] allows it. Never the poster: every tile
- * is 16:9, and the poster belongs to the detail panel.
+ * A video tile's picture: the provider's wide picture for it once it arrives, over [content] (the
+ * video's own thumbnail, or its generated cover), which stands until then and wherever the
+ * provider has none. Never the poster: every tile is 16:9, and a 2:3 poster cropped into one is a
+ * band across its middle.
+ *
+ * Which picture depends on where the tile is. On Home ([LocalOnlineArt]) it is the show's or the
+ * film's backdrop. In a chat's own grid a film wears its backdrop and an episode its own still from
+ * the season's list ([rememberSeasonEpisodes], one call a season, kept with the answers), so a
+ * season of episodes can still be told apart; an episode the provider has no still for keeps its
+ * frame rather than the show's one backdrop on every tile.
  */
 @Composable
 fun OnlineArt(item: MediaItem, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    if (!LocalOnlineArt.current) {
-        Box(modifier) { content() }
-        return
-    }
+    val home = LocalOnlineArt.current
     val meta = rememberMeta(item, showOnly = true)
+    val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
+    val name = remember(item, corrections) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
+    val number = name.episode
+    val season = name.season ?: 1
+    val listed = if (!home && number != null) rememberSeasonEpisodes(meta, season) else null
+    val url = when {
+        meta == null -> null
+        home -> meta.wideUrl
+        meta.kind == MetaKind.Show -> number?.let { com.tmplayer.online.EpisodeNames.listed(season, it, listed)?.stillUrl }
+        else -> meta.backdropUrl
+    }
     Box(modifier) {
         content()
-        // The wide picture only. A 2:3 poster cropped into a 16:9 tile is a band across its middle,
-        // so without a wide one the tile keeps the video's own frame.
-        MetaPicture(meta?.wideUrl, Modifier.fillMaxSize())
+        MetaPicture(url, Modifier.fillMaxSize())
     }
 }
 

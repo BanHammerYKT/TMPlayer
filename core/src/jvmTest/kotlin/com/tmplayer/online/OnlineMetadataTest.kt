@@ -545,6 +545,42 @@ class OnlineMetadataTest {
         assertEquals(2, http.count("search/movie"))
     }
 
+    // ---- picking among results --------------------------------------------------------------
+
+    @Test
+    fun theExactTitleAndYearIsTakenOverTheFirstResult() = runBlocking {
+        http.on("search/movie") {
+            """{"results":[
+            {"id":1,"title":"Clap Clap","original_title":"Clap Clap","release_date":"2022-01-01","original_language":"en"},
+            {"id":2,"title":"Clap","original_title":"Clap","release_date":"2021-05-01","original_language":"en"},
+            {"id":3,"title":"Clap","original_title":"Clap","release_date":"2022-03-11","original_language":"te"}]}"""
+        }
+        val info = (metadata().lookup(query("Clap.2022.1080p.10bit.AMZN.WEBRip.Tamil-Hindi.DDP2.0.x265.HEVC.ESub-iP0OL.mkv")) as MetaResult.Found).info
+        assertEquals("3", info.id)
+    }
+
+    @Test
+    fun ofTwoTitlesOfOneNameAndYearTheOneInTheFilesLanguageIsTaken() = runBlocking {
+        http.on("search/movie") {
+            """{"results":[
+            {"id":10,"title":"Governor","original_title":"Governor","release_date":"2026-02-01","original_language":"en"},
+            {"id":11,"title":"Governor","original_title":"Governor","release_date":"2026-06-01","original_language":"hi"}]}"""
+        }
+        val info = (metadata().lookup(query("Governor (2026) Hindi 1080p WEB-DL x264 AAC.mkv")) as MetaResult.Found).info
+        assertEquals("11", info.id)
+    }
+
+    @Test
+    fun aNameWithNoEpisodeCodeIsFoundAsAShowWhenNoFilmMatches() = runBlocking {
+        http.on("search/movie") { """{"results":[]}""" }
+        http.on("search/tv") {
+            """{"results":[{"id":96648,"name":"Scam 1992","original_name":"Scam 1992","first_air_date":"2020-10-09","original_language":"hi"}]}"""
+        }
+        val info = (metadata().lookup(query("Scam 1992 (2020) Complete Hindi 720p WEB-DL.mkv")) as MetaResult.Found).info
+        assertEquals(MetaKind.Show, info.kind)
+        assertEquals("96648", info.id)
+    }
+
     private companion object {
         val L_KEY_REFUSED: String get() = com.tmplayer.i18n.L.metadataKeyAppRefused
     }
