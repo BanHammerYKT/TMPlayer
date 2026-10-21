@@ -37,6 +37,7 @@ class ShortcutSheetTest {
         },
         "Audio next, previous" to { it == PlayerAction.AudioNext || it == PlayerAction.AudioPrevious },
         "Subtitles earlier, later" to { it is PlayerAction.SubtitleDelay },
+        "Subtitle size" to { it is PlayerAction.SubtitleSize },
         "Sound earlier, later" to { it is PlayerAction.AudioDelay },
         "Speed up, down, reset" to { it == PlayerAction.SpeedUp || it == PlayerAction.SpeedDown || it == PlayerAction.SpeedReset },
         "Skip intro" to { it == PlayerAction.SkipSegment },

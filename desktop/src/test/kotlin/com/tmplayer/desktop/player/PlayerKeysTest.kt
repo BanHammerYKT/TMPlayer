@@ -147,9 +147,17 @@ class PlayerKeysTest {
     }
 
     @Test
+    fun `shift G and shift F size the subtitles, and F and G alone keep their jobs`() {
+        assertEquals(PlayerAction.SubtitleSize(1), action(Key.G, shift = true))
+        assertEquals(PlayerAction.SubtitleSize(-1), action(Key.F, shift = true))
+        assertEquals(PlayerAction.ToggleFullscreen, action(Key.F))
+        assertEquals(PlayerAction.SkipSegment, action(Key.G))
+    }
+
+    @Test
     fun `unbound keys and stray modifiers do nothing`() {
         assertNull(action(Key.H))
-        assertNull(action(Key.G, shift = true))
+        assertNull(action(Key.W, shift = true))
         assertNull(action(Key.K, ctrl = true))
         assertNull(action(Key.Q))
         assertNull(action(Key.Spacebar, shift = true))
