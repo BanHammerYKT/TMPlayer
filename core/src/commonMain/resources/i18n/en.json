@@ -1147,6 +1147,7 @@
     "qr_blurb": "Scan this code with the phone that has your Telegram account.",
     "qr_description": "Telegram login QR code",
     "qr_note": "The code refreshes on its own. It is read by Telegram and nobody else.",
+    "qr_scanned": "Scanned",
     "qr_step_devices": "Go to Settings, then Devices",
     "qr_step_link": "Tap “Link Desktop Device” and point the camera here",
     "qr_step_open": "Open Telegram on your phone",

@@ -1255,7 +1255,9 @@ private fun Root() {
         // Once Telegram is reached, the loader waits on for Home's first whole screen (rows and the
         // carousel's first picture), at most HOLD_MAX_MS, so Home appears finished.
         var homeHoldOver by remember { mutableStateOf(false) }
-        val reached = auth is AuthState.Ready
+        // The QR code stays up for a moment after it is scanned, marked "Scanned" (rememberScanHold).
+        val shownAuth = com.tmplayer.ui.auth.rememberScanHold(auth)
+        val reached = shownAuth is AuthState.Ready
         LaunchedEffect(reached) {
             if (!reached) return@LaunchedEffect
             kotlinx.coroutines.delay(com.tmplayer.ui.browse.HomeFirstPaint.HOLD_MAX_MS)
@@ -1263,7 +1265,7 @@ private fun Root() {
         }
         val holdForHome = reached && !setupPending && !(appLock?.onOpen == true && !appUnlocked) && !homeHoldOver && !com.tmplayer.ui.browse.HomeFirstPaint.ready
         com.tmplayer.ui.components.BrandLoaderHandOff(
-            label = com.tmplayer.ui.auth.loaderLabel(auth, LocalStrings.current)
+            label = com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
                 ?: if (holdForHome) LocalStrings.current.loginGettingReady else null,
             modifier = Modifier.zIndex(1f),
             // The second line is the live step, drawn by ConnectingHelp under it.
@@ -1276,7 +1278,7 @@ private fun Root() {
                 sendLogs = { com.tmplayer.ui.settings.SendLogsButton(Modifier.padding(top = 8.dp)) },
             )
         }
-        if (auth !is AuthState.Ready) {
+        if (shownAuth !is AuthState.Ready) {
             // Signing out drops straight back to the login screen, so forget where we were.
             LaunchedEffect(Unit) {
                 screen = Screen.Chats
@@ -1296,7 +1298,7 @@ private fun Root() {
                         .then(if (keyboard) Modifier else Modifier.consumeWindowInsets(WindowInsets.navigationBars)),
                 ) {
                     LoginScreen(
-                        state = auth,
+                        state = shownAuth,
                         submitError = signInError,
                         onSubmitPassword = { password ->
                             signInError = null

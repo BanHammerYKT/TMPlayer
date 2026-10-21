@@ -92,7 +92,7 @@ fun SignInScreen(auth: AuthState) {
                 // Under the shell's loader, which fades out over whichever pane comes next.
                 AuthState.Connecting, AuthState.ChooseMethod -> Unit
                 AuthState.Ready -> Waiting(s.signinConnecting)
-                is AuthState.Qr -> QrPane(auth.link)
+                is AuthState.Qr -> QrPane(auth.link, auth.scanned)
                 is AuthState.Phone -> PhonePane(auth.wrong)
                 is AuthState.Code -> CodePane(auth)
                 is AuthState.Password -> PasswordPane(auth)
@@ -123,7 +123,7 @@ private fun Heading(title: String, body: String) {
 }
 
 @Composable
-private fun QrPane(link: String) {
+private fun QrPane(link: String, scanned: Boolean) {
     val s = LocalStrings.current
     val scope = rememberCoroutineScope()
     val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = link) {
@@ -135,16 +135,16 @@ private fun QrPane(link: String) {
             Modifier
                 .size(QR_PLATE)
                 .clip(RoundedCornerShape(Corner.ExtraLarge))
-                .background(Color.White)
-                .padding(16.dp),
+                .background(Color.White),
             contentAlignment = Alignment.Center,
         ) {
             val rendered = bitmap
             if (rendered == null) {
                 CircularProgressIndicator()
             } else {
-                Image(rendered, contentDescription = s.signinQrLabel, modifier = Modifier.fillMaxSize())
+                Image(rendered, contentDescription = s.signinQrLabel, modifier = Modifier.fillMaxSize().padding(16.dp))
             }
+            com.tmplayer.ui.auth.QrScannedVeil(scanned, Modifier.matchParentSize())
         }
     }
     // The same three numbered steps and the note the phone and the TV show, rather than one long

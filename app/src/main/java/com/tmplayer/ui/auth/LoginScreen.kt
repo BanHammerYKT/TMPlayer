@@ -126,6 +126,7 @@ fun LoginScreen(
         }
         is AuthState.Qr -> QrPane(
             link = state.link,
+            scanned = state.scanned,
             onUsePhone = { onChooseMethod(SignInMethod.Phone) },
         )
         is AuthState.Phone -> PhonePane(
@@ -729,7 +730,7 @@ private fun PaneHeader(onBack: () -> Unit) {
  * it. On a phone it was reached from the number pane, so Back goes there.
  */
 @Composable
-private fun QrPane(link: String, onUsePhone: () -> Unit) {
+private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit) {
     val s = LocalStrings.current
     if (isTouch()) BackHandler(onBack = onUsePhone) else ExitOnBack()
 
@@ -766,6 +767,7 @@ private fun QrPane(link: String, onUsePhone: () -> Unit) {
                     modifier = Modifier.fillMaxSize().padding(16.dp),
                 )
             }
+            com.tmplayer.ui.auth.QrScannedVeil(scanned, Modifier.matchParentSize())
         }
     }
 
