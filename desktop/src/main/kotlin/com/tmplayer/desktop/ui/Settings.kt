@@ -527,17 +527,29 @@ private fun SubtitlePreview(style: SubtitleStyle, modifier: Modifier = Modifier)
         val fontSize = with(LocalDensity.current) { (frame * (style.size.mpvFontSize / 720f)).toSp() }
         val foot = frame * (1f - style.position.mpvSubPos / 100f) + frame * (22f / 720f)
         val text = TextStyle(
-            color = Color.White,
+            color = Color(style.colour.argb),
             fontSize = fontSize,
             textAlign = TextAlign.Center,
-            // mpv's outline, near enough; the box replaces it, as mpv's does.
-            shadow = if (style.box) null else Shadow(Color.Black, blurRadius = 3f),
+            fontFamily = when (style.face) {
+                com.tmplayer.player.SubtitleFace.Default -> null
+                com.tmplayer.player.SubtitleFace.Serif -> androidx.compose.ui.text.font.FontFamily.Serif
+                com.tmplayer.player.SubtitleFace.Monospace -> androidx.compose.ui.text.font.FontFamily.Monospace
+            },
+            fontWeight = if (style.bold) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+            // mpv's outline or shadow, near enough; the box replaces either, as mpv's does.
+            shadow = when {
+                style.box -> null
+                style.edge == com.tmplayer.player.SubtitleEdge.Outline -> Shadow(Color.Black, blurRadius = 3f)
+                style.edge == com.tmplayer.player.SubtitleEdge.Shadow ->
+                    Shadow(Color.Black.copy(alpha = 0.75f), offset = androidx.compose.ui.geometry.Offset(2f, 2f), blurRadius = 2f)
+                else -> null
+            },
         )
         Text(
             s.subtitlesPreview,
             style = text,
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = foot)
-                .then(if (style.box) Modifier.background(Color(0xB3000000)).padding(horizontal = 4.dp, vertical = 1.dp) else Modifier),
+                .then(if (style.box) Modifier.background(Color(style.boxLevel.argb)).padding(horizontal = 4.dp, vertical = 1.dp) else Modifier),
         )
     }
 }
@@ -683,8 +695,8 @@ private fun SignOutButton(label: String, onClick: () -> Unit) {
 
 /**
  * Settings, Subtitle style, on the desktop: the preview at the top, where each change shows the
- * moment it is made, and the size, the background box and the position under it. Each is saved as
- * it changes; Close leaves.
+ * moment it is made, and under it the size, colour, background box and how dark, edge, typeface,
+ * weight and position, then Back to the default look. Each is saved as it changes; Close leaves.
  */
 @Composable
 internal fun SubtitleStyleDialog(settings: SettingsStore, subtitleStyle: SubtitleStyle, onClose: () -> Unit) {
@@ -696,29 +708,58 @@ internal fun SubtitleStyleDialog(settings: SettingsStore, subtitleStyle: Subtitl
         text = {
             Column(Modifier.widthIn(max = 520.dp)) {
                 SubtitlePreview(subtitleStyle, Modifier.padding(bottom = 8.dp))
-                Setting(s.subtitlesSize, s.settingsSubtitleSizeHint(subtitleStyle.size.label)) {
-                    val sizes = SubtitleSize.entries
-                    fun size(by: Int) {
-                        val next = sizes[(subtitleStyle.size.ordinal + by).coerceIn(0, sizes.lastIndex)]
-                        scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(size = next)) }
-                    }
-                    Stepper(
-                        onLess = { size(-1) },
-                        onMore = { size(1) },
-                        canLess = subtitleStyle.size.ordinal > 0,
-                        canMore = subtitleStyle.size.ordinal < sizes.lastIndex,
-                    )
-                }
-                Toggle(s.subtitlesBox, s.settingsSubtitleBoxDetail, subtitleStyle.box) { on ->
-                    scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(box = on)) }
-                }
-                Setting(s.subtitlesPosition, s.settingsSubtitlePositionHint) {
-                    Segments(SubtitlePosition.entries, subtitleStyle.position, { it.label }) { place ->
-                        scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(position = place)) }
-                    }
-                }
+                SubtitleLookChoices(settings, subtitleStyle, scope)
             }
         },
         confirmButton = { TextButton(onClick = onClose) { Text(s.commonClose) } },
+        dismissButton = {
+            TextButton(
+                onClick = { scope.launch { settings.setSubtitleStyle(SubtitleStyle()) } },
+                enabled = !subtitleStyle.isDefault,
+            ) { Text(s.subtitlesDefaultLook) }
+        },
     )
+}
+
+/**
+ * The look's choices under the preview, scrolling on their own so the preview stays in sight.
+ * The edge is left out while there is a box: the box is the edge then, as in the player.
+ */
+@Composable
+private fun SubtitleLookChoices(settings: SettingsStore, subtitleStyle: SubtitleStyle, scope: kotlinx.coroutines.CoroutineScope) {
+    val s = LocalStrings.current
+    fun look(next: SubtitleStyle) = scope.launch { settings.setSubtitleStyle(next) }
+    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+        Setting(s.subtitlesSize, s.settingsSubtitleSizeHint(subtitleStyle.size.label)) {
+            val sizes = SubtitleSize.entries
+            fun size(by: Int) {
+                val next = sizes[(subtitleStyle.size.ordinal + by).coerceIn(0, sizes.lastIndex)]
+                scope.launch { settings.setSubtitleStyle(subtitleStyle.copy(size = next)) }
+            }
+            Stepper(
+                onLess = { size(-1) },
+                onMore = { size(1) },
+                canLess = subtitleStyle.size.ordinal > 0,
+                canMore = subtitleStyle.size.ordinal < sizes.lastIndex,
+            )
+        }
+        Setting(s.subtitlesColour, subtitleStyle.colour.label) {
+            Segments(com.tmplayer.player.SubtitleColour.entries, subtitleStyle.colour, { it.label }) { look(subtitleStyle.copy(colour = it)) }
+        }
+        Setting(s.subtitlesBoxDarkness, s.subtitlesBoxDarknessHint) {
+            Segments(com.tmplayer.player.SubtitleBox.entries, subtitleStyle.boxLevel, { it.label }) { look(subtitleStyle.copy(boxLevel = it)) }
+        }
+        if (!subtitleStyle.box) {
+            Setting(s.subtitlesEdge, subtitleStyle.edge.label) {
+                Segments(com.tmplayer.player.SubtitleEdge.entries, subtitleStyle.edge, { it.label }) { look(subtitleStyle.copy(edge = it)) }
+            }
+        }
+        Setting(s.subtitlesFace, subtitleStyle.face.label) {
+            Segments(com.tmplayer.player.SubtitleFace.entries, subtitleStyle.face, { it.label }) { look(subtitleStyle.copy(face = it)) }
+        }
+        Toggle(s.subtitlesWeightBold, subtitleStyle.weightLabel, subtitleStyle.bold) { on -> look(subtitleStyle.copy(bold = on)) }
+        Setting(s.subtitlesPosition, s.settingsSubtitlePositionHint) {
+            Segments(SubtitlePosition.entries, subtitleStyle.position, { it.label }) { place -> look(subtitleStyle.copy(position = place)) }
+        }
+    }
 }

@@ -212,6 +212,14 @@ private val SHOW_REMAINING = booleanPreferencesKey("show_remaining_time")
 private val SUBTITLE_SIZE = stringPreferencesKey("subtitle_size")
 private val SUBTITLE_BOX = booleanPreferencesKey("subtitle_box")
 private val SUBTITLE_POSITION = stringPreferencesKey("subtitle_position")
+private val SUBTITLE_BOX_LEVEL = stringPreferencesKey("subtitle_box_level")
+private val SUBTITLE_COLOUR = stringPreferencesKey("subtitle_colour")
+private val SUBTITLE_EDGE = stringPreferencesKey("subtitle_edge")
+private val SUBTITLE_FACE = stringPreferencesKey("subtitle_face")
+private val SUBTITLE_BOLD = booleanPreferencesKey("subtitle_bold")
+
+// Android's video decoder choice. See [VideoDecoder].
+private val VIDEO_DECODER = stringPreferencesKey("video_decoder")
 
 // The app-wide languages, under the series memory. See [TrackPreferences].
 private val PREFERRED_AUDIO = stringPreferencesKey("preferred_audio_language")
@@ -231,6 +239,7 @@ private fun seriesKey(series: String): String =
 private fun audioKey(series: String) = stringPreferencesKey("audio_$series")
 private fun textKey(series: String) = stringPreferencesKey("text_$series")
 private fun subtitlesKey(series: String) = booleanPreferencesKey("subs_$series")
+private fun seriesNameKey(series: String) = stringPreferencesKey("series_name_$series")
 
 private fun kidsChatsOf(prefs: Preferences): Set<Long> =
     prefs[KIDS_CHATS].orEmpty().mapNotNull { it.toLongOrNull() }.toSet()
@@ -1353,12 +1362,35 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
         prefs.edit {
             it[SUBTITLE_SIZE] = style.size.name
             it[SUBTITLE_BOX] = style.box
+            it[SUBTITLE_BOX_LEVEL] = style.boxLevel.name
             it[SUBTITLE_POSITION] = style.position.name
+            it[SUBTITLE_COLOUR] = style.colour.name
+            it[SUBTITLE_EDGE] = style.edge.name
+            it[SUBTITLE_FACE] = style.face.name
+            it[SUBTITLE_BOLD] = style.bold
         }
     }
 
-    private fun subtitleStyleOf(prefs: Preferences) =
-        SubtitleStyle.from(prefs[SUBTITLE_SIZE], prefs[SUBTITLE_BOX], prefs[SUBTITLE_POSITION])
+    private fun subtitleStyleOf(prefs: Preferences) = SubtitleStyle.from(
+        size = prefs[SUBTITLE_SIZE],
+        box = prefs[SUBTITLE_BOX],
+        boxLevel = prefs[SUBTITLE_BOX_LEVEL],
+        position = prefs[SUBTITLE_POSITION],
+        colour = prefs[SUBTITLE_COLOUR],
+        edge = prefs[SUBTITLE_EDGE],
+        face = prefs[SUBTITLE_FACE],
+        bold = prefs[SUBTITLE_BOLD],
+    )
+
+    // ---- video decoder (Android) --------------------------------------------------------------
+
+    val videoDecoder: Flow<VideoDecoder> = read { VideoDecoder.from(it[VIDEO_DECODER]) }
+
+    suspend fun videoDecoderNow(): VideoDecoder = VideoDecoder.from(prefs.data.first()[VIDEO_DECODER])
+
+    suspend fun setVideoDecoder(decoder: VideoDecoder) {
+        prefs.edit { it[VIDEO_DECODER] = decoder.name }
+    }
 
     /**
      * The offsets set for this file, kept beside its resume position.
@@ -1404,6 +1436,31 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
             choice.audioLanguage?.let { prefs[audioKey(key)] = it } ?: prefs.remove(audioKey(key))
             choice.textLanguage?.let { prefs[textKey(key)] = it } ?: prefs.remove(textKey(key))
             prefs[subtitlesKey(key)] = choice.subtitlesOn
+            // The name as the player had it, so Settings can list the series by it. Not for a
+            // memory that says nothing: that one is not listed.
+            if (choice.empty) prefs.remove(seriesNameKey(key)) else prefs[seriesNameKey(key)] = series.trim().take(120)
+        }
+    }
+
+    /** Every series with remembered sound or subtitles, by name. See [LearntLanguages]. */
+    val learntLanguages: Flow<List<LearntSeries>> = read { prefs ->
+        LearntLanguages.from(prefs.asMap().mapKeys { it.key.name })
+    }
+
+    /** Forgets what one series was watched with; its next episode opens with the usual languages. */
+    suspend fun forgetLearntLanguages(key: String) {
+        prefs.edit { prefs ->
+            LearntLanguages.keysOf(key).forEach { name ->
+                prefs.asMap().keys.firstOrNull { it.name == name }?.let { prefs.remove(it) }
+            }
+        }
+    }
+
+    /** [forgetLearntLanguages] for every series at once. */
+    suspend fun forgetAllLearntLanguages() {
+        prefs.edit { prefs ->
+            val prefixes = listOf(LearntLanguages.AUDIO, LearntLanguages.TEXT, LearntLanguages.SUBS, LearntLanguages.NAME)
+            prefs.asMap().keys.filter { key -> prefixes.any { key.name.startsWith(it) } }.forEach { prefs.remove(it) }
         }
     }
 

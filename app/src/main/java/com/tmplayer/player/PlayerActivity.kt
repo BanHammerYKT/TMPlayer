@@ -61,7 +61,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import androidx.lifecycle.Lifecycle
@@ -3789,22 +3788,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     }
 
     /**
-     * Draws subtitles the way [subtitleStyle] says. White with a black outline either way: the
+     * Draws subtitles the way [subtitleStyle] says: the size and height here, the colour, edge,
+     * typeface, weight and box through [SubtitleLook]. White with a black outline by default: the
      * outline is what survives a bright frame, and the optional box is for a busy one.
      */
     private fun applySubtitleStyle() {
         subtitleView.setFractionalTextSize(subtitleTextFraction())
         subtitleView.setBottomPaddingFraction(subtitleBottomFraction())
-        subtitleView.setStyle(
-            CaptionStyleCompat(
-                Color.WHITE,
-                if (subtitleStyle.box) SUBTITLE_BOX_COLOUR else Color.TRANSPARENT,
-                Color.TRANSPARENT,
-                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                Color.BLACK,
-                null,
-            ),
-        )
+        subtitleView.setStyle(SubtitleLook.captionStyle(subtitleStyle))
     }
 
     /**
@@ -6873,7 +6864,6 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         private const val MAX_CAUSE_HOPS = 6
 
         /** Three quarters black: dark enough to read white on, light enough to see the picture. */
-        private const val SUBTITLE_BOX_COLOUR = 0xC0000000.toInt()
 
 
         /** Anything at or above this is 4K territory, where a stick's decoder gives up. */

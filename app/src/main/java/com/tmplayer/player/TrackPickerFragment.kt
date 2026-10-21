@@ -20,6 +20,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.Icon as M3Icon
 import androidx.compose.material3.MaterialTheme as M3Theme
 import androidx.compose.material3.OutlinedButton
@@ -275,12 +281,27 @@ class TrackPickerFragment : Fragment() {
             host.changeSubtitleStyle(next)
             onInPlace()
         }
+        // Each line steps through its choices with one press, the way a remote drives them; the
+        // subtitles behind the dimmed list are the preview.
         return listOf(
             Line("size", L.tracksSubtitleSize, style.size.label, icon = icon, group = Group.Look) { change(host.subtitleStyleNow().nextSize()) },
-            Line("box", L.tracksBackgroundBox, if (style.box) L.commonOn else L.commonOff, icon = icon, group = Group.Look) {
-                host.subtitleStyleNow().let { change(it.copy(box = !it.box)) }
+            Line("colour", L.subtitlesColour, style.colour.label, icon = icon, group = Group.Look) { change(host.subtitleStyleNow().nextColour()) },
+            Line("edge", L.subtitlesEdge, style.edge.label, icon = icon, enabled = !style.box, group = Group.Look) { change(host.subtitleStyleNow().nextEdge()) },
+            Line("box", L.tracksBackgroundBox, style.boxLevel.label, icon = icon, group = Group.Look) { change(host.subtitleStyleNow().nextBox()) },
+            Line("face", L.subtitlesFace, style.face.label, icon = icon, group = Group.Look) { change(host.subtitleStyleNow().nextFace()) },
+            Line("weight", L.subtitlesWeight, style.weightLabel, icon = icon, group = Group.Look) {
+                host.subtitleStyleNow().let { change(it.copy(bold = !it.bold)) }
             },
             Line("position", L.tracksSubtitlePosition, style.position.label, icon = icon, group = Group.Look) { change(host.subtitleStyleNow().nextPosition()) },
+            // Greys itself out on the default look, but keeps the remote: the row stays focusable.
+            Line(
+                key = "look_reset",
+                title = L.subtitlesDefaultLook,
+                detail = L.subtitlesDefaultLookDetail,
+                icon = TmIcons.Refresh,
+                enabled = !style.isDefault,
+                group = Group.Look,
+            ) { change(SubtitleStyle()) },
         )
     }
 
@@ -507,16 +528,76 @@ class TrackPickerFragment : Fragment() {
             Segments(SubtitlePosition.entries.map { it.label }, SubtitlePosition.entries.indexOf(style.position)) {
                 change(host.subtitleStyleNow().copy(position = SubtitlePosition.entries[it]))
             }
+            SegmentsLabel(L.subtitlesColour)
+            ColourSwatches(style.colour) { change(host.subtitleStyleNow().copy(colour = it)) }
+            SegmentsLabel(L.tracksBackgroundBox)
+            Segments(SubtitleBox.entries.map { it.label }, SubtitleBox.entries.indexOf(style.boxLevel)) {
+                change(host.subtitleStyleNow().copy(boxLevel = SubtitleBox.entries[it]))
+            }
+            // The edge is for text without a box; with one it has nothing to do, and says so.
+            if (!style.box) {
+                SegmentsLabel(L.subtitlesEdge)
+                Segments(SubtitleEdge.entries.map { it.label }, SubtitleEdge.entries.indexOf(style.edge)) {
+                    change(host.subtitleStyleNow().copy(edge = SubtitleEdge.entries[it]))
+                }
+            }
+            SegmentsLabel(L.subtitlesFace)
+            Segments(SubtitleFace.entries.map { it.label }, SubtitleFace.entries.indexOf(style.face)) {
+                change(host.subtitleStyleNow().copy(face = SubtitleFace.entries[it]))
+            }
             Row(
                 Modifier
                     .fillMaxWidth()
                     .heightIn(min = 56.dp)
-                    .toggleable(value = style.box, role = Role.Switch) { on -> change(host.subtitleStyleNow().copy(box = on)) }
+                    .toggleable(value = style.bold, role = Role.Switch) { on -> change(host.subtitleStyleNow().copy(bold = on)) }
                     .padding(horizontal = ADJUST_PAD),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                M3Text(L.tracksBackgroundBox, style = M3Theme.typography.bodyLarge, color = Tone.text, modifier = Modifier.weight(1f))
-                Switch(checked = style.box, onCheckedChange = null)
+                M3Text(L.subtitlesWeightBold, style = M3Theme.typography.bodyLarge, color = Tone.text, modifier = Modifier.weight(1f))
+                Switch(checked = style.bold, onCheckedChange = null)
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = ADJUST_PAD).padding(bottom = 8.dp), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { change(SubtitleStyle()) }, enabled = !style.isDefault) {
+                    M3Icon(TmIcons.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    M3Text(L.subtitlesDefaultLook, maxLines = 1)
+                }
+            }
+        }
+    }
+
+    /**
+     * The five colours as round swatches, each named for a screen reader and ringed when chosen:
+     * a colour is quicker to pick by sight than by its name.
+     */
+    @Composable
+    private fun ColourSwatches(selected: SubtitleColour, onPick: (SubtitleColour) -> Unit) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = ADJUST_PAD).padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            SubtitleColour.entries.forEach { colour ->
+                val chosen = colour == selected
+                Box(
+                    Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .then(
+                            if (chosen) {
+                                Modifier.border(3.dp, Tone.accent, CircleShape)
+                            } else {
+                                Modifier.border(1.dp, Tone.muted.copy(alpha = 0.5f), CircleShape)
+                            },
+                        )
+                        .padding(5.dp)
+                        .clip(CircleShape)
+                        .background(androidx.compose.ui.graphics.Color(colour.argb))
+                        .selectable(selected = chosen, role = Role.RadioButton) { onPick(colour) }
+                        .semantics { contentDescription = colour.label },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (chosen) M3Icon(TmIcons.Check, contentDescription = null, tint = androidx.compose.ui.graphics.Color.Black, modifier = Modifier.size(20.dp))
+                }
             }
         }
     }

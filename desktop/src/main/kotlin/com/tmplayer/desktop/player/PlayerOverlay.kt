@@ -963,7 +963,14 @@ internal fun PlayerMenu(
                 Nudge(s.subtitlesPosition, style.position.label, s.subtitlesLower, s.subtitlesHigher,
                     places.getOrNull(style.position.ordinal - 1)?.let { p -> { look(style.copy(position = p)) } },
                     places.getOrNull(style.position.ordinal + 1)?.let { p -> { look(style.copy(position = p)) } })
-                Entry(s.subtitlesBox, checked = style.box) { look(style.copy(box = !style.box)) }
+                // The rest step through their choices a click at a time, the menu staying open on
+                // the picture so each click shows on the subtitles behind it.
+                Entry(s.subtitlesColour, trailing = style.colour.label) { look(style.nextColour()) }
+                Entry(s.subtitlesBox, trailing = style.boxLevel.label) { look(style.nextBox()) }
+                if (!style.box) Entry(s.subtitlesEdge, trailing = style.edge.label) { look(style.nextEdge()) }
+                Entry(s.subtitlesFace, trailing = style.face.label) { look(style.nextFace()) }
+                Entry(s.subtitlesWeightBold, checked = style.bold) { look(style.copy(bold = !style.bold)) }
+                if (!style.isDefault) Entry(s.subtitlesDefaultLook, icon = TmIcons.Refresh) { look(SubtitleStyle()) }
             }
             MenuPage.Sleep -> {
                 // Only here, never on the picture: the countdown stays off the screen (1.16.0).

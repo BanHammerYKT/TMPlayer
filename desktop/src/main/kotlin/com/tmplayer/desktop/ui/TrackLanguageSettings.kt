@@ -1,6 +1,13 @@
 package com.tmplayer.desktop.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.collectAsState
+import com.tmplayer.ui.components.TmAlertDialog
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -139,4 +146,51 @@ private fun ChoiceSetting(title: String, detail: String, icon: ImageVector, curr
             }
         }
     }
+}
+
+/**
+ * Remembered languages, for the Subtitles page: how many series the player has learnt, and a
+ * dialog listing each by name with "Sound: x, Subtitles: y" and Forget, and Forget all.
+ */
+@Composable
+internal fun LearntLanguagesSetting(settings: SettingsStore, scope: CoroutineScope) {
+    val s = LocalStrings.current
+    val learnt by settings.learntLanguages.collectAsState(initial = emptyList())
+    var open by remember { mutableStateOf(false) }
+    Action(
+        s.settingsLearntLanguages,
+        if (learnt.isEmpty()) s.settingsLearntLanguagesEmpty else s.settingsLearntLanguagesCount(learnt.size),
+        TmIcons.History,
+    ) { open = true }
+    if (!open) return
+    TmAlertDialog(
+        onDismissRequest = { open = false },
+        title = { Text(s.settingsLearntLanguages) },
+        text = {
+            Column(Modifier.widthIn(max = 520.dp).heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+                Text(
+                    if (learnt.isEmpty()) s.settingsLearntLanguagesEmpty else s.settingsLearntLanguagesNote,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Tone.muted,
+                )
+                learnt.forEach { series ->
+                    Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(series.name, style = MaterialTheme.typography.bodyLarge, color = Tone.text, maxLines = 2)
+                            Text(series.line(), style = MaterialTheme.typography.bodyMedium, color = Tone.muted, maxLines = 2)
+                        }
+                        TextButton(onClick = { scope.launch { settings.forgetLearntLanguages(series.key) } }) {
+                            Text(s.settingsLearntLanguagesForget)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { open = false }) { Text(s.commonClose) } },
+        dismissButton = if (learnt.isEmpty()) {
+            null
+        } else {
+            { TextButton(onClick = { scope.launch { settings.forgetAllLearntLanguages() } }) { Text(s.settingsLearntLanguagesForgetAll) } }
+        },
+    )
 }
