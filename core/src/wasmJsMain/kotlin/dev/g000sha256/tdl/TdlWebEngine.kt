@@ -1,6 +1,8 @@
 package dev.g000sha256.tdl
 
+import dev.g000sha256.tdl.dto.AuthorizationStateClosed
 import dev.g000sha256.tdl.dto.Update
+import dev.g000sha256.tdl.dto.UpdateAuthorizationState
 import dev.g000sha256.tdl.serialization.serialize
 import kotlin.js.Promise
 import kotlinx.coroutines.await
@@ -33,16 +35,33 @@ internal class TdlEngine(private val deserializer: TdlDeserializer) {
     /** Updates, each tagged with the client it belongs to: tdweb holds one client at a time. */
     private val updates = MutableSharedFlow<Pair<Int, Update>>(extraBufferCapacity = Int.MAX_VALUE)
 
+    /** A close or a sign out this page asked for; any other Closed is another tab's (TdTabs). */
+    private var closeAsked = false
+
     fun createClientId(): Int {
         val id = ++clientIds
         current = id
-        if (!tmTdStarted()) {
-            tmTdStart("""{"instanceName":"tmplayer","jsLogVerbosityLevel":"error","logVerbosityLevel":1}""") { json ->
-                val dto = runCatching { deserializer.deserialize(json = json).third }.getOrNull()
-                if (dto is Update) updates.tryEmit(current to dto)
-            }
+        // After another tab took the account, the next client waits for "Use it here" rather
+        // than taking it straight back, which would close that tab's client in turn.
+        if (com.tmplayer.data.TdTabs.elsewhere.value) {
+            com.tmplayer.data.TdTabs.startWaiting = { startTdweb() }
+        } else {
+            startTdweb()
         }
         return id
+    }
+
+    private fun startTdweb() {
+        if (tmTdStarted()) return
+        closeAsked = false
+        tmTdStart("""{"instanceName":"tmplayer","jsLogVerbosityLevel":"error","logVerbosityLevel":1}""") { json ->
+            val dto = runCatching { deserializer.deserialize(json = json).third }.getOrNull()
+            if (dto is UpdateAuthorizationState && dto.authorizationState is AuthorizationStateClosed) {
+                if (!closeAsked) com.tmplayer.data.TdTabs.takenElsewhere()
+                closeAsked = false
+            }
+            if (dto is Update) updates.tryEmit(current to dto)
+        }
     }
 
     fun getUpdates(clientId: Int): Flow<Update> =
@@ -50,6 +69,7 @@ internal class TdlEngine(private val deserializer: TdlDeserializer) {
 
     suspend fun <F : Any> send(function: F, clientId: Int): Any {
         val requestId = ++requestIds
+        if (function is dev.g000sha256.tdl.function.Close || function is dev.g000sha256.tdl.function.LogOut) closeAsked = true
         val json = serialize(function = function, requestId = requestId)
         val answer = tmTdSend(json).await<JsString>().toString()
         return try {

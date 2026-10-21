@@ -41,8 +41,7 @@ object FilePicker {
     suspend fun save(title: String, suggestedName: String, extension: String): File? = null
 }
 
-/** The log is the browser console's. */
+/** The log is the browser console's, and the page's last lines are kept for Save logs. */
 object DesktopLog {
-    @Suppress("UNUSED_PARAMETER")
-    fun recentLines(max: Int): List<String> = emptyList()
+    fun recentLines(max: Int): List<String> = com.tmplayer.platform.RecentLog.recent(max)
 }

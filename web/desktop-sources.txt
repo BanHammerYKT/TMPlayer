@@ -26,7 +26,7 @@ com/tmplayer/desktop/ui/SettingsRows.kt
 com/tmplayer/desktop/ui/Shell.kt
 com/tmplayer/desktop/ui/ShellState.kt
 com/tmplayer/desktop/ui/SignIn.kt
-com/tmplayer/desktop/ui/SignOut.kt
+com/tmplayer/desktop/ui/TrackLanguageSettings.kt
 com/tmplayer/desktop/ui/Skeletons.kt
 com/tmplayer/desktop/ui/ViewModels.kt
 com/tmplayer/desktop/ui/Watched.kt
@@ -45,3 +45,4 @@ com/tmplayer/desktop/ui/LowStorageQuestion.kt
 com/tmplayer/desktop/ui/About.kt
 com/tmplayer/desktop/ui/SetupChoicesPage.kt
 com/tmplayer/desktop/ui/Support.kt
+com/tmplayer/desktop/ui/OnlineMetadataSettings.kt

@@ -40,3 +40,7 @@ com/tmplayer/data/OfflineDownloads.kt
 com/tmplayer/data/UpdateWords.kt
 com/tmplayer/data/UpdateScheduler.kt
 com/tmplayer/data/StorageRelocationPlan.kt
+com/tmplayer/data/Backup.kt
+com/tmplayer/data/BackupService.kt
+com/tmplayer/data/Feedback.kt
+com/tmplayer/data/LogExport.kt

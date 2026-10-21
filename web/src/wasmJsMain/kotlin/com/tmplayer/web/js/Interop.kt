@@ -39,6 +39,9 @@ external object TmHost : JsAny {
     fun onPop(handler: () -> Unit)
     fun back()
     fun persist(): Promise<JsBoolean>
+    fun persisted(): Promise<JsBoolean>
+    fun saveText(name: String, text: String, mime: String): Boolean
+    fun pickText(accept: String, maxBytes: Double): Promise<JsString>
     fun estimate(): Promise<JsString>
     fun notify(title: String, body: String): Boolean
     fun askNotify(): Promise<JsString>
