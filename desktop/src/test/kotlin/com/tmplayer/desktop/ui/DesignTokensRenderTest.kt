@@ -77,10 +77,9 @@ class DesignTokensRenderTest {
                 "Screen recording.mp4", "Organic Chemistry Chapter 12.mp4", "Coast walk, day 2.mp4",
                 "Birthday highlights.mp4", "Module 3 Sourdough starter.mp4",
             )
-            // One cover in each pair: the chat id is chosen so the pair follows the column.
+            // One cover in each pair, the pair following the column.
             val covers = names.mapIndexed { at, name ->
-                val chat = (1L..500L).first { CoverArt.pairIndex(it, CoverArt.of(it, name).title) == at }
-                CoverArt.of(chat, name, chatTitle = if (at % 3 == 0) "Weekend Clips" else null)
+                CoverArt.of(1L, name, chatTitle = if (at % 3 == 0) "Weekend Clips" else null).copy(pair = at)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 covers.take(5).forEachIndexed { at, cover ->

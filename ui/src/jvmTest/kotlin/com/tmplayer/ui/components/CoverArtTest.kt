@@ -11,12 +11,13 @@ import org.junit.Test
 class CoverArtTest {
 
     @Test
-    fun `a chat and a title always get the same pair`() {
+    fun `a title always gets the same pair, in any chat`() {
         val first = CoverArt.of(chatId = -100123456789L, name = "Algebra basics, lecture 3.mp4")
         val again = CoverArt.of(chatId = -100123456789L, name = "Algebra basics, lecture 3.mp4")
         assertEquals(first.pair, again.pair)
-        assertEquals(CoverArt.pairIndex(42L, "Harbour Notes"), CoverArt.pairIndex(42L, "  harbour notes "))
-        assertTrue(CoverArt.pairIndex(-100123456789L, "Anything") in CoverArt.Pairs.indices)
+        assertEquals(CoverArt.pairIndex("Harbour Notes"), CoverArt.pairIndex("  harbour  notes "))
+        assertEquals(CoverArt.of(1L, "Harbour.Notes.2024.mkv").pair, CoverArt.of(-100987L, "Harbour Notes (2024).mp4").pair)
+        assertTrue(CoverArt.pairIndex("Anything") in CoverArt.Pairs.indices)
     }
 
     @Test
@@ -29,7 +30,7 @@ class CoverArtTest {
 
     @Test
     fun `the pairs are spread, not all one colour`() {
-        val used = (1L..200L).map { CoverArt.pairIndex(it, "Course part") }.toSet()
+        val used = (1..200).map { CoverArt.pairIndex("Course part $it") }.toSet()
         assertEquals(CoverArt.Pairs.size, used.size)
     }
 
