@@ -173,13 +173,18 @@ class App : Application() {
         override fun onActivityStarted(activity: android.app.Activity) {
             started++
             inFront = true
+            // Back in view: TDLib reopens a line it lost in the background at once (Td).
+            Td.onForegroundChanged(true)
         }
 
         override fun onActivityStopped(activity: android.app.Activity) {
             started = (started - 1).coerceAtLeast(0)
             inFront = started > 0
             // A rotation stops and starts the same activity; it is not the app being left.
-            if (started == 0 && !activity.isChangingConfigurations) AppLockSession.lock()
+            if (started == 0 && !activity.isChangingConfigurations) {
+                AppLockSession.lock()
+                Td.onForegroundChanged(false)
+            }
         }
 
         override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit

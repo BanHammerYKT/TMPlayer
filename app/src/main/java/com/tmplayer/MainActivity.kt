@@ -816,6 +816,7 @@ private fun Root() {
 
     var connectionNotice by remember { mutableStateOf(ConnectionNotice.Hidden) }
     var wasOffline by remember { mutableStateOf(false) }
+    var wasDisconnected by remember { mutableStateOf(false) }
     LaunchedEffect(networkStatus, telegramConnected, auth) {
         val effectivelyOffline = networkStatus == NetworkStatus.Offline && !telegramConnected
         when {
@@ -830,11 +831,30 @@ private fun Root() {
             wasOffline -> {
                 connectionNotice = ConnectionNotice.Hidden
                 wasOffline = false
+                wasDisconnected = false
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
                     homeViewModel.refresh()
                     updates.checkIfDue()
                     toast(L.mainBackOnline)
+                }
+            }
+            // Online, signed in, and the line to Telegram is down: back from the background, most
+            // often. What is on screen stays; after a short settle a small "Connecting" pill says
+            // why nothing new arrives, as Telegram's own title does. Retry and the proxy wait for
+            // a real failure (Td.unreachable).
+            auth is AuthState.Ready && !telegramConnected -> {
+                delay(CONNECTING_SETTLE_MS)
+                wasDisconnected = true
+                connectionNotice = ConnectionNotice.Connecting
+            }
+            wasDisconnected -> {
+                // The line is back: the lists refresh quietly in place, no toast.
+                connectionNotice = ConnectionNotice.Hidden
+                wasDisconnected = false
+                if (auth is AuthState.Ready) {
+                    chatsViewModel.load()
+                    homeViewModel.refresh()
                 }
             }
             else -> connectionNotice = ConnectionNotice.Hidden
@@ -2177,6 +2197,9 @@ private fun Root() {
 }
 
 private const val OFFLINE_SETTLE_MS = 750L
+
+/** How long a lost line may take to come back before the "Connecting" pill shows. */
+private const val CONNECTING_SETTLE_MS = 2_500L
 
 /** How long the chat list is up before the support card may slide in. */
 private const val SUPPORT_CARD_DELAY_MS = 4_000L

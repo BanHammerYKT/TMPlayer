@@ -27,6 +27,9 @@ enum class ConnectionNotice {
     Hidden,
     Offline,
     Reconnecting,
+
+    /** Online, and the line to Telegram is being reopened (back from the background, say). */
+    Connecting,
 }
 
 /** A passive status only. It never takes focus or blocks saved content and playback. */
@@ -62,7 +65,7 @@ fun ConnectionStatus(notice: ConnectionNotice, modifier: Modifier = Modifier) {
                     tint = onContainer,
                     modifier = Modifier.size(20.dp),
                 )
-                ConnectionNotice.Reconnecting -> Spinner(
+                ConnectionNotice.Reconnecting, ConnectionNotice.Connecting -> Spinner(
                     size = 20.dp,
                     // The television's spinner keeps its accent colour.
                     color = if (touch) onContainer else Color.Unspecified,
@@ -74,6 +77,7 @@ fun ConnectionStatus(notice: ConnectionNotice, modifier: Modifier = Modifier) {
                 text = when (notice) {
                     ConnectionNotice.Offline -> s.stateOffline
                     ConnectionNotice.Reconnecting -> s.stateReconnecting
+                    ConnectionNotice.Connecting -> s.stateConnectingShort
                     ConnectionNotice.Hidden -> ""
                 },
                 // A phone screen is narrower than this sentence at TV size, and the pill would run

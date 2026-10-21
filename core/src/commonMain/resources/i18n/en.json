@@ -2381,6 +2381,7 @@
     "connecting": "Connecting to Telegram",
     "connecting_first_launch": "This takes a moment on the first launch",
     "connecting_session": "Opening your session",
+    "connecting_short": "Connecting…",
     "connecting_still_trying": "Still trying. Check that this device is online",
     "failed": "That didn't work",
     "offline": "Offline. Your downloads still play.",
