@@ -4,7 +4,8 @@
 // and a file is a name, since TDLib keeps its own files in tdweb's storage.
 package java.io
 
-typealias IOException = com.tmplayer.platform.IOException
+/** The JDK's IOException: a kind of the platform's, so either catch sees what the other throws here. */
+open class IOException(message: String? = null) : com.tmplayer.platform.IOException(message)
 
 open class EOFException(message: String? = null) : com.tmplayer.platform.IOException(message)
 
@@ -19,7 +20,7 @@ interface Closeable {
  * tdweb's storage, settings in the browser's), so a File here names a place and holds what is
  * written to it for as long as the page is open.
  */
-class File(val path: String) : Comparable<File> {
+open class File(val path: String) : Comparable<File> {
     constructor(parent: File?, child: String) : this(if (parent == null || parent.path.isEmpty()) child else parent.path.trimEnd('/') + "/" + child)
     constructor(parent: String, child: String) : this(File(parent), child)
 

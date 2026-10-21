@@ -11,6 +11,9 @@ actual class TmLocale(val tag: String) {
 
     fun toLanguageTag(): String = tag
 
+    /** This language named in [inLocale], as java.util.Locale.getDisplayLanguage does. */
+    fun getDisplayLanguage(inLocale: TmLocale): String = PlatformText.languageName(language, inLocale).ifEmpty { tag }
+
     /** The region, when the tag has one: "BR" for "pt-BR". */
     val country: String get() = tag.split('-').drop(1).firstOrNull { it.length == 2 }?.uppercase().orEmpty()
 

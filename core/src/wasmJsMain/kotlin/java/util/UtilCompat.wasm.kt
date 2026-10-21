@@ -28,3 +28,9 @@ object Base64 {
     fun getUrlEncoder(): Encoder = Encoder(true)
     fun getUrlDecoder(): Decoder = Decoder(true)
 }
+
+object Collections {
+    fun <T> synchronizedSet(set: MutableSet<T>): MutableSet<T> = set
+    fun <K, V> synchronizedMap(map: MutableMap<K, V>): MutableMap<K, V> = map
+    fun <T> synchronizedList(list: MutableList<T>): MutableList<T> = list
+}

@@ -1,39 +1,37 @@
 package com.tmplayer.ui.auth
 
 import androidx.compose.ui.graphics.ImageBitmap
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.google.zxing.qrcode.QRCodeWriter
-import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 
 /**
  * Renders a Telegram login link as a QR code.
  *
  * Deliberately plain black-on-white: phone cameras across a living room read that far more
- * reliably than anything tinted to match the app. zxing is plain Java, so the matrix is shared;
- * only turning the pixels into an [ImageBitmap] is each platform's (`QrBitmap.kt`).
+ * reliably than anything tinted to match the app. The modules come from :core's own encoder
+ * ([com.tmplayer.data.QrCode], which QrCodeTest reads back with ZXing), at error correction M
+ * with a one module margin, so the phone, the desktop and the browser draw the same code; only
+ * turning the pixels into an [ImageBitmap] is each platform's (`QrBitmap.kt`).
  */
 object QrCode {
 
     fun render(text: String, sizePx: Int): ImageBitmap? = runCatching {
-        val hints = mapOf(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
-            EncodeHintType.MARGIN to 1,
-            EncodeHintType.CHARACTER_SET to "UTF-8",
-        )
-        val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
-        val width = matrix.width
-        val height = matrix.height
-        val pixels = IntArray(width * height)
-        for (y in 0 until height) {
-            val row = y * width
-            for (x in 0 until width) {
-                pixels[row + x] = if (matrix.get(x, y)) BLACK else WHITE
+        val code = com.tmplayer.data.QrCode.encode(text, com.tmplayer.data.QrCode.Ecc.Medium) ?: return@runCatching null
+        val modules = code.size + MARGIN * 2
+        val scale = (sizePx / modules).coerceAtLeast(1)
+        val side = modules * scale
+        val pixels = IntArray(side * side) { WHITE }
+        for (y in 0 until code.size) for (x in 0 until code.size) {
+            if (!code[x, y]) continue
+            val left = (x + MARGIN) * scale
+            val top = (y + MARGIN) * scale
+            for (dy in 0 until scale) {
+                val row = (top + dy) * side
+                for (dx in 0 until scale) pixels[row + left + dx] = BLACK
             }
         }
-        opaqueImage(pixels, width, height)
+        opaqueImage(pixels, side, side)
     }.getOrNull()
 
+    private const val MARGIN = 1
     private const val BLACK = 0xFF000000.toInt()
     private const val WHITE = 0xFFFFFFFF.toInt()
 }

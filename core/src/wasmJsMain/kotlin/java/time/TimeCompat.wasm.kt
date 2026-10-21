@@ -21,6 +21,8 @@ class Instant private constructor(val epochMilli: Long) {
 }
 
 class ZonedDateTime internal constructor(private val epochMilli: Long) {
+    fun toInstant(): Instant = Instant.ofEpochMilli(epochMilli)
+
     fun toLocalDate(): LocalDate {
         val local = epochMilli - offsetMinutes(epochMilli.toDouble()) * 60_000L
         return LocalDate(kotlin.math.floor(local / 86_400_000.0).toLong())
@@ -29,4 +31,28 @@ class ZonedDateTime internal constructor(private val epochMilli: Long) {
 
 data class LocalDate(val epochDay: Long) : Comparable<LocalDate> {
     override fun compareTo(other: LocalDate): Int = epochDay.compareTo(other.epochDay)
+
+    /** ISO 8601, "2026-10-21", as the JDK writes it. */
+    override fun toString(): String = java.text.SimpleDateFormat("yyyy-MM-dd").format(java.util.Date(epochDay * 86_400_000L))
+
+    /** The start of this day in the device's time zone. */
+    fun atStartOfDay(@Suppress("UNUSED_PARAMETER") zone: ZoneId): ZonedDateTime {
+        val utc = epochDay * 86_400_000L
+        return ZonedDateTime(utc + offsetMinutes(utc.toDouble()) * 60_000L)
+    }
+
+    companion object {
+        /** "2026-10-14", as a provider writes a date. */
+        fun parse(text: String): LocalDate {
+            val (y, m, d) = text.trim().split('-').map { it.toLong() }
+            val yy = if (m <= 2) y - 1 else y
+            val era = (if (yy >= 0) yy else yy - 399) / 400
+            val yoe = yy - era * 400
+            val doy = (153 * (if (m > 2) m - 3 else m + 9) + 2) / 5 + d - 1
+            val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+            return LocalDate(era * 146097 + doe - 719468)
+        }
+
+        fun now(): LocalDate = Instant.ofEpochMilli(com.tmplayer.platform.nowMillis()).atZone(ZoneId.systemDefault()).toLocalDate()
+    }
 }

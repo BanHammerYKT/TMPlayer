@@ -30,6 +30,11 @@ class AtomicInteger(private var value: Int = 0) {
     fun incrementAndGet(): Int = ++value
     fun getAndIncrement(): Int = value++
     fun decrementAndGet(): Int = --value
+    fun getAndDecrement(): Int = value--
+    fun addAndGet(delta: Int): Int {
+        value += delta
+        return value
+    }
 }
 
 class AtomicBoolean(private var value: Boolean = false) {
