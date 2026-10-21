@@ -149,6 +149,24 @@ jobs:
         if: steps.tested.outputs.skip != 'true'
         run: ./gradlew :core:jvmTest :ui:jvmTest :app:testDebugUnitTest
 
+      # The FFmpeg extension with TMPlayer's extra video decoders, built from nextlib's pinned
+      # source (scripts/build-media3ext.sh). Cached by the script and the patch it was built
+      # from, so only a release that changes either pays the hour it takes.
+      - name: Restore the FFmpeg extension
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/media3ext/*.aar
+            build/media3ext/stamp
+          key: media3ext-${{ hashFiles('scripts/build-media3ext.sh', 'scripts/media3ext/**', 'gradle/libs.versions.toml') }}
+
+      - name: Build the FFmpeg extension
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q nasm meson ninja-build
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;25.2.9519653" "cmake;3.22.1" > /dev/null
+          JOBS=4 scripts/build-media3ext.sh
+
       - name: Build the signed APK
         env:
           # Optional. With it, the R8 mapping is uploaded to Sentry under the UUID the build writes
@@ -163,6 +181,7 @@ jobs:
             echo "::notice::SENTRY_AUTH_TOKEN is not set. The R8 mapping is not uploaded, so this release's crash reports stay unreadable until it is uploaded by hand."
           fi
           ./gradlew :app:assembleRelease \
+            -PtmRequireMedia3ext=true \
             -PtmVersionName=${{ needs.version.outputs.name }} \
             -PtmVersionCode=${{ needs.version.outputs.code }}
 
@@ -482,9 +501,10 @@ jobs:
       - name: Check the nextlib source link still matches
         id: nextlib
         run: |
-          LINKED="1.11.1-0.16.0"
-          TAG="v1.27.0"
-          USED="$(sed -n 's/^nextlib = "\(.*\)"$/\1/p' gradle/libs.versions.toml)"
+          # "-tm1": nextlib built from source with TMPlayer's patch (scripts/build-media3ext.sh).
+          LINKED="1.11.1-0.16.0-tm1"
+          TAG=""
+          USED="$(sed -n 's/^nextlib = "\(.*\)"$/\1/p' gradle/libs.versions.toml)-tm1"
           if [ "$USED" != "$LINKED" ]; then
             echo "::error::nextlib is $USED but the release notes link the source of $LINKED. Update scripts/build-nextlib-source.sh for $USED, attach its archive, and update LINKED and TAG here."
             exit 1

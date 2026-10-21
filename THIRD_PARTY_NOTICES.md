@@ -18,12 +18,15 @@ so each has its own section. Libraries both use are listed once, under "Shared".
 - Source: <https://github.com/anilbeesetti/nextlib/tree/v1.11.1-0.16.0>
 - Exact commit: `2dc77cd2d9352bc308aa26782f9c77a320df510b`
 
-The released AAR contains native codec libraries built by NextLib's `ffmpeg/setup.sh` from these
-upstream sources:
+The app's AAR is built from that source by `scripts/build-media3ext.sh`, with TMPlayer's patch
+`scripts/media3ext/tmplayer-decoders.patch` applied: it adds FFmpeg's mpeg4, msmpeg4v2,
+msmpeg4v3, vc1 and mjpeg video decoders to NextLib's `ffmpeg/setup.sh` and maps Media3's MPEG-4
+Part 2, DivX, Microsoft MPEG-4, VC-1 and Motion JPEG formats to them. The native codec libraries
+are built by that `ffmpeg/setup.sh` from these upstream sources:
 
 - FFmpeg 9.0.1 (libavcodec, libavutil, libswresample, libswscale): LGPL-3.0-or-later for the
-  configuration used by NextLib (`--enable-version3`, without `--enable-gpl` or non-free
-  components): <https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.gz>
+  configuration used by NextLib and kept by the patch (`--enable-version3`, without
+  `--enable-gpl` or non-free components): <https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.gz>
 - dav1d 1.5.4 (the AV1 decoder, linked statically into libavcodec): BSD-2-Clause:
   <https://github.com/videolan/dav1d/tree/1.5.4>
 - Mbed TLS 3.6.7: Apache-2.0 selected from its dual licence:
@@ -33,12 +36,13 @@ upstream sources:
 
 The VP8 and VP9 decoders are FFmpeg's own; libvpx is no longer part of the build.
 
-The corresponding source is one archive, `nextlib-corresponding-source-1.11.1-0.16.0.tar.gz`,
-linked as "nextlib source" from every TMPlayer release's notes and first attached to 1.27.0. It
-holds the exact NextLib 1.11.1-0.16.0 source and build scripts plus the three upstream source
-archives above; `scripts/build-nextlib-source.sh` in this repository rebuilds it from permanent
-addresses and SHA-256 sums. It stays the right archive for as long as TMPlayer bundles that
-version.
+The corresponding source is one archive, `nextlib-corresponding-source-1.11.1-0.16.0-tm1.tar.gz`,
+linked as "nextlib source" from the notes of every TMPlayer release that carries the patched
+build. It holds the exact NextLib 1.11.1-0.16.0 source and build scripts, TMPlayer's patch and
+build script under `tmplayer/`, and the three upstream source archives above;
+`scripts/build-nextlib-source.sh` in this repository rebuilds it from permanent addresses and
+SHA-256 sums. Releases up to 1.27.x shipped NextLib's own AAR from Maven Central; their source is
+`nextlib-corresponding-source-1.11.1-0.16.0.tar.gz`, attached to 1.27.0.
 
 ### TDLib with OpenSSL 1.1.1w
 

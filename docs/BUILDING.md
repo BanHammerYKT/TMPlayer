@@ -127,6 +127,14 @@ toolchain was moved forward on 2026-10-18 (Gradle 9.8.1, AGP 9.4.1, Kotlin 2.4.2
   their tests are `jvmTest`.
 - **`compileSdk` is 37** because `tdl-coroutines` 14+ declares that minimum in its AAR metadata.
   `targetSdk` deliberately stays at 35.
+- **The FFmpeg extension is built from source** for releases: `scripts/build-media3ext.sh`
+  builds nextlib-media3ext at its pinned commit with `scripts/media3ext/tmplayer-decoders.patch`
+  (FFmpeg's mpeg4, msmpeg4v2, msmpeg4v3, vc1 and mjpeg decoders) into
+  `build/media3ext/nextlib-media3ext-<version>-tm1.aar`, which `:app` uses when it is there. It
+  needs NDK 25.2.9519653, CMake 3.22.1, meson, ninja and nasm, and about an hour with `JOBS=2`.
+  Without the AAR a debug build takes nextlib from Maven Central (the same decoders minus those
+  five) and says so; the release job and F-Droid's recipe pass `-PtmRequireMedia3ext=true`, which
+  fails instead. A nextlib bump means checking that the patch still applies.
 - **media3 and NextLib versions are coupled**: `nextlib-media3ext` is published as
   `<media3-version>-<nextlib-version>`, and its FFmpeg renderers are built against that exact
   media3, so bumping one means bumping both to a pair that exists. A nextlib bump also changes
