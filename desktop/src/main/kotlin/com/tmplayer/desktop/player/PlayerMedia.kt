@@ -228,13 +228,14 @@ class TelegramPlayerMedia(
             }
         }
         val bytes = TdStreamBytes(session.client, fileId)
-        bytes.start(0)
+        // The first read says where the download starts: a resumed video is not asked for from
+        // byte 0 and then sought away from.
+        bytes.start()
         ActiveStreams.opened(fileId)
         val name = item.fileName.ifBlank { item.title }
         return TdMediaData(
             bytes = bytes,
             uri = "tdfile/$fileId/" + name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "video" },
-            prefetchTail = TailPrefetch.wanted(name, item.mimeType),
             // The mode is taken back only once the bytes are closed, so no late read can ask TDLib
             // for the rest of the film unbounded.
             onClose = {
@@ -346,7 +347,6 @@ class TelegramPlayerMedia(
         return TdMediaData(
             bytes = bytes,
             uri = "tdjoin/${playable.first().fileId}/" + name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "video" },
-            prefetchTail = TailPrefetch.wanted(name, item.mimeType),
             onClose = {
                 open.toList().forEach(::stopDownload)
                 open.clear()
@@ -633,7 +633,7 @@ class LocalPlayerMedia(
         if (!file.isFile) throw java.io.IOException("No such file: $file")
         val rate = growingBytesPerSecond ?: return UriMediaData(file.absolutePath)
         val bytes = GrowingFileBytes(file, File(scratch, "growing-${file.name}.part"), rate)
-        return TdMediaData(bytes, "growing/${file.name}", prefetchTail = TailPrefetch.wanted(file.name, ""))
+        return TdMediaData(bytes, "growing/${file.name}")
     }
 
     override suspend fun episodes(): Episodes {

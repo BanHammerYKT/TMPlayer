@@ -133,6 +133,18 @@ class PlayerControls(
         }
 
     /**
+     * Whether the video can be sought in. Off for a file with no seek index, where a seek would
+     * only start it again from the beginning: the bar still shows the way through, but takes no
+     * drag or key.
+     */
+    var seekable: Boolean = true
+        set(value) {
+            if (field == value) return
+            field = value
+            timeBar.isEnabled = value
+        }
+
+    /**
      * The file's chapters ([MkvChapters]), or none. Their starts cut the bar into its parts, as
      * the desktop's bar and YouTube's are cut, and the chapter playing (or, during a scrub, the
      * one the scrubber is over) is named after the time.

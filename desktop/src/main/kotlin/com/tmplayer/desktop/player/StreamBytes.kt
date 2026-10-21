@@ -25,13 +25,6 @@ interface StreamBytes {
     fun read(position: Long, buffer: ByteArray, offset: Int, length: Int): Int
 
     /**
-     * Brings [length] bytes at [offset] down now and hands them back, or null when that did not
-     * work out. The download is pointed at that range while it runs, so the caller holds every
-     * other waiting read back until this returns.
-     */
-    suspend fun fetch(offset: Long, length: Int): ByteArray?
-
-    /**
      * A wait at [position] gave up: asks whatever fetches the bytes for them again from there,
      * for a reader that tries once more (the cast server's). Nothing for bytes on the disk.
      */

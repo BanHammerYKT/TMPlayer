@@ -56,7 +56,7 @@ class JoinedStreamBytesTest {
     fun `reading straight through gives the whole file back across the seams`() {
         val bytes = joined()
         assertEquals(whole.size.toLong(), bytes.size)
-        val input = StreamInput(bytes, Job(), prefetchTail = false)
+        val input = StreamInput(bytes, Job())
         assertArrayEquals(whole, readAll(input, whole.size))
         assertEquals(-1, input.read(ByteArray(8), 0, 8))
         assertEquals(listOf(0, 1, 2), openedPieces)
@@ -68,7 +68,7 @@ class JoinedStreamBytesTest {
     @Test
     fun `a seek into a later piece opens only that piece, and leaving one closes it`() {
         val bytes = joined()
-        val input = StreamInput(bytes, Job(), prefetchTail = false)
+        val input = StreamInput(bytes, Job())
         assertArrayEquals(whole.copyOfRange(0, 100), readAll(input, 100))
         val at = PIECE * 2L + 10
         input.seekTo(at)
@@ -82,20 +82,6 @@ class JoinedStreamBytesTest {
         // A read that straddles a seam is two reads, the second from the next piece.
         input.seekTo(PIECE - 4L)
         assertArrayEquals(whole.copyOfRange(PIECE - 4, PIECE + 4), readAll(input, 8))
-        input.close()
-        bytes.close()
-    }
-
-    @Test
-    fun `the tail prefetch comes from the last piece without moving the reading`() {
-        val bytes = joined()
-        val input = StreamInput(bytes, Job(), prefetchTail = false)
-        assertArrayEquals(whole.copyOfRange(0, 10), readAll(input, 10))
-        val tail = kotlinx.coroutines.runBlocking { bytes.fetch(whole.size - 64L, 64) }
-        assertArrayEquals(whole.copyOfRange(whole.size - 64, whole.size), tail)
-        // The first piece is still open: the prefetch closed nothing.
-        assertArrayEquals(whole.copyOfRange(10, 20), readAll(input, 10))
-        assertTrue(left.isEmpty())
         input.close()
         bytes.close()
     }

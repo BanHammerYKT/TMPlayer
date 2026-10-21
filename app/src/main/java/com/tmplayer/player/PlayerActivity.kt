@@ -132,10 +132,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -405,6 +408,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The height of Telegram's copy playing in place of the upload, or 0 for the upload. */
     private var playingQuality = 0
 
+    /** Telegram's copies of the video as the list that opened it had them ([EXTRA_QUALITY_FILES]); empty when none came. */
+    private var carriedQualities: List<com.tmplayer.data.TelegramQuality> = emptyList()
+
     /** The upload's file and size while [playingQuality] plays in its place. */
     private var uploadFileId = 0
     private var uploadSizeBytes = 0L
@@ -509,7 +515,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         override fun run() {
             val loop = abLoop?.takeIf { it.complete } ?: return
             val exo = player
-            if (exo != null) loop.wrap(exo.currentPosition)?.let { quietly { exo.seekTo(it) } }
+            if (exo != null) loop.wrap(exo.currentPosition)?.let { quietly { exactSeekTo(exo, it) } }
             // Only while the picture moves: paused, buffering or stopped there is nothing to wrap,
             // and [onIsPlayingChanged] starts the watch again when it plays.
             if (exo?.isPlaying == true) loopHandler.postDelayed(this, LOOP_TICK_MS)
@@ -1107,6 +1113,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         savable = if (from.getBooleanExtra(EXTRA_CAN_BE_SAVED, true)) null else false
         pieces = piecesFrom(from)
         startLinkSec = from.getIntExtra(EXTRA_LINK_START_SEC, 0)
+        carriedQualities = qualitiesFrom(from)
         postItem = null
         playingQuality = 0
         uploadFileId = 0
@@ -1198,6 +1205,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         itemScope.launch {
             val session = Td.awaitAuthorizedSession()
+            // The settings the player is built with, read side by side and alongside the file's
+            // own decisions below, rather than one after another once those are made: each is a
+            // read of the store, and fifteen in a row came before the first request.
+            val resumedRead = async {
+                // A video with a saved position goes back to the speed and the tracks it was
+                // playing with there, over the series' speed and languages. See [ResumeState].
+                if (hasMessage()) runCatching { settings.resumeRecord(chatId, messageId)?.state }.getOrNull() else null
+            }
+            val scaleRead = async { runCatching { VideoScale.from(settings.videoScaleNow()) }.getOrDefault(VideoScale.Fit) }
+            val tracksRead = async { runCatching { settings.trackChoice(seriesKey) }.getOrDefault(TrackChoice()) }
+            val trackPrefsRead = async { runCatching { settings.trackPreferencesNow() }.getOrDefault(TrackPreferences()) }
+            val downmixRead = async { runCatching { settings.downmixChoiceNow() }.getOrNull() }
+            val boostRead = async { runCatching { settings.volumeBoostNow() }.getOrDefault(false) }
+            val nightRead = async { runCatching { settings.nightModeNow() }.getOrDefault(false) }
+            val evenRead = async { runCatching { settings.evenVolumeNow() }.getOrDefault(true) }
+            val silenceRead = async { runCatching { settings.skipSilenceNow() }.getOrDefault(false) }
+            val decoderRead = async { runCatching { settings.videoDecoderNow() }.getOrDefault(com.tmplayer.data.VideoDecoder.Automatic) }
+            val styleRead = async { runCatching { settings.subtitleStyleNow() }.getOrDefault(SubtitleStyle()) }
+            // Only a video from a message has somewhere to keep an offset; a file opened from
+            // elsewhere starts in sync and forgets any change on the way out.
+            val delaysRead = async { if (hasMessage()) runCatching { settings.syncDelays(chatId, messageId) }.getOrDefault(SyncDelays()) else null }
             // A video cut into byte pieces plays as the one file it was, joined: none of its
             // pieces is a video on its own, whatever the download index or the cache holds of one.
             val joined = mayBeJoined() && findPieces(session.client)
@@ -1249,41 +1277,29 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     .getOrDefault(false)
                 if (downloadFirst && !fetchWholeFilm()) return@launch
             }
-            // A video with a saved position goes back to the speed and the tracks it was playing
-            // with there, over the series' speed and languages. See [ResumeState].
-            val resumed = if (hasMessage()) {
-                runCatching { settings.resumeRecord(chatId, messageId)?.state }.getOrNull()
-            } else {
-                null
-            }
+            val resumed = resumedRead.await()
             // Its own speed, else the series' or course's, else the chat's or topic's: [SpeedMemory].
             playbackSpeed = runCatching { settings.openingSpeed(resumed?.speed, speedScopes) }
                 .getOrDefault(resumed?.speed?.let(PlaybackSpeed::sanitise) ?: PlaybackSpeed.DEFAULT)
             resumeTracks = resumed
-            videoScale = runCatching { VideoScale.from(settings.videoScaleNow()) }
-                .getOrDefault(VideoScale.Fit)
+            videoScale = scaleRead.await()
             // Read before the player is built, because the track selector is configured once and
             // a preference applied after the first frame means the first line of dialogue is in
             // the wrong language.
-            tracks = runCatching { settings.trackChoice(seriesKey) }
-                .getOrDefault(TrackChoice())
-            val trackPrefs = runCatching { settings.trackPreferencesNow() }.getOrDefault(TrackPreferences())
+            tracks = tracksRead.await()
+            val trackPrefs = trackPrefsRead.await()
             trackPlan = TrackRules.plan(resumed, tracks, trackPrefs, Translator.messages.tag)
             settingsSubtitlesPending = trackPlan.subtitleSource == TrackSource.Settings &&
                 (trackPlan.subtitles is SubtitlePlan.On || trackPlan.subtitles is SubtitlePlan.IfForeignAudio)
-            downmixChoice = runCatching { settings.downmixChoiceNow() }.getOrNull()
-            volumeBoostOn = runCatching { settings.volumeBoostNow() }.getOrDefault(false)
-            nightModeOn = runCatching { settings.nightModeNow() }.getOrDefault(false)
-            evenVolumeOn = runCatching { settings.evenVolumeNow() }.getOrDefault(true)
-            skipSilence = runCatching { settings.skipSilenceNow() }.getOrDefault(false)
-            videoDecoder = runCatching { settings.videoDecoderNow() }.getOrDefault(com.tmplayer.data.VideoDecoder.Automatic)
-            subtitleStyle = runCatching { settings.subtitleStyleNow() }.getOrDefault(SubtitleStyle())
+            downmixChoice = downmixRead.await()
+            volumeBoostOn = boostRead.await()
+            nightModeOn = nightRead.await()
+            evenVolumeOn = evenRead.await()
+            skipSilence = silenceRead.await()
+            videoDecoder = decoderRead.await()
+            subtitleStyle = styleRead.await()
             applySubtitleStyle()
-            // Only a video from a message has somewhere to keep an offset; a file opened from
-            // elsewhere starts in sync and forgets any change on the way out.
-            if (hasMessage()) {
-                syncDelays = runCatching { settings.syncDelays(chatId, messageId) }.getOrDefault(SyncDelays())
-            }
+            delaysRead.await()?.let { syncDelays = it }
             subtitleDelayUs = syncDelays.subtitleMs * 1000
             // The saved position, given a moment more if it is still being read: set before
             // prepare(), the first request goes to where the video resumes, not to byte 0 and
@@ -1292,6 +1308,54 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             if (!session.isCurrent()) return@launch
             startPlayback(session.client)
         }
+    }
+
+    /**
+     * How many bytes the player may hold ahead. The size cap is the one that bites on a stream
+     * with a high rate: 20 MB is about four seconds of a 40 Mbps remux, far short of the 50 s
+     * [BUFFER_MAX_MS] asks for, so a dip in the line stalls the picture on any device that could
+     * have held more. The figure goes by Android's own say on memory: the low-RAM flag (the 1 GB
+     * sticks) and the heap the app is given, where the buffer lives.
+     */
+    private fun targetBufferBytes(): Int {
+        val manager = getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            ?: return LOW_RAM_BUFFER_BYTES
+        val heapMb = manager.memoryClass
+        return when {
+            manager.isLowRamDevice || heapMb < LOW_HEAP_MB -> LOW_RAM_BUFFER_BYTES
+            heapMb >= LARGE_HEAP_MB -> LARGE_BUFFER_BYTES
+            else -> MID_BUFFER_BYTES
+        }
+    }
+
+    /**
+     * Whether the file plays with no seek index: Media3 knows its length but cannot seek in it,
+     * an MKV written without its Cues most often ([noteSeekIndex]).
+     */
+    private var noSeekIndex = false
+
+    /**
+     * Notes, as the player gets ready, whether the video can be sought in. Media3 takes every seek
+     * into a file it has no seek map for as a seek to the start, so a bar that looks usable would
+     * throw the viewer back to the beginning: the bar is turned off instead, and the viewer told.
+     */
+    private fun noteSeekIndex() {
+        val exo = player ?: return
+        val unseekable = exo.duration != C.TIME_UNSET && !exo.isCurrentMediaItemSeekable
+        if (unseekable == noSeekIndex) return
+        noSeekIndex = unseekable
+        controls?.seekable = !unseekable
+        if (unseekable) {
+            Log.i(START_TAG, "No seek index in file $fileId: seeking off")
+            feedback?.message(L.playerSeekUnavailable, holdMs = SEEK_NOTICE_MS)
+        }
+    }
+
+    /** True, with the reason said, when a seek asked for cannot be made ([noSeekIndex]). */
+    private fun refuseSeek(): Boolean {
+        if (!noSeekIndex) return false
+        showGestureFeedback(L.playerSeekUnavailable)
+        return true
     }
 
     /** Builds the player, points it at the file, and puts a video surface in front of it. */
@@ -1375,7 +1439,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 onPinch = ::pinchScale,
                 positionMs = { player?.currentPosition ?: 0L },
                 durationMs = { player?.duration?.takeIf { it > 0 } ?: 0L },
-                onSeekTo = { at -> player?.seekTo(at) },
+                onSeekTo = { at -> if (!refuseSeek()) player?.seekTo(at) },
                 onHold = ::holdFastForward,
                 onTapControls = ::toggleControls,
                 onTogglePlay = ::togglePlaybackFromPicture,
@@ -1746,6 +1810,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     // ---- Telegram's own qualities (CP80) -------------------------------------------------------
 
+    /** The copies [intent] carried in ([EXTRA_QUALITY_FILES]), or none when the arrays do not agree. */
+    private fun qualitiesFrom(from: Intent): List<com.tmplayer.data.TelegramQuality> {
+        val files = from.getIntArrayExtra(EXTRA_QUALITY_FILES) ?: return emptyList()
+        val widths = from.getIntArrayExtra(EXTRA_QUALITY_WIDTHS) ?: return emptyList()
+        val heights = from.getIntArrayExtra(EXTRA_QUALITY_HEIGHTS) ?: return emptyList()
+        val codecs = from.getStringArrayExtra(EXTRA_QUALITY_CODECS) ?: return emptyList()
+        val sizes = from.getLongArrayExtra(EXTRA_QUALITY_SIZES) ?: return emptyList()
+        if (setOf(files.size, widths.size, heights.size, codecs.size, sizes.size).size != 1) return emptyList()
+        return files.indices.map { i ->
+            com.tmplayer.data.TelegramQuality(files[i], widths[i], heights[i], codecs[i], sizes[i])
+        }
+    }
+
     /** The message as Telegram has it now ([postItem]), read once per video. */
     private suspend fun readPost(): MediaItem? {
         postItem?.let { return it }
@@ -1773,16 +1850,28 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         if (!hasMessage() || joinedSource != null || downloadedFile != null || playingQuality != 0) return
         val wish = com.tmplayer.data.QualityWish.take(chatId, messageId)
         if (wish == 0) return
-        val fresh = kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() } ?: return
+        // No copy chosen: nothing to read unless the player could pick one itself, which takes
+        // Save mobile data in force or a line measured too slow. The usual open asks Telegram
+        // nothing here, where it used to wait up to [POST_READ_MS] for the message.
+        var saveData = false
+        if (wish == null) {
+            if (runCatching { Td.localDownloadedBytes(fileId) }.getOrDefault(0L) > 0) return
+            saveData = NetworkMonitor.metered.value && MeteredPolicy.saveMobileDataInForce(
+                runCatching { settings.saveMobileDataNow() }.getOrDefault(false),
+                FormFactor.isTv(this),
+            )
+            val known = fileSizeBytes > 0 && durationSec > 0
+            if (known && !com.tmplayer.data.TelegramQualities.mightChoose(fileSizeBytes, durationSec, saveData, com.tmplayer.player.LineSpeed.recent())) return
+        }
+        // The copies the list already had, carried in with the video; the message read again only
+        // when it had none.
+        val fresh = carriedQualities.takeIf { it.isNotEmpty() }?.let { currentItem().copy(qualities = it) }
+            ?: kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }
+            ?: return
         if (fresh.qualities.isEmpty()) return
         val chosen = if (wish != null) {
             fresh.qualities.firstOrNull { it.height == wish }
         } else {
-            if (runCatching { Td.localDownloadedBytes(fileId) }.getOrDefault(0L) > 0) return
-            val saveData = NetworkMonitor.metered.value && MeteredPolicy.saveMobileDataInForce(
-                runCatching { settings.saveMobileDataNow() }.getOrDefault(false),
-                FormFactor.isTv(this),
-            )
             val upload = fresh.copy(fileId = fileId, sizeBytes = fileSizeBytes.takeIf { it > 0 } ?: fresh.sizeBytes, durationSec = durationSec.takeIf { it > 0 } ?: fresh.durationSec)
             com.tmplayer.data.TelegramQualities.choose(upload, saveData, com.tmplayer.player.LineSpeed.recent())
                 ?.also { qualityPickedWhy = it.why }?.quality
@@ -2297,7 +2386,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             )
             .setEnableDecoderFallback(true)
 
-        // Deliberately small: on a 1 GB stick a generous buffer is what gets the app killed.
+        // Sized by the memory the system gives the app ([targetBufferBytes]): small on a 1 GB
+        // stick, where a generous buffer is what gets the app killed, generous elsewhere.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(BUFFER_MIN_MS, BUFFER_MAX_MS, BUFFER_PLAYBACK_MS, BUFFER_REBUFFER_MS)
             // The same figures again for what Media3 calls local playback. Since 1.9.0 a file://
@@ -2312,7 +2402,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 BUFFER_PLAYBACK_MS,
                 BUFFER_REBUFFER_MS,
             )
-            .setTargetBufferBytes(TARGET_BUFFER_BYTES)
+            .setTargetBufferBytes(targetBufferBytes())
             .setPrioritizeTimeOverSizeThresholds(false)
             // A few seconds of what has already played, kept behind the position. Without it a
             // short back-seek falls outside the buffer, which puts the read outside TDLib's
@@ -2375,6 +2465,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             )
             .setSeekBackIncrementMs(Skip.BACK_MS)
             .setSeekForwardIncrementMs(Skip.FORWARD_MS)
+            // Scrubbing, chapters, skips and the resume land on the nearest keyframe: Media3's
+            // default is exact, which decodes (and on a stream, downloads) from the keyframe
+            // before the target up to it, seconds of waiting on a long GOP. Only a frame step and
+            // the A-B repeat seek exactly ([exactSeekTo]).
+            .setSeekParameters(SeekParameters.CLOSEST_SYNC)
             .build()
             .apply {
                 setAudioAttributes(movieAudioAttributes, /* handleAudioFocus = */ true)
@@ -2835,6 +2930,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     }
                     recoveryAttempts = 0
                     firstFrameReady = true
+                    noteSeekIndex()
                     readChapters()
                     offerStartOver()
                     controls?.setBuffering(false)
@@ -3847,6 +3943,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     /** Skips [deltaMs], clamped so a burst of remote presses can't run off either end. */
     fun skipBy(deltaMs: Long) {
+        if (refuseSeek()) return
         val exo = player ?: return
         val duration = exo.duration
         val target = (exo.currentPosition + deltaMs).coerceAtLeast(0)
@@ -4242,6 +4339,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun jumpToTenth(digit: Int): Boolean {
         val exo = player ?: return false
         val duration = exo.duration.takeIf { it > 0 } ?: return false
+        if (refuseSeek()) return true
         exo.seekTo(duration * digit / 10)
         showGestureFeedback(Translator.messages.formatter.percent(digit / 10.0))
         return true
@@ -4302,8 +4400,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         lifecycleScope.launch {
             val session = Td.awaitAuthorizedSession()
             session.client.getFile(fileId).valueOrNull?.let(::applyDownloadState)
+            // TDLib's updates for every file (each thumbnail among them) are sifted off the main
+            // thread, and only the latest of this file's reaches it: the meter needs no more.
             session.client.fileUpdates
                 .filter { it.file.id == fileId }
+                .conflate()
+                .flowOn(Dispatchers.Default)
                 .collect { update -> applyDownloadState(update.file) }
         }
     }
@@ -4371,12 +4473,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             val run = Trickplay.Span(local.downloadOffset, local.downloadOffset + local.downloadedPrefixSize)
             trickplaySpans = Trickplay.merge(trickplaySpans + run)
         }
-        val diskFile = local.path.takeIf { it.isNotBlank() }?.let(::File)
-        downloadComplete = LocalFilePolicy.evaluate(
-            downloadCompleted = local.isDownloadingCompleted,
-            pathPresent = diskFile != null,
-            regularFile = diskFile?.isFile == true,
-            length = diskFile?.length() ?: 0,
+        // The disk is looked at only once TDLib says the file is whole: before that the policy's
+        // answer is "not complete" whatever the file system says, and these calls ran on the main
+        // thread for every update, a dozen a second.
+        val diskFile = if (local.isDownloadingCompleted) local.path.takeIf { it.isNotBlank() }?.let(::File) else null
+        downloadComplete = diskFile != null && LocalFilePolicy.evaluate(
+            downloadCompleted = true,
+            pathPresent = true,
+            regularFile = diskFile.isFile,
+            length = diskFile.length(),
             size = file.size,
             expectedSize = file.expectedSize,
         ) == LocalFileAvailability.Complete
@@ -4740,7 +4845,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             end != null -> {
                 showGestureFeedback(L.playerRepeating(clock(after.startMs), clock(end)))
                 // From the start straight away, so the viewer hears the loop they just marked.
-                exo.seekTo(after.startMs)
+                exactSeekTo(exo, after.startMs)
                 loopHandler.post(loopWatch)
             }
             else -> showGestureFeedback(L.playerLoopStartSet(clock(after.startMs)))
@@ -4756,8 +4861,18 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val exo = player ?: return
         if (exo.playWhenReady) return
         val fps = exo.videoFormat?.frameRate ?: 0f
+        exactSeekTo(exo, FrameStep.target(exo.currentPosition, exo.duration.coerceAtLeast(0L), fps, forward))
+    }
+
+    /**
+     * One seek to the very frame at [positionMs], for a frame step and the A-B repeat; every other
+     * seek keeps the player's nearest keyframe. Media3 applies the parameters in order on its own
+     * thread, so the seek between the two calls is the only exact one.
+     */
+    private fun exactSeekTo(exo: ExoPlayer, positionMs: Long) {
         exo.setSeekParameters(SeekParameters.EXACT)
-        exo.seekTo(FrameStep.target(exo.currentPosition, exo.duration.coerceAtLeast(0L), fps, forward))
+        exo.seekTo(positionMs)
+        exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)
     }
     /**
      * The overflow's "Save a frame": the picture on screen into Pictures/TMPlayer ([FrameSaver]),
@@ -6909,9 +7024,17 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         private const val EXTRA_MINI_THUMBNAIL = "mini_thumbnail"
         private const val EXTRA_CAN_BE_SAVED = "can_be_saved"
         private const val EXTRA_MIME = "mime_type"
+        private const val EXTRA_QUALITY_FILES = "quality_files"
+        private const val EXTRA_QUALITY_WIDTHS = "quality_widths"
+        private const val EXTRA_QUALITY_HEIGHTS = "quality_heights"
+        private const val EXTRA_QUALITY_CODECS = "quality_codecs"
+        private const val EXTRA_QUALITY_SIZES = "quality_sizes"
         private const val EXTRA_OUTSIDE_APP_TASK = "outside_app_task"
         /** How long the note about a missing piece stays up as the video starts. */
         private const val PIECES_NOTICE_MS = 6_000L
+
+        /** How long the word that a file cannot be sought in stays up. */
+        private const val SEEK_NOTICE_MS = 6_000L
         private const val EXTRA_PIECE_MESSAGES = "piece_messages"
         private const val EXTRA_PIECE_FILES = "piece_files"
         private const val EXTRA_PIECE_SIZES = "piece_sizes"
@@ -6935,7 +7058,16 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** After a stall, more than the start asks, so a struggling line does not stall again at once. */
         private const val BUFFER_REBUFFER_MS = 4_000
-        private const val TARGET_BUFFER_BYTES = 20 * 1024 * 1024
+        /** The buffer on a low-RAM device: a 1 GB stick. */
+        private const val LOW_RAM_BUFFER_BYTES = 20 * 1024 * 1024
+
+        /** The buffer elsewhere, by the app's heap: about 13 s of a 40 Mbps remux, and twice that. */
+        private const val MID_BUFFER_BYTES = 64 * 1024 * 1024
+        private const val LARGE_BUFFER_BYTES = 128 * 1024 * 1024
+
+        /** The heap, in MB, under which a device counts as low on memory for the buffer. */
+        private const val LOW_HEAP_MB = 192
+        private const val LARGE_HEAP_MB = 384
 
         /** See the note on the sink in [buildPlayer]: about two seconds of AC-3 bitstream. */
         private const val PASSTHROUGH_BUFFER_US = 500_000
@@ -7150,6 +7282,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 putExtra(EXTRA_MINI_THUMBNAIL, item.miniThumbnail)
                 putExtra(EXTRA_CAN_BE_SAVED, item.canBeSaved)
                 putExtra(EXTRA_MIME, item.mimeType)
+                // Telegram's copies as the list read them, so the player need not read the message
+                // again before the first request to choose among them.
+                if (item.qualities.isNotEmpty()) {
+                    putExtra(EXTRA_QUALITY_FILES, item.qualities.map { it.fileId }.toIntArray())
+                    putExtra(EXTRA_QUALITY_WIDTHS, item.qualities.map { it.width }.toIntArray())
+                    putExtra(EXTRA_QUALITY_HEIGHTS, item.qualities.map { it.height }.toIntArray())
+                    putExtra(EXTRA_QUALITY_CODECS, item.qualities.map { it.codec }.toTypedArray())
+                    putExtra(EXTRA_QUALITY_SIZES, item.qualities.map { it.sizeBytes }.toLongArray())
+                }
                 // The pieces of a video cut into several files, so the player need not look for them.
                 if (item.isJoined) {
                     putExtra(EXTRA_PIECE_MESSAGES, item.pieces.map { it.messageId }.toLongArray())

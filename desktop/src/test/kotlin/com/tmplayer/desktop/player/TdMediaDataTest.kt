@@ -60,7 +60,7 @@ class TdMediaDataTest {
 
     @Test
     fun `sequential reads return the file`() {
-        val input = StreamInput(growing(), Job(), prefetchTail = false)
+        val input = StreamInput(growing(), Job())
         assertEquals(SIZE.toLong(), input.size)
         val head = readFully(input, 3 * MB)
         assertArrayEquals(expected(0, 3 * MB), head)
@@ -70,7 +70,7 @@ class TdMediaDataTest {
     @Test
     fun `a far seek re-aims the download and reads the right bytes`() {
         val bytes = growing()
-        val input = StreamInput(bytes, Job(), prefetchTail = false)
+        val input = StreamInput(bytes, Job())
         readFully(input, 64 * 1024)
         val far = 15L * MB + 123
         input.seekTo(far)
@@ -81,7 +81,7 @@ class TdMediaDataTest {
 
     @Test
     fun `the end of the file reads as -1`() {
-        val input = StreamInput(growing(rate = 64L * 1024 * 1024), Job(), prefetchTail = false)
+        val input = StreamInput(growing(rate = 64L * 1024 * 1024), Job())
         input.seekTo(SIZE.toLong() - 10)
         assertArrayEquals(expected(SIZE.toLong() - 10, 10), readFully(input, 10))
         assertEquals(-1, input.read(ByteArray(4), 0, 4))
@@ -89,26 +89,10 @@ class TdMediaDataTest {
     }
 
     @Test
-    fun `the tail is fetched early and served from memory`() {
-        val bytes = growing()
-        val input = StreamInput(bytes, Job(), prefetchTail = true)
-        readFully(input, 2 * MB)
-        val ok = runBlocking { withTimeout(10_000) { input.tailReady.await() } }
-        assertTrue(ok)
-        val tailStart = TailPrefetch.startFor(SIZE.toLong())!!
-        val reaimsAfterTail = bytes.reaims
-        input.seekTo(SIZE.toLong() - 4096)
-        assertArrayEquals(expected(SIZE.toLong() - 4096, 4096), readFully(input, 4096))
-        input.seekTo(tailStart)
-        assertArrayEquals(expected(tailStart, 1000), readFully(input, 1000))
-        assertEquals("reads in the tail must not move the download", reaimsAfterTail, bytes.reaims)
-    }
-
-    @Test
     fun `a blocked read fails with an IOException when the session is cancelled`() {
         // A trickle, so the far read is certainly still waiting when the session ends.
         val session = Job()
-        val input = StreamInput(growing(rate = 1024, latency = 60_000), session, prefetchTail = false)
+        val input = StreamInput(growing(rate = 1024, latency = 60_000), session)
         input.seekTo(20L * MB)
         var failure: Throwable? = null
         val reader = thread {
@@ -127,7 +111,7 @@ class TdMediaDataTest {
 
     @Test
     fun `close stops a waiting read and reads after it fail`() {
-        val input = StreamInput(growing(rate = 1024, latency = 60_000), Job(), prefetchTail = false)
+        val input = StreamInput(growing(rate = 1024, latency = 60_000), Job())
         input.seekTo(20L * MB)
         var failure: Throwable? = null
         val reader = thread {
@@ -152,7 +136,7 @@ class TdMediaDataTest {
     @Test
     fun `media data closes its bytes once however often it is closed`() {
         var closes = 0
-        val data = TdMediaData(growing(), "test/source.mkv", prefetchTail = false) { closes++ }
+        val data = TdMediaData(growing(), "test/source.mkv") { closes++ }
         assertEquals(SIZE.toLong(), data.fileLength())
         data.close()
         data.close()
@@ -162,17 +146,6 @@ class TdMediaDataTest {
             fail("createInput after close")
         } catch (_: IOException) {
         }
-    }
-
-    @Test
-    fun `tail prefetch wants a big matroska file`() {
-        assertEquals(null, TailPrefetch.startFor(10L * MB))
-        val start = TailPrefetch.startFor(100L * MB + 5)!!
-        assertEquals(0L, start % TailPrefetch.ALIGN_BYTES)
-        assertTrue(100L * MB + 5 - start >= TailPrefetch.TAIL_BYTES)
-        assertTrue(TailPrefetch.wanted("Show.S01E02.1080p.mkv", ""))
-        assertTrue(TailPrefetch.wanted("clip", "video/x-matroska"))
-        assertTrue(!TailPrefetch.wanted("clip.mp4", "video/mp4"))
     }
 
     private companion object {

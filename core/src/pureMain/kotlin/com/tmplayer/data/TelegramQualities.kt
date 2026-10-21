@@ -104,6 +104,18 @@ object TelegramQualities {
     data class Choice(val quality: TelegramQuality, val why: Why)
 
     /**
+     * Whether [choose] could pick a lighter copy for a video of [sizeBytes] and [durationSec] at
+     * all, before its copies are known: with [saveData], or on a line measured too slow for it.
+     * False lets a player skip reading the message again for a choice that cannot happen.
+     */
+    fun mightChoose(sizeBytes: Long, durationSec: Int, saveData: Boolean, lineBytesPerSec: Long?): Boolean {
+        if (saveData) return true
+        val line = lineBytesPerSec?.takeIf { it >= StreamStats.MIN_MEANINGFUL_SPEED } ?: return false
+        val need = rate(sizeBytes, durationSec)
+        return need > 0 && line < need * HEADROOM
+    }
+
+    /**
      * The copy to play for [item] as it opens, or null for the upload.
      *
      * Only for a video streaming the upload (a copy already on this device plays as it is, and a

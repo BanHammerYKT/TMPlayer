@@ -1798,6 +1798,7 @@
     "scrub_half": "Half speed scrubbing",
     "scrub_quarter": "Quarter speed scrubbing",
     "seek_seconds": "{seconds, plural, one {# second} other {# seconds}}",
+    "seek_unavailable": "This file has no seek index, so it plays through from the start",
     "shape": "Picture shape",
     "shortcuts": "Keyboard shortcuts",
     "show_time_remaining": "Show the time remaining",

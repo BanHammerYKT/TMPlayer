@@ -2,17 +2,11 @@ package com.tmplayer.desktop.player
 
 import com.tmplayer.platform.Logger
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import org.openani.mediamp.io.SeekableInput
 import org.openani.mediamp.source.MediaExtraFiles
 import org.openani.mediamp.source.SeekableInputMediaData
@@ -29,14 +23,14 @@ import kotlin.coroutines.CoroutineContext
  * read points TDLib there. Owns [bytes] and closes them once, however many times mediamp calls
  * [close] (it calls it twice).
  *
- * @param prefetchTail fetch the last few megabytes early, for formats that keep their seek index
- *   there (Matroska's Cues), so the first seek does not pay a second trip across the file.
+ * The index at the far end of a Matroska file is [com.tmplayer.player.StreamWarmup]'s to bring
+ * early, and a read of it [com.tmplayer.player.TdByteWindow]'s to serve without moving the stream.
+ *
  * @param onClose runs once, after the bytes are closed: where the caller stops the download.
  */
 class TdMediaData(
     internal val bytes: StreamBytes,
     override val uri: String,
-    private val prefetchTail: Boolean,
     private val onClose: () -> Unit = {},
 ) : SeekableInputMediaData {
 
@@ -51,39 +45,13 @@ class TdMediaData(
         if (closed.get()) throw IOException("Media closed")
         // The scrub preview's own decoder reads only what is on the disk ([PreviewReads]).
         if (PreviewReads.active.get() > 0) return DiskOnlyInput(bytes)
-        return StreamInput(bytes, coroutineContext[Job], prefetchTail)
+        return StreamInput(bytes, coroutineContext[Job])
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         runCatching { bytes.close() }
         runCatching { onClose() }
-    }
-}
-
-/**
- * Where the tail fetch starts, or null when the file is too small for it to be worth a trip.
- *
- * Aligned down to a megabyte, the size of the parts Telegram hands out, so the request does not
- * pay for a part it only half wants.
- */
-object TailPrefetch {
-    const val TAIL_BYTES = 3L * 1024 * 1024
-    const val ALIGN_BYTES = 1024L * 1024
-    const val MIN_FILE_BYTES = 16L * 1024 * 1024
-
-    fun startFor(size: Long): Long? {
-        if (size < MIN_FILE_BYTES) return null
-        val raw = size - TAIL_BYTES
-        return raw - raw % ALIGN_BYTES
-    }
-
-    /** Matroska and WebM keep their Cues at the end; MP4 moves its index to the front or is read at open anyway. */
-    fun wanted(fileName: String, mimeType: String): Boolean {
-        val name = fileName.lowercase()
-        val mime = mimeType.lowercase()
-        return name.endsWith(".mkv") || name.endsWith(".webm") || name.endsWith(".mka") ||
-            "matroska" in mime || "webm" in mime
     }
 }
 
@@ -146,7 +114,6 @@ class DiskOnlyInput(private val bytes: StreamBytes) : SeekableInput {
 class StreamInput(
     private val bytes: StreamBytes,
     sessionJob: Job?,
-    prefetchTail: Boolean,
 ) : SeekableInput {
 
     private val inputJob = SupervisorJob(sessionJob)
@@ -156,33 +123,6 @@ class StreamInput(
 
     @Volatile
     private var closed = false
-
-    /** The furthest byte read so far, which decides when the head has landed. */
-    @Volatile
-    private var furthest = 0L
-
-    private class Tail(val start: Long, val data: ByteArray) {
-        val end: Long get() = start + data.size
-    }
-
-    @Volatile
-    private var tail: Tail? = null
-
-    /** Up while the tail is being fetched: slow reads wait on it so they do not drag TDLib away. */
-    @Volatile
-    private var gate: CompletableDeferred<Unit>? = null
-
-    /** Set when the tail fetch finished, for the tests and the harness log. */
-    val tailReady = CompletableDeferred<Boolean>()
-
-    init {
-        val start = if (prefetchTail) TailPrefetch.startFor(bytes.size) else null
-        if (start == null) {
-            tailReady.complete(false)
-        } else {
-            CoroutineScope(Dispatchers.IO + inputJob).launch { fetchTail(start) }
-        }
-    }
 
     override val position: Long get() = pos
     override val size: Long get() = bytes.size
@@ -201,30 +141,12 @@ class StreamInput(
             val at = pos
             if (at >= bytes.size) return -1
 
-            tail?.let { t ->
-                if (at >= t.start && at < t.end) {
-                    val n = minOf(length.toLong(), t.end - at).toInt()
-                    System.arraycopy(t.data, (at - t.start).toInt(), buffer, offset, n)
-                    advance(at + n)
-                    return n
-                }
-            }
-
             // Fast path: no coroutine and no TDLib round trip, which is nearly every read.
-            var available = bytes.cachedAvailable(at)
-            if (available == null) {
-                val pending = gate
-                if (pending != null) {
-                    // The tail is on its way; once it lands this position may be in memory.
-                    blocking { pending.await() }
-                    return@repeat
-                }
-                available = blocking { bytes.awaitBytesAt(at) }
-            }
+            val available = bytes.cachedAvailable(at) ?: blocking { bytes.awaitBytesAt(at) }
             val wanted = minOf(length.toLong(), available, bytes.size - at).toInt()
             try {
                 val read = bytes.read(at, buffer, offset, wanted)
-                advance(at + read)
+                pos = at + read
                 return read
             } catch (e: EOFException) {
                 // The file on disk was shorter than TDLib said: the window was dropped, so the
@@ -239,37 +161,6 @@ class StreamInput(
         if (closed) return
         closed = true
         inputJob.cancel()
-    }
-
-    private fun advance(to: Long) {
-        pos = to
-        if (to > furthest) furthest = to
-    }
-
-    private suspend fun fetchTail(start: Long) {
-        // Let the head land first: the first frame matters more than the index, and mpv reads the
-        // header before anything else.
-        withTimeoutOrNull(HEAD_WAIT_MS) { while (furthest < HEAD_BYTES) delay(50) }
-        val pending = CompletableDeferred<Unit>()
-        gate = pending
-        var ok = false
-        try {
-            val length = (bytes.size - start).toInt()
-            val data = withTimeoutOrNull(TAIL_TIMEOUT_MS) { bytes.fetch(start, length) }
-            if (data != null) {
-                tail = Tail(start, data)
-                ok = true
-            }
-            Logger.i(TAG, "Tail prefetch at $start: ${if (ok) "${data!!.size} bytes" else "skipped"}")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Logger.w(TAG, "Tail prefetch failed", e)
-        } finally {
-            gate = null
-            pending.complete(Unit)
-            tailReady.complete(ok)
-        }
     }
 
     /**
@@ -295,9 +186,6 @@ class StreamInput(
         /** A little above [com.tmplayer.player.TdByteWindow.STALL_TIMEOUT_MS], which decides first. */
         const val READ_TIMEOUT_MS = 70_000L
 
-        const val HEAD_BYTES = 1024L * 1024
-        const val HEAD_WAIT_MS = 4_000L
-        const val TAIL_TIMEOUT_MS = 15_000L
         private const val SHORT_READ_RETRIES = 3
     }
 }
