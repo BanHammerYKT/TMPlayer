@@ -48,6 +48,8 @@ class App : Application() {
         CrashReports.watch(this)
         // The shared code logs through a facade; on Android it goes to logcat as it always has.
         Logger.sink = AndroidLogSink
+        // The clock Home's first paint is timed against (adb logcat -s tm-perf).
+        com.tmplayer.data.PerfLog.processStart
         Updates.configureForAndroid()
         Updates.enabled = BuildConfig.UPDATE_CHECK
         SupportReminder.enabled = BuildConfig.SUPPORT_LINKS

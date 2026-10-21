@@ -73,6 +73,7 @@ private const val FULLSCREEN_SETTLE_MS = 250L
 fun main(args: Array<String>) {
     // Loads every native library, reports, exits: no window, no second instance check.
     args.firstOrNull(SelfTest::matches)?.let { exitProcess(SelfTest.run(it)) }
+    com.tmplayer.data.PerfLog.processStart
     // Before the first window: sway and its kind never reparent, which AWT has to be told.
     NonReparentingWm.applyIfNeeded()
     // TDLib's Windows DLL needs the C++ runtime; take the bundled JVM's copy (see WindowsRuntime).

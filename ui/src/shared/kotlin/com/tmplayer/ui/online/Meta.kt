@@ -20,6 +20,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.dp
+import com.tmplayer.online.MetaImageSize
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import com.tmplayer.data.MediaItem
 import com.tmplayer.data.Thumbnails
 import com.tmplayer.i18n.Translator
@@ -147,23 +154,90 @@ fun MetaPicture(
     // Android samples every picture to [maxWidth] whatever it is drawn at, so only the desktop measures.
     val wanted = if (com.tmplayer.data.decodesFullSize) maxOf(maxWidth, drawn) else maxWidth
     var bitmap by remember(url) { mutableStateOf(Thumbnails.peekSharp(url, wanted, maxWidth)) }
+    // TMDB's small copy, blurred, while the sharp one comes: the picture is there in one short
+    // round trip and comes into focus rather than popping in late (user, 2026-10-21).
+    val tinyUrl = remember(url) { MetaImageSize.tiny(url) }
+    var tiny by remember(url) { mutableStateOf(if (bitmap == null && tinyUrl != null) Thumbnails.peekOnline(tinyUrl, TINY_PICTURE_WIDTH) else null) }
+    // Already decoded when the tile was composed: shown sharp at once, no fade.
+    val reveal = remember(url) { Animatable(if (bitmap != null) 1f else 0f) }
+    val still = com.tmplayer.ui.theme.rememberReducedMotion() || com.tmplayer.ui.theme.Motion.reduced
     LaunchedEffect(url, wanted) {
         val have = bitmap
         if (have != null && have.width >= wanted) return@LaunchedEffect
-        Thumbnails.sharp(url, wanted, maxWidth) { online.image(it) }?.let { bitmap = it }
+        val started = System.nanoTime()
+        coroutineScope {
+            val early = if (have == null && tiny == null && tinyUrl != null) {
+                launch {
+                    // Not when the sharp copy is on the disk: it decodes before the small one could land.
+                    val onDisk = withContext(Dispatchers.IO) {
+                        online.hasImage(url) || online.hasImage(MetaImageSize.atLeast(url, Thumbnails.lighter(wanted)))
+                    }
+                    if (onDisk) return@launch
+                    Thumbnails.online(tinyUrl, TINY_PICTURE_WIDTH) { online.image(tinyUrl) }?.let {
+                        if (bitmap == null) tiny = it
+                        PicturePerf.note("poster small", started)
+                    }
+                }
+            } else {
+                null
+            }
+            Thumbnails.sharp(url, wanted, maxWidth) { online.image(it) }?.let {
+                early?.cancel()
+                bitmap = it
+                if (have == null) PicturePerf.note(if (tiny != null) "poster sharp after small" else "poster sharp", started)
+            }
+        }
     }
     val shown = bitmap
+    LaunchedEffect(shown != null) {
+        if (shown == null || reveal.value >= 1f) return@LaunchedEffect
+        if (still) reveal.snapTo(1f) else reveal.animateTo(1f, androidx.compose.animation.core.tween(REVEAL_MS))
+    }
     Box(modifier.onSizeChanged { drawn = it.width }) {
+        val small = tiny
+        if (small != null && reveal.value < 1f) {
+            Image(
+                small,
+                contentDescription = null,
+                modifier = Modifier.matchParentSize().blur(TINY_BLUR),
+                contentScale = contentScale,
+                alignment = alignment,
+                filterQuality = androidx.compose.ui.graphics.FilterQuality.Low,
+            )
+        }
         if (shown != null) {
+            val focus = reveal.value
             Image(
                 shown,
                 contentDescription = contentDescription,
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier
+                    .matchParentSize()
+                    .graphicsLayer { alpha = focus }
+                    // The blur eases out as the sharp copy fades in, so it comes into focus.
+                    .then(if (focus < 1f && small != null) Modifier.blur(TINY_BLUR * (1f - focus)) else Modifier),
                 contentScale = contentScale,
                 alignment = alignment,
                 filterQuality = Thumbnails.drawFilter,
             )
         }
+    }
+}
+
+/** The blur on a small copy standing in for the sharp one. Android draws it from API 31; earlier the stretched copy is soft on its own. */
+private val TINY_BLUR = 12.dp
+
+/** How wide TMDB's small copies are decoded: `w92` whole, a `w300` still halved. */
+private const val TINY_PICTURE_WIDTH = 160
+
+/** How long the sharp copy takes to come into focus over the small one. */
+private const val REVEAL_MS = 380
+
+/** The first few pictures' timings, for a device pass to read in the log; past that they would only be noise. */
+private object PicturePerf {
+    private val left = java.util.concurrent.atomic.AtomicInteger(16)
+
+    fun note(what: String, since: Long) {
+        if (left.getAndDecrement() > 0) com.tmplayer.data.PerfLog.mark(what, since)
     }
 }
 
