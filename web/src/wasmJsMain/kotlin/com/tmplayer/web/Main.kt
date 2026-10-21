@@ -98,6 +98,8 @@ fun main() {
         ChatGate.follow(settings)
         HiddenChats.follow(settings)
         VideoCorrections.follow(settings)
+        // Posters, backdrops, title logos and overviews, as on the apps (web/.../data/WebMetadata.kt).
+        com.tmplayer.online.OnlineMetadata.current = com.tmplayer.web.data.webOnlineMetadata()
         Background.scope.launch {
             settings.language.collect { chosen ->
                 val want = Languages.resolve(chosen, system)

@@ -1,6 +1,5 @@
 package com.tmplayer.online
 
-import com.tmplayer.json.JSONArray
 import com.tmplayer.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -149,28 +148,13 @@ class MetadataCache(
             return null
         }
         val list = json.optJSONArray("episodes") ?: return null
-        return (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map {
-            MetaEpisode(
-                season = it.optInt("season"),
-                number = it.optInt("number"),
-                name = it.optString("name"),
-                overview = it.optString("overview"),
-                stillUrl = it.optString("still").ifBlank { null },
-                airDate = it.optString("airDate").ifBlank { null },
-                runtimeMin = it.optInt("runtime").takeIf { r -> r > 0 },
-            )
-        }
+        return MetaSeasonJson.fromJson(list)
     }
 
     @Synchronized
     override fun putSeason(key: String, episodes: List<MetaEpisode>) {
         seasons.mkdirs()
-        val list = JSONArray(
-            episodes.map {
-                JSONObject().put("season", it.season).put("number", it.number).put("name", it.name).put("overview", it.overview)
-                    .put("still", it.stillUrl.orEmpty()).put("airDate", it.airDate.orEmpty()).put("runtime", it.runtimeMin ?: 0)
-            },
-        )
+        val list = MetaSeasonJson.toJson(episodes)
         val json = JSONObject().put("key", key).put("saved", now()).put("episodes", list)
         write(File(seasons, name(key) + ".json"), json.toString().toByteArray())
     }
@@ -281,14 +265,14 @@ class MetadataCache(
 
     companion object {
         /** How long a season's episode list is trusted: see [season]. */
-        const val SEASON_TTL_MS = 24L * 60 * 60 * 1000
+        const val SEASON_TTL_MS = MetaKeep.SEASON_TTL_MS
 
-        const val DAY_MS = 24L * 60 * 60 * 1000
-        const val MAX_TTL_MS = 180 * DAY_MS
-        const val FOUND_TTL_MS = 60 * DAY_MS
-        const val MISS_TTL_MS = 7 * DAY_MS
-        const val SKIP_FOUND_TTL_MS = 30 * DAY_MS
-        const val SKIP_MISS_TTL_MS = 3 * DAY_MS
+        const val DAY_MS = MetaKeep.DAY_MS
+        const val MAX_TTL_MS = MetaKeep.MAX_TTL_MS
+        const val FOUND_TTL_MS = MetaKeep.FOUND_TTL_MS
+        const val MISS_TTL_MS = MetaKeep.MISS_TTL_MS
+        const val SKIP_FOUND_TTL_MS = MetaKeep.SKIP_FOUND_TTL_MS
+        const val SKIP_MISS_TTL_MS = MetaKeep.SKIP_MISS_TTL_MS
 
         /** [imageCapBytes] unless told otherwise: posters and backdrops for some hundreds of titles. */
         const val IMAGE_CAP_BYTES = 150L * 1024 * 1024

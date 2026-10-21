@@ -20,13 +20,20 @@ private fun jsFetch(method: String, url: String, headersJson: String, body: Stri
 
 /**
  * [HttpTransport] over the browser's fetch. Only providers that answer with CORS headers can be
- * reached this way (TMDB and TVmaze do); anything else fails as a network error, never through a
- * proxy of ours. A failure to connect is an [IOException], as on the JVM.
+ * reached this way (TMDB, TVmaze, AniList and their picture hosts do); anything else fails as a
+ * network error, never through a proxy of ours. A failure to connect is an [IOException], as on
+ * the JVM.
+ *
+ * The providers' `User-Agent` is left out: the browser names itself, and a cross origin request
+ * carrying that header needs a preflight, a second round trip for every lookup and every poster.
+ * Pictures come through the browser's own HTTP cache (TMDB's are kept for a year), so a reload
+ * draws them without the network.
  */
 object FetchTransport : HttpTransport {
     @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
     override suspend fun send(request: HttpRequest): HttpResponse {
-        val headers = com.tmplayer.json.JSONObject(request.headers).toString()
+        val sent = request.headers.filterKeys { !it.equals("User-Agent", ignoreCase = true) }
+        val headers = com.tmplayer.json.JSONObject(sent).toString()
         val text = try {
             jsFetch(request.method, request.url, headers, request.body).await<JsString>().toString()
         } catch (e: Throwable) {
