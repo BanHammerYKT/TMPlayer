@@ -55,14 +55,6 @@ class JoinedStreamBytes(
         return piece.read(spot.offset, buffer, offset, wanted)
     }
 
-    override suspend fun fetch(offset: Long, length: Int): ByteArray? {
-        val spot = map.locate(offset) ?: return null
-        // A range across a seam is two fetches, which the tail prefetch is not worth.
-        if (spot.offset + length > map.sizes[spot.index]) return null
-        // Not a move of the reading: the tail prefetch runs beside it and must close nothing.
-        return pieceAt(spot.index, spot.offset, reading = false).fetch(spot.offset, length)
-    }
-
     override suspend fun askAgain(position: Long) {
         val spot = map.locate(position) ?: return
         // Only a piece already open: one that is not has nothing stalled to ask again for.
@@ -118,14 +110,6 @@ class LocalFileBytes(private val file: java.io.File) : StreamBytes {
         val read = channel.read(java.nio.ByteBuffer.wrap(buffer, offset, length), position)
         if (read < 0) throw java.io.EOFException("Short read at $position")
         return read
-    }
-
-    override suspend fun fetch(offset: Long, length: Int): ByteArray? {
-        val bytes = java.nio.ByteBuffer.allocate(length)
-        while (bytes.hasRemaining()) {
-            if (channel.read(bytes, offset + bytes.position()) < 0) return null
-        }
-        return bytes.array()
     }
 
     override fun close() {

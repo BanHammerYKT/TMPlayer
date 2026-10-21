@@ -106,20 +106,6 @@ class GrowingFileBytes(
         handle.read(buffer, offset, length)
     }
 
-    override suspend fun fetch(offset: Long, length: Int): ByteArray? {
-        aim(offset)
-        while (contiguousEnd(offset) < offset + length) {
-            if (stopped) return null
-            delay(TICK_MS)
-        }
-        val bytes = ByteArray(length)
-        synchronized(handle) {
-            handle.seek(offset)
-            handle.readFully(bytes)
-        }
-        return bytes
-    }
-
     override fun close() {
         stopped = true
         runCatching { handle.close() }
