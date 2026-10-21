@@ -112,6 +112,7 @@ fun ChatsPage(
     val folders by Td.folders.collectAsState()
     var query by rememberSaveable(favouritesOnly) { mutableStateOf("") }
     val toast = rememberToast()
+    val undoToast = com.tmplayer.ui.components.rememberActionToast()
     val scope = rememberCoroutineScope()
     val listState = if (favouritesOnly) androidx.compose.foundation.lazy.rememberLazyListState() else state.chatListState
     val nav = rememberKeyboardNav(remember(listState) { ListSurface(listState) })
@@ -258,6 +259,10 @@ fun ChatsPage(
                             model.markRead(chat) { toast(it) }
                             toast(s.chatsMarkedRead(chat.title))
                         },
+                        onHide = { chat ->
+                            scope.launch { state.settings.hideChat(chat.id, chat.title) }
+                            undoToast(s.browseChatHidden(chat.title), s.browseUndo) { scope.launch { state.settings.showChat(chat.id) } }
+                        },
                     ),
                 )
             }
@@ -345,11 +350,13 @@ internal class ChatRowActions(
     val onToggleMuted: (ChatSummary) -> Unit = {},
     val onToggleArchived: (ChatSummary) -> Unit = {},
     val onMarkRead: (ChatSummary) -> Unit = {},
+    /** Hides the chat from TMPlayer's lists (see HiddenChats); null leaves the entry out. */
+    val onHide: ((ChatSummary) -> Unit)? = null,
 )
 
 /**
  * The rows themselves, with a scrollbar and the keyboard of [KeyboardNav]: Up and Down a row,
- * Home and End, Page Up and Page Down, Enter opens, S stars, P pins, M mutes, A archives, R marks
+ * Home and End, Page Up and Page Down, Enter opens, S stars, H hides, P pins, M mutes, A archives, R marks
  * read, and the menu key or Shift+F10 opens the row's menu (as a right click does). Split from
  * [ChatsPage] so the UI tests can drive it without TDLib.
  */
@@ -455,6 +462,7 @@ internal fun ChatRow(
                     Key.P -> actions.onTogglePinned(chat)
                     Key.M -> actions.onToggleMuted(chat)
                     Key.A -> actions.onToggleArchived(chat)
+                    Key.H -> actions.onHide?.invoke(chat) ?: return@onPreviewKeyEvent false
                     // Nothing to clear is not an error, and the key is still this row's.
                     Key.R -> if (chat.unreadCount > 0) actions.onMarkRead(chat)
                     else -> return@onPreviewKeyEvent false
@@ -541,6 +549,8 @@ private fun ChatRowMenu(
             if (favourite) TmIcons.Star else TmIcons.StarOutline,
             onStar,
         )
+        // Private to this computer too: the chat leaves TMPlayer's lists, never Telegram.
+        actions.onHide?.let { hide -> entry(s.browseHideChat, "H", TmIcons.VisibilityOff) { hide(chat) } }
         HorizontalDivider()
         entry(if (chat.isPinned) s.chatsUnpin else s.chatsPin, "P", TmIcons.Pin) { actions.onTogglePinned(chat) }
         entry(

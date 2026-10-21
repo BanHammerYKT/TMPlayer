@@ -846,6 +846,7 @@
     "select_videos_detail": "Unduh beberapa sekaligus",
     "selected": "Dipilih",
     "selected_count": "{count, plural, other {# dipilih}}",
+    "self_destructing_hidden": "{count, plural, other {# video yang hilang otomatis tidak ditampilkan: buka di Telegram.}}",
     "share_failed": "Video itu tidak bisa diserahkan ke aplikasi lain.",
     "share_not_here": "Video itu belum ada di ponsel ini.",
     "some_fit": "{taken} dari {needed} masuk antrean. {room}",

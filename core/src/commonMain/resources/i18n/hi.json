@@ -846,6 +846,7 @@
     "select_videos_detail": "एक साथ कई डाउनलोड करें",
     "selected": "चुना गया",
     "selected_count": "{count, plural, one {# चुना गया} other {# चुने गए}}",
+    "self_destructing_hidden": "{count, plural, one {# सेल्फ-डिस्ट्रक्ट वीडियो नहीं दिखाया गया: उसे Telegram में खोलें।} other {# सेल्फ-डिस्ट्रक्ट वीडियो नहीं दिखाए गए: उन्हें Telegram में खोलें।}}",
     "share_failed": "वह वीडियो दूसरे ऐप को नहीं दिया जा सकता।",
     "share_not_here": "वह वीडियो अभी इस फ़ोन पर नहीं है।",
     "some_fit": "{needed} में से {taken} कतार में लगे। {room}",

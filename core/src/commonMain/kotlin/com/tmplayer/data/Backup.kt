@@ -146,6 +146,10 @@ object Backups {
         "gesture_volume" to Kind.BOOL,
         "high_contrast" to Kind.BOOL,
         "history_tab" to Kind.TEXT,
+        // The chats hidden from the lists ([HiddenChats]), one text setting.
+        "hidden_chats" to Kind.TEXT,
+        "history_sort" to Kind.TEXT,
+        "downloads_sort" to Kind.TEXT,
         "hold_speed" to Kind.FLOAT,
         "language" to Kind.TEXT,
         "lighter_pictures" to Kind.BOOL,
@@ -206,8 +210,9 @@ object Backups {
         "speed_" to Kind.FLOAT,
         "delay_" to Kind.TEXT,
         "topic_" to Kind.LONG,
-        // A chat's own order ([VideoSort]) and the viewer's corrections to names ([VideoCorrection]).
+        // A chat's own order ([VideoSort]) and filter ([VideoFilter]), and the viewer's corrections to names ([VideoCorrection]).
         "vsort_" to Kind.TEXT,
+        "vfilter_" to Kind.TEXT,
         VideoCorrections.PREFIX to Kind.TEXT,
         "copy_pick_" to Kind.TEXT,
     )

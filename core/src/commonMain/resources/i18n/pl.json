@@ -846,6 +846,7 @@
     "select_videos_detail": "Pobierz kilka naraz",
     "selected": "Wybrano",
     "selected_count": "{count, plural, one {Wybrano #} few {Wybrano #} many {Wybrano #} other {Wybrano #}}",
+    "self_destructing_hidden": "{count, plural, one {# film samoniszczący nie jest wyświetlany: otwórz go w Telegramie.} few {# filmy samoniszczące nie są wyświetlane: otwórz je w Telegramie.} many {# filmów samoniszczących nie jest wyświetlanych: otwórz je w Telegramie.} other {# filmu samoniszczącego nie jest wyświetlane: otwórz je w Telegramie.}}",
     "share_failed": "Nie można przekazać tego filmu innej aplikacji.",
     "share_not_here": "Tego filmu nie ma jeszcze na tym telefonie.",
     "some_fit": "W kolejce {taken} z {needed}. {room}",

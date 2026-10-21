@@ -368,7 +368,7 @@ class ChatRepository(private val td: TdlClient) {
             // The kids lock (CP57): Telegram searches the whole account, so the chats it leaves out
             // are dropped here, before any of them costs a getChat.
             val allowed = ChatGate.awaitReady()
-            found.filter { KidsLock.allows(allowed, it.chatId) }.groupBy { it.chatId }.flatMap { (chatId, messages) ->
+            found.filter { KidsLock.allows(allowed, it.chatId) && HiddenChats.shows(it.chatId) }.groupBy { it.chatId }.flatMap { (chatId, messages) ->
                 val chatProtected = td.getChat(chatId).valueOrNull?.hasProtectedContent ?: false
                 MediaMapper.screen(messages, chatProtected).items
             }.distinctBy { it.id }
@@ -413,7 +413,7 @@ class ChatRepository(private val td: TdlClient) {
             val documentFound = documents?.await()
             val allowed = ChatGate.awaitReady()
             val messages = listOfNotNull(videoFound, documentFound).flatMap { it.messages.toList() }
-                .filter { KidsLock.allows(allowed, it.chatId) }
+                .filter { KidsLock.allows(allowed, it.chatId) && HiddenChats.shows(it.chatId) }
             val myId = if (messages.isEmpty()) 0L else Td.myId()
             val briefs = ArrayList<ChatBrief>()
             val items = messages.groupBy { it.chatId }.flatMap { (chatId, inChat) ->

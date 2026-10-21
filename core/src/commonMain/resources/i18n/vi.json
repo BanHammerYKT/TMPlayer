@@ -846,6 +846,7 @@
     "select_videos_detail": "Tải nhiều video cùng lúc",
     "selected": "Đã chọn",
     "selected_count": "{count, plural, other {Đã chọn #}}",
+    "self_destructing_hidden": "{count, plural, other {# video tự hủy không được hiển thị: hãy mở trong Telegram.}}",
     "share_failed": "Không chuyển được video đó cho ứng dụng khác.",
     "share_not_here": "Video đó chưa có trên điện thoại này.",
     "some_fit": "Đã xếp hàng {taken} trên {needed}. {room}",

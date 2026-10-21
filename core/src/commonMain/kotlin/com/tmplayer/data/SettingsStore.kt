@@ -25,6 +25,7 @@ import okio.Path.Companion.toPath
 import java.io.File
 
 private val FAVORITES = stringSetPreferencesKey("favorite_chats")
+private val HIDDEN_CHATS = stringPreferencesKey("hidden_chats") // HiddenChats.KEY
 private val PLAYER_HINT_SEEN = booleanPreferencesKey("player_hint_seen")
 private val FIRST_VIDEO_TIP_DISMISSED = booleanPreferencesKey("first_video_tip_dismissed")
 private val TV_BROWSE_HINT_SEEN = booleanPreferencesKey("tv_browse_hint_seen")
@@ -92,6 +93,8 @@ private val KIDS_CHATS = stringSetPreferencesKey("kids_chats")
 private val SETUP = stringPreferencesKey("setup")
 private val TOUR = stringPreferencesKey("tour")
 private val HISTORY_TAB = stringPreferencesKey("history_tab")
+private val HISTORY_SORT = stringPreferencesKey("history_sort")
+private val DOWNLOADS_SORT = stringPreferencesKey("downloads_sort")
 private val MEDIA_LAYOUT = stringPreferencesKey("media_layout")
 private val CHAT_SNAPSHOT = stringPreferencesKey("chat_snapshot")
 private val ACCOUNT_SNAPSHOT = stringPreferencesKey("account_snapshot")
@@ -285,6 +288,9 @@ const val DEVELOPER_PHRASE = "/namecheck"
 /** The order a chat's videos are listed in, per chat. See [VideoSort]. */
 private fun videoSortKey(chatId: Long) = stringPreferencesKey("vsort_$chatId")
 
+/** Which of a chat's videos are listed, per chat. See [VideoFilter]. */
+private fun videoFilterKey(chatId: Long) = stringPreferencesKey("vfilter_$chatId")
+
 /** The subtitle and audio offsets the viewer set for one file. See [SyncDelays]. */
 private fun delayKey(chatId: Long, messageId: Long) =
     stringPreferencesKey("delay_${chatId}_$messageId")
@@ -330,6 +336,27 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
         .map(transform)
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
+
+    // ---- hidden chats -----------------------------------------------------------------------
+
+    /** The chats hidden from TMPlayer's lists, in the order they were hidden. See [HiddenChats]. */
+    val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HIDDEN_CHATS]) }
+
+    suspend fun hideChat(chatId: Long, title: String) {
+        prefs.edit { it[HIDDEN_CHATS] = HiddenChats.encode(HiddenChats.with(HiddenChats.decode(it[HIDDEN_CHATS]), HiddenChat(chatId, title))) }
+    }
+
+    /** Lists [chatId] again, wherever it was left out. */
+    suspend fun showChat(chatId: Long) {
+        prefs.edit { prefs ->
+            val left = HiddenChats.decode(prefs[HIDDEN_CHATS]).filter { it.id != chatId }
+            if (left.isEmpty()) prefs.remove(HIDDEN_CHATS) else prefs[HIDDEN_CHATS] = HiddenChats.encode(left)
+        }
+    }
+
+    suspend fun showAllChats() {
+        prefs.edit { it.remove(HIDDEN_CHATS) }
+    }
 
     // ---- favourites -------------------------------------------------------------------------
 
@@ -502,6 +529,13 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
 
     suspend fun setVideoSort(chatId: Long, sort: VideoSort) {
         prefs.edit { if (sort == VideoSort.DEFAULT) it.remove(videoSortKey(chatId)) else it[videoSortKey(chatId)] = sort.name }
+    }
+
+    /** Which of [chatId]'s videos are listed: [VideoFilter.All] until the viewer picks another. */
+    fun videoFilter(chatId: Long): Flow<VideoFilter> = read { VideoFilter.decode(it[videoFilterKey(chatId)]) }
+
+    suspend fun setVideoFilter(chatId: Long, filter: VideoFilter) {
+        prefs.edit { if (filter == VideoFilter.DEFAULT) it.remove(videoFilterKey(chatId)) else it[videoFilterKey(chatId)] = filter.name }
     }
 
     /**
@@ -1836,6 +1870,20 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
 
     suspend fun setHistoryTab(name: String) {
         prefs.edit { it[HISTORY_TAB] = name }
+    }
+
+    /** The order of History's lists (Continue watching, Watch later, Watched), `ChatSort` by name: most recent first or by title. */
+    val historySort: Flow<String?> = read { it[HISTORY_SORT] }
+
+    suspend fun setHistorySort(name: String) {
+        prefs.edit { it[HISTORY_SORT] = name }
+    }
+
+    /** The Downloads page's order, once for the page. See [DownloadShelf.Sort]. */
+    val downloadsSort: Flow<DownloadShelf.Sort> = read { DownloadShelf.Sort.decode(it[DOWNLOADS_SORT]) }
+
+    suspend fun setDownloadsSort(sort: DownloadShelf.Sort) {
+        prefs.edit { it[DOWNLOADS_SORT] = sort.name }
     }
 
     /**

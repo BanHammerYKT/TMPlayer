@@ -846,6 +846,7 @@
     "select_videos_detail": "Scarica più video insieme",
     "selected": "Selezionato",
     "selected_count": "{count, plural, one {# selezionato} many {# selezionati} other {# selezionati}}",
+    "self_destructing_hidden": "{count, plural, one {# video ad autodistruzione non è mostrato: aprilo in Telegram.} many {# di video ad autodistruzione non sono mostrati: aprili in Telegram.} other {# video ad autodistruzione non sono mostrati: aprili in Telegram.}}",
     "share_failed": "Quel video non può essere passato a un'altra app.",
     "share_not_here": "Quel video non è ancora su questo telefono.",
     "some_fit": "In coda {taken} su {needed}. {room}",

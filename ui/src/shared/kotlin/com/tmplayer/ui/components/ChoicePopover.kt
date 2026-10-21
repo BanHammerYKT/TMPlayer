@@ -168,7 +168,10 @@ private fun PopoverCard(
             modifier = Modifier.layout { measurable, constraints ->
                 val margin = 12.dp.roundToPx()
                 val gap = 8.dp.roundToPx()
-                val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+                // Never taller than the room less its margins: a long menu (a chat's Sort and
+                // filter) scrolls inside the card rather than running off the screen.
+                val tallest = if (constraints.hasBoundedHeight) (constraints.maxHeight - margin * 2).coerceAtLeast(0) else constraints.maxHeight
+                val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0, maxHeight = tallest))
                 val own = here?.positionInWindow() ?: Offset.Zero
                 val button = anchor.bounds?.translate(-own.x, -own.y)
                 val width = constraints.maxWidth

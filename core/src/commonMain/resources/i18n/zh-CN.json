@@ -846,6 +846,7 @@
     "select_videos_detail": "一次下载多个",
     "selected": "已选择",
     "selected_count": "{count, plural, other {已选择 #}}",
+    "self_destructing_hidden": "{count, plural, other {# 个阅后即焚视频未显示：请在 Telegram 中打开。}}",
     "share_failed": "无法把该视频交给其他应用。",
     "share_not_here": "该视频还不在这部手机上。",
     "some_fit": "已加入队列 {taken} / {needed}。{room}",

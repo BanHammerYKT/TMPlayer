@@ -144,6 +144,9 @@ class ShellState(
     var chatSort by mutableStateOf(ChatSort.Recent)
     var historyTab by mutableStateOf(HistoryTab.Continue)
 
+    /** History's order, one for its three lists: most recent first, or by title. */
+    var historySort by mutableStateOf(ChatSort.Recent)
+
     /**
      * Set by Settings' Recently played row: Downloads opens with that section, folded away at the
      * page's foot otherwise, unfolded and in view. The page clears it once it has done so.

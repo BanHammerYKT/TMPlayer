@@ -368,6 +368,19 @@ internal fun BrowseScreen(
     LaunchedEffect(searchConnected) { if (searchConnected) search.reconnected() }
     val panelScope = rememberCoroutineScope()
     val panelContext = LocalContext.current
+    // Hiding a chat from its menu: gone from the lists at once, with Undo on a touch screen. Under
+    // a remote the message says where it is shown again instead, as the pill takes no focus.
+    val hiddenToast = com.tmplayer.ui.components.rememberActionToast()
+    val hideScope = rememberCoroutineScope()
+    val hideStore = remember(panelContext) { SettingsStore(panelContext) }
+    val hideTouch = !FormFactor.isTv(panelContext)
+    val hideChat: (ChatSummary) -> Unit = { chat ->
+        hideScope.launch { hideStore.hideChat(chat.id, chat.title) }
+        hiddenToast(
+            if (hideTouch) s.browseChatHidden(chat.title) else s.browseChatHiddenWhere(chat.title),
+            s.browseUndo,
+        ) { hideScope.launch { hideStore.showChat(chat.id) } }
+    }
     // A hold, the info key or a right click: the quick menu, which leads to the page by Details.
     var held by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }
     val holdMedia: (MediaItem, String) -> Unit = { item, title -> held = item to title }
@@ -392,11 +405,25 @@ internal fun BrowseScreen(
     val pickFilter: (ChatFilter) -> Unit = { panelScope.launch { browseSettings.setChatFilter(it.name) } }
     val pickSort: (ChatSort) -> Unit = { panelScope.launch { browseSettings.setChatSort(it.name) } }
     val pickHistory: (HistoryTab) -> Unit = { panelScope.launch { browseSettings.setHistoryTab(it.name) } }
+    // History's order, one for its three lists: most recent first, or by title (ChatSort's two).
+    val historySort by remember(browseSettings) { browseSettings.historySort.map(ChatSort::decode) }
+        .collectAsState(initial = ChatSort.Recent)
+    val pickHistorySort: (ChatSort) -> Unit = { panelScope.launch { browseSettings.setHistorySort(it.name) } }
     val showsContinue = tab.listsVideos && historyTab == HistoryTab.Continue
     // History's Continue tab, with the copies of one film or episode as one card, as on Home.
     // Built again when the viewer says two of them are not the same video.
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
-    val continuing = remember(continueWatching, corrections) { HomeRows.foldCopies(continueWatching) }
+    val continuing = remember(continueWatching, corrections, historySort) {
+        HomeRows.foldCopies(continueWatching).let { list ->
+            if (historySort == ChatSort.Name) com.tmplayer.data.VideoSorting.byName(list, { SeriesShelf.tileTitle(it.toMediaItem()) }) else list
+        }
+    }
+    val laterShown = remember(watchLater, historySort) {
+        if (historySort == ChatSort.Name) com.tmplayer.data.VideoSorting.byName(watchLater, { SeriesShelf.tileTitle(it.toMediaItem()) }) else watchLater
+    }
+    val watchedShown = remember(watchedHistory, historySort) {
+        if (historySort == ChatSort.Name) com.tmplayer.data.VideoSorting.byName(watchedHistory, { SeriesShelf.tileTitle(it.toMediaItem()) }) else watchedHistory
+    }
     val showsWatched = tab.listsVideos && historyTab == HistoryTab.Watched
     val showsWatchLater = tab.listsVideos && historyTab == HistoryTab.WatchLater
 
@@ -462,6 +489,16 @@ internal fun BrowseScreen(
             insets = insets,
             onFocus = { chipsFocused = it },
             chips = buildList {
+                // The lists' order first, as the Chats page has its own: Recent or A to Z.
+                add(
+                    ChipSpec(
+                        key = SORT_CHIP,
+                        label = historySort.label,
+                        icon = historySort.icon,
+                        selected = false,
+                        description = s.browseSortBy(historySort.label),
+                    ) { pickHistorySort(historySort.toggled) },
+                )
                 HistoryTab.entries.forEach { entry ->
                     add(ChipSpec(entry.name, entry.label, entry.icon, selected = entry == historyTab) { pickHistory(entry) })
                 }
@@ -608,7 +645,7 @@ internal fun BrowseScreen(
                                 EmptyTab(tab, query = "", history = HistoryTab.WatchLater, onGoToChats = goToChats)
                             } else {
                                 ContinueSection(
-                                    records = watchLater,
+                                    records = laterShown,
                                     text = { it.cardText() },
                                     layout = layout,
                                     insets = insets,
@@ -628,7 +665,7 @@ internal fun BrowseScreen(
                                 // recompose every card each minute for it.
                                 val now = remember(watchedHistory) { System.currentTimeMillis() }
                                 ContinueSection(
-                                    records = watchedHistory,
+                                    records = watchedShown,
                                     text = { it.cardText(now) },
                                     layout = layout,
                                     insets = insets,
@@ -1011,6 +1048,17 @@ internal fun BrowseScreen(
                         chatMenu = null
                         justStarred = if (favorite) null else chat.id
                         onToggleFavorite(chat)
+                    },
+                )
+                // Also private to this device: the chat leaves TMPlayer's lists, never Telegram.
+                add(
+                    MenuAction(
+                        label = s.browseHideChat,
+                        icon = TmIcons.VisibilityOff,
+                        detail = s.browseHideChatDetail,
+                    ) {
+                        chatMenu = null
+                        hideChat(chat)
                     },
                 )
                 // Everything below this point changes the chat in Telegram itself rather than
@@ -1750,6 +1798,37 @@ internal fun Modifier.fadeScrolledEdges(scroll: androidx.compose.foundation.Scro
                 )
             }
         }
+
+/** One choice of an [OrderChips] row. */
+internal class OrderChip(val key: String, val label: String, val icon: ImageVector, val selected: Boolean, val onClick: () -> Unit)
+
+/**
+ * A short row of chips that pick one order (the Downloads page's Newest, Name, Largest), drawn as
+ * the chips over Chats and History are on each device: Material filter chips on a phone, the
+ * rail's pills under a remote, where Left and Right walk them and OK picks.
+ */
+@Composable
+internal fun OrderChips(chips: List<OrderChip>, description: String, modifier: Modifier = Modifier) {
+    val touch = isTouch()
+    Row(
+        modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = description }
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(if (touch) 8.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        chips.forEach { chip ->
+            key(chip.key) {
+                if (touch) {
+                    TouchFilterChip(chip.label, chip.icon, chip.selected, onClick = chip.onClick)
+                } else {
+                    TvChip(ChipSpec(chip.key, chip.label, chip.icon, chip.selected, onClick = chip.onClick))
+                }
+            }
+        }
+    }
+}
 
 /**
  * One chip over Chats or History: a filter, a tab, or the sort toggle (which is never "selected",

@@ -119,6 +119,7 @@ class App : Application() {
         if (BuildConfig.APPLICATION_ID.endsWith(".promo")) return
         // The kids lock (CP57), read once here for every list of chats in the process.
         ChatGate.follow(SettingsStore(this))
+        com.tmplayer.data.HiddenChats.follow(SettingsStore(this))
         // The viewer's corrections to names and groups, read once here for every screen that
         // arranges a chat.
         com.tmplayer.data.VideoCorrections.follow(SettingsStore(this))

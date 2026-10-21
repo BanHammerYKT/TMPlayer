@@ -711,7 +711,19 @@ class BrowseRenderTest {
                     }
                     VideoGrid(shell, items, "Film Club", rows = shell.chatRows, topPadding = ChatTopClearance, bottomBar = bar)
                     ChatTopChrome(shell, film)
-                    VideoSortPopover(sorting, anchor, com.tmplayer.data.VideoSort.Newest, onPick = {}, onDismiss = {})
+                    com.tmplayer.ui.browse.VideoMenuPopover(
+                        sorting,
+                        anchor,
+                        com.tmplayer.ui.browse.VideoMenuState(
+                            com.tmplayer.data.VideoSort.Newest,
+                            com.tmplayer.data.VideoFilter.Unwatched,
+                            allSizes = false,
+                            onSort = {},
+                            onFilter = {},
+                            onAllSizes = {},
+                        ),
+                        onDismiss = {},
+                    )
                 }
             }
         }

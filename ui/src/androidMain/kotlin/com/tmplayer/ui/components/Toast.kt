@@ -65,12 +65,32 @@ fun rememberToast(): (String) -> Unit {
 
 /** [rememberToast] for code outside composition: at the top while a host is showing, else the system's toast. */
 fun showMessage(context: Context, message: String) {
-    if (TopMessages.hosts > 0 && TopMessages.flow.tryEmit(message)) return
+    if (TopMessages.hosts > 0 && TopMessages.flow.tryEmit(TopMessage(message))) return
     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
+/**
+ * [rememberToast] with one action on the pill, for a change that is easy to make by mistake (a
+ * chat hidden from its menu): "Undo" beside the words on a touch screen, held a little longer.
+ * Under a remote the pill takes no focus, so a caller there says in the words where the change
+ * is undone instead, and the action is not drawn.
+ */
+@Composable
+fun rememberActionToast(): (message: String, action: String, onAction: () -> Unit) -> Unit {
+    val context = LocalContext.current
+    return remember(context) {
+        { message: String, action: String, onAction: () -> Unit ->
+            if (!(TopMessages.hosts > 0 && TopMessages.flow.tryEmit(TopMessage(message, action, onAction)))) {
+                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+private class TopMessage(val text: String, val action: String? = null, val onAction: (() -> Unit)? = null)
+
 private object TopMessages {
-    val flow = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val flow = MutableSharedFlow<TopMessage>(extraBufferCapacity = 8)
 
     @Volatile
     var hosts = 0
@@ -82,9 +102,10 @@ private object TopMessages {
  */
 @Composable
 fun BoxScope.TopMessageHost() {
-    var shown by remember { mutableStateOf<String?>(null) }
+    var shown by remember { mutableStateOf<TopMessage?>(null) }
     var serial by remember { mutableIntStateOf(0) }
-    var last by remember { mutableStateOf("") }
+    var last by remember { mutableStateOf(TopMessage("")) }
+    val touch = isTouch()
     DisposableEffect(Unit) {
         TopMessages.hosts++
         onDispose { TopMessages.hosts-- }
@@ -97,8 +118,8 @@ fun BoxScope.TopMessageHost() {
         }
     }
     LaunchedEffect(serial) {
-        if (shown == null) return@LaunchedEffect
-        delay(SHOWN_MS)
+        val message = shown ?: return@LaunchedEffect
+        delay(if (message.action != null && touch) SHOWN_WITH_ACTION_MS else SHOWN_MS)
         shown = null
     }
     // It drops in from the top on a soft spring, grows the last bit from its top edge as it lands,
@@ -133,11 +154,27 @@ fun BoxScope.TopMessageHost() {
                 .semantics { liveRegion = LiveRegionMode.Polite },
         ) {
             // A newer message replacing one on screen cross-fades into it, the pill staying put.
-            Crossfade(targetState = last, animationSpec = Motion.standard(Motion.Fast), label = "topMessage") { words ->
-                Text(words, style = MaterialTheme.typography.bodyMedium, color = Tone.text, textAlign = TextAlign.Center)
+            Crossfade(targetState = last, animationSpec = Motion.standard(Motion.Fast), label = "topMessage") { message ->
+                val action = message.action?.takeIf { touch }
+                val onAction = message.onAction
+                if (action == null || onAction == null) {
+                    Text(message.text, style = MaterialTheme.typography.bodyMedium, color = Tone.text, textAlign = TextAlign.Center)
+                } else {
+                    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(message.text, style = MaterialTheme.typography.bodyMedium, color = Tone.text, modifier = Modifier.weight(1f, fill = false))
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                onAction()
+                                shown = null
+                            },
+                            modifier = Modifier.padding(start = 8.dp),
+                        ) { Text(action, color = Tone.accent, style = MaterialTheme.typography.labelLarge) }
+                    }
+                }
             }
         }
     }
 }
 
 private const val SHOWN_MS = 2_500L
+private const val SHOWN_WITH_ACTION_MS = 5_000L

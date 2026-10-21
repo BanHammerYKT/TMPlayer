@@ -153,6 +153,12 @@ class GlobalSearchViewModel(
                 if (allowed != null) _state.update { s -> s.copy(groups = s.groups.filter { g -> g.copies.all { KidsLock.allows(allowed, it.chatId) } }) }
             }
         }
+        // So does hiding a chat from its menu while results from it are listed.
+        viewModelScope.launch {
+            com.tmplayer.data.HiddenChats.ids.collect { hidden ->
+                if (hidden.isNotEmpty()) _state.update { s -> s.copy(groups = s.groups.filter { g -> g.copies.none { it.chatId in hidden } }) }
+            }
+        }
     }
 
     /** The text changed: local matches now, Telegram after the settle. Blank clears it all. */

@@ -32,9 +32,11 @@ class VideoCorrectionsTest {
         val settings = mapOf<String, Any>(
             "fix_-1001234_56" to "separate",
             "vsort_-1001234" to "Name",
+            "vfilter_-1001234" to "Unwatched",
         )
         val backup = Backups.collect(settings, emptyMap(), MetaSettings(), createdAt = 0, appVersion = "test")
         assertEquals("separate", backup.memory["fix_-1001234_56"])
         assertEquals("Name", backup.memory["vsort_-1001234"])
+        assertEquals("Unwatched", backup.memory["vfilter_-1001234"])
     }
 }

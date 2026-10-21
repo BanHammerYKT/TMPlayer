@@ -221,6 +221,9 @@ private sealed interface Prompt {
     data object ClearHistory : Prompt
     data object ClearWatched : Prompt
     data object ClearFavorites : Prompt
+
+    /** The chats hidden from their menus, each with Show, and Show all. */
+    data object HiddenChats : Prompt
     data object SignOut : Prompt
 
     /** A backup file picked, with what restoring it would change. */
@@ -319,6 +322,8 @@ fun SettingsScreen(
     val watchedList by watchedStore.history.collectAsStateWithLifecycle(initialValue = emptyList())
     // Only those the kids lock shows, as the Favourites tab counts them.
     val storedFavorites by settings.favorites.collectAsStateWithLifecycle(initialValue = emptySet())
+    // The chats hidden from their menus (see HiddenChats), for Library's Hidden chats list.
+    val hiddenChats by settings.hiddenChats.collectAsStateWithLifecycle(initialValue = emptyList())
     val allowedChats by com.tmplayer.data.ChatGate.allowed.collectAsStateWithLifecycle()
     val favorites = remember(storedFavorites, allowedChats) { com.tmplayer.data.KidsLock.favourites(storedFavorites, allowedChats) }
     val liveFolders by Td.folders.collectAsStateWithLifecycle()
@@ -1214,6 +1219,16 @@ fun SettingsScreen(
                                 }
                             }
                         },
+                    )
+                }
+                // Always listed, so the way back to a hidden chat is where the viewer looks for it,
+                // and an empty list says how a chat gets on it.
+                item {
+                    ActionRow(
+                        title = s.settingsHiddenChats,
+                        subtitle = if (hiddenChats.isEmpty()) s.settingsHiddenChatsNone else s.settingsHiddenChatsDetail(hiddenChats.size),
+                        icon = TmIcons.VisibilityOff,
+                        onClick = { if (hiddenChats.isNotEmpty()) prompt = Prompt.HiddenChats },
                     )
                 }
                 if (favorites.isNotEmpty()) {
@@ -2202,6 +2217,41 @@ fun SettingsScreen(
             },
             onDismiss = { prompt = null },
         )
+
+        Prompt.HiddenChats -> {
+            // The last one shown closes the list, which has nothing left to say.
+            LaunchedEffect(hiddenChats.isEmpty()) { if (hiddenChats.isEmpty()) prompt = null }
+            val firstLine = remember { androidx.compose.ui.focus.FocusRequester() }
+            ChoiceSheet(
+                title = s.settingsHiddenChats,
+                note = s.settingsHiddenChatsNote,
+                onDismiss = { prompt = null },
+                onClose = { prompt = null },
+                ignoreRelease = !isTouch(),
+            ) {
+                ChoiceList {
+                    hiddenChats.forEachIndexed { index, chat ->
+                        ChoiceLine(
+                            chat.title.ifBlank { chat.id.toString() },
+                            modifier = if (index == 0) Modifier.focusRequester(firstLine) else Modifier,
+                            detail = s.settingsHiddenChatsShow,
+                            icon = TmIcons.VisibilityOff,
+                        ) {
+                            scope.launch { settings.showChat(chat.id) }
+                            toast(s.settingsHiddenChatsShown(chat.title))
+                        }
+                    }
+                    if (hiddenChats.size > 1) {
+                        ChoiceLine(s.settingsHiddenChatsShowAll, icon = TmIcons.Checklist) {
+                            prompt = null
+                            scope.launch { settings.showAllChats() }
+                            toast(s.settingsHiddenChatsAllShown)
+                        }
+                    }
+                }
+                FocusOnOpen(firstLine)
+            }
+        }
 
         Prompt.SignOut -> TvConfirm(
             title = s.settingsSignOutTitle,

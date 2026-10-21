@@ -524,7 +524,7 @@ object GlobalSearch {
     ): List<MediaItem> {
         if (query.isEmpty) return emptyList()
         return known.asSequence()
-            .filter { KidsLock.allows(allowed, it.chatId) }
+            .filter { KidsLock.allows(allowed, it.chatId) && HiddenChats.shows(it.chatId) }
             .distinctBy { it.id }
             .filter { matchesLocally(it, query, names(it)) }
             .toList()
