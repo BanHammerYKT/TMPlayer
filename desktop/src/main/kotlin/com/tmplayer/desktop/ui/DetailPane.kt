@@ -40,6 +40,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -102,8 +107,8 @@ fun BoxScope.DetailPaneHost(state: ShellState) {
 
 /**
  * The detail pane docked as a side panel beside the page, with no scrim: the page stays in view
- * and in reach, a click on another poster swaps what the pane shows, and Esc, Back or its close
- * button hide it.
+ * and in reach, a click on another poster swaps what the pane shows, and Esc, Back, its close
+ * button or a click on an empty part of the page hide it (see [closeDetailOnEmptyClick]).
  */
 @Composable
 fun DetailPaneSide(state: ShellState) {
@@ -318,16 +323,18 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
     }
 
     Column(Modifier.fillMaxWidth()) {
+        // The pane's own close sits at its start, pointing the way the pane goes: at the end it
+        // stood beside the window's close button, and one was taken for the other.
         Row(
-            Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 8.dp),
+            Modifier.fillMaxWidth().padding(start = 8.dp, end = 24.dp, top = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            TipIconButton(TmIcons.ChevronRight, s.detailClose, { close() }, shortcut = "Esc")
             Text(
                 s.detailHeading,
                 style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.weight(1f).semantics { heading() },
+                modifier = Modifier.weight(1f).padding(start = 4.dp).semantics { heading() },
             )
-            TipIconButton(TmIcons.Close, s.commonClose, { close() }, shortcut = "Esc")
         }
         // A film posted more than once opens on the copy that would play, and a copy chosen from
         // its list is remembered for the video before the pane turns to it.
@@ -454,3 +461,19 @@ internal fun DesktopSheet(onDismiss: () -> Unit, content: @Composable androidx.c
 }
 
 private val SHEET_WIDTH = 600.dp
+
+/**
+ * Closes the docked detail pane on a click that lands on an empty part of the page. A click a
+ * card or a button takes is consumed by it and leaves the pane alone (a card swaps what it
+ * shows), and so does a drag or a scroll.
+ */
+internal fun Modifier.closeDetailOnEmptyClick(state: ShellState, docked: Boolean): Modifier =
+    if (!docked) this else pointerInput(state) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val shown = state.detail ?: return@awaitEachGesture
+            val up = waitForUpOrCancellation(pass = PointerEventPass.Final) ?: return@awaitEachGesture
+            if ((up.position - down.position).getDistance() > viewConfiguration.touchSlop) return@awaitEachGesture
+            if (state.detail === shown) state.closeDetail()
+        }
+    }

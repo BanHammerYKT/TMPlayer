@@ -343,7 +343,7 @@ private fun Browse(state: ShellState, player: PlayerContent) {
             Row(Modifier.fillMaxSize()) {
                 // The floating bar sits at the foot of the page, not of the window, so a docked
                 // pane keeps its own foot; a chat brings its own bar, which takes this one's place.
-                NavFrame(state, update, account, Modifier.weight(1f).fillMaxHeight(), barShown = state.openChat == null) {
+                NavFrame(state, update, account, Modifier.weight(1f).fillMaxHeight().closeDetailOnEmptyClick(state, docked), barShown = state.openChat == null) {
                     val open = state.openChat
                     when {
                         open != null -> MediaGridPage(state, open)

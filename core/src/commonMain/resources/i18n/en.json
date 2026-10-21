@@ -454,6 +454,7 @@
     "from_file_name": "From the file name",
     "from_name_note": "Video, audio and tracks are read from the file name.",
     "heading": "Details",
+    "close": "Close details",
     "in_chat": "In {title}",
     "in_chat_count": "{have} of {total} here",
     "language": "Language",
