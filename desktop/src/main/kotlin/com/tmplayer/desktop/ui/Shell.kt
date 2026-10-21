@@ -49,7 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerButton
@@ -347,7 +347,7 @@ private fun Browse(state: ShellState, player: PlayerContent) {
     // while a video plays, so the picture shows through around the player's controls.
     val seeThrough = LocalVideoBehindPage.current && state.nowPlaying != null
     Box(Modifier.fillMaxSize()) {
-        BoxWithConstraints(Modifier.fillMaxSize().then(if (seeThrough) Modifier.graphicsLayer { alpha = 0f } else Modifier)) {
+        BoxWithConstraints(Modifier.fillMaxSize().then(if (seeThrough) Modifier.drawWithContent { } else Modifier)) {
             // The detail pane docks beside the page where both fit, so the grid stays in view and
             // in reach (a click on another poster swaps the pane), and goes over the page where
             // they do not.

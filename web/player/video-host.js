@@ -12,6 +12,28 @@
   const E = window.TmEngines;
   let current = null;
 
+  // Compose for Web starts every frame from opaque white (glClearColor 1,1,1,1) and has no switch
+  // for a clear canvas. While a video plays under it, the canvas is cleared transparent instead,
+  // so it shows the picture wherever the player's controls draw nothing; the clear colour Skia
+  // asked for is put back straight after. Every other screen paints its own ground over the
+  // whole canvas, and no video is open there, so nothing else changes.
+  [window.WebGL2RenderingContext, window.WebGLRenderingContext].forEach((C) => {
+    if (!C || !C.prototype.clearColor) return;
+    const clearColor = C.prototype.clearColor;
+    const clear = C.prototype.clear;
+    C.prototype.clearColor = function (r, g, b, a) {
+      this.__tmClear = [r, g, b, a];
+      return clearColor.call(this, r, g, b, a);
+    };
+    C.prototype.clear = function (mask) {
+      if (!current || !(mask & this.COLOR_BUFFER_BIT)) return clear.call(this, mask);
+      clearColor.call(this, 0, 0, 0, 0);
+      clear.call(this, mask);
+      const c = this.__tmClear || [0, 0, 0, 0];
+      clearColor.call(this, c[0], c[1], c[2], c[3]);
+    };
+  });
+
   class Video {
     constructor(spec, onState) {
       this.spec = spec;
