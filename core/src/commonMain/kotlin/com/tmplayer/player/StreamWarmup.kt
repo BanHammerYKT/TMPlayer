@@ -7,11 +7,16 @@ import com.tmplayer.data.valueOrNull
 import com.tmplayer.platform.Background
 import com.tmplayer.platform.Logger
 import dev.g000sha256.tdl.TdlClient
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.RandomAccessFile
 
@@ -30,9 +35,17 @@ import java.io.RandomAccessFile
  * press of Play (at once), on a card that has had the focus or the pointer for about 250 ms, on
  * a video page's Play button, and when the next episode card comes up.
  *
+ * Then TDLib is left downloading the file from the end of the head with no limit, where playback
+ * will read first, for [CONTINUE_MS] or until the player claims it: never idle in the second or
+ * two between a press of Play and the player's first request. A warm-up that gives way (to a
+ * newer one, or to a play of another file) or runs out cancels its download, so a card the focus
+ * passed over does not keep the line busy. While a video plays, a warm-up (of the next episode)
+ * brings the head and the index only.
+ *
  * Never in the player's way: a player that opens the file claims it ([claim]), and from then on
  * nothing is asked of TDLib here; claim and request are serialised, so the player's own request
- * is always the last word. Skipped for a file already whole, one the viewer is downloading (that
+ * is always the last word. A claim also stops the warm-ups of every other file, which would share
+ * the line with the stream. Skipped for a file already whole, one the viewer is downloading (that
  * download is not to be moved), a cut video's pieces or a film in parts, and wherever [allowed]
  * says no (Low storage mode, "Save mobile data" on a metered line).
  */
@@ -51,7 +64,11 @@ object StreamWarmup {
     /** How long one stretch may take before the warm-up gives up on it. */
     private const val STRETCH_TIMEOUT_MS = 8_000L
 
-    private const val POLL_MS = 120L
+    /** A backstop for an update missed: TDLib's own updates wake the wait as the bytes land. */
+    private const val POLL_MS = 500L
+
+    /** How long the download is left running after the warm-up for a player that has not come. */
+    private const val CONTINUE_MS = 20_000L
 
     /** A file warmed this recently is not warmed again. */
     private const val FRESH_MS = 10 * 60_000L
@@ -97,8 +114,15 @@ object StreamWarmup {
     suspend fun claim(fileId: Int) {
         lock.withLock {
             synchronized(this) {
-                claimed += fileId
+                val starting = claimed.add(fileId)
                 jobs.remove(fileId)?.cancel()
+                // A play starting has the line to itself: every other warm-up stops, and its
+                // download with it (see [run]). Only at the start, so the next episode's warm-up
+                // during the play is not stopped by the stream's every request.
+                if (starting) {
+                    jobs.values.forEach { it.cancel() }
+                    jobs.clear()
+                }
             }
         }
     }
@@ -118,16 +142,50 @@ object StreamWarmup {
         if (file.local.isDownloadingCompleted || OfflineDownloads.isDownloading(fileId)) return
         val size = if (file.size > 0) file.size else file.expectedSize.takeIf { it > 0 } ?: sizeHint
         if (size <= 0) return
-        val head = minOf(HEAD_BYTES, size)
-        if (!fetch(td, fileId, 0, head)) return
-        val bytes = readHead(td, fileId, head) ?: return
-        val index = StreamIndex.locate(bytes, size)
-        if (index != null) fetch(td, fileId, index.start, index.length)
-        Logger.i(TAG, "Warmed file $fileId: head ${head / 1024} KB${index?.let { ", index ${it.length / 1024} KB at ${it.start}" } ?: ""} in ${System.currentTimeMillis() - started} ms")
+        // TDLib's updates for the file wake the waits below as the bytes land.
+        val heard = Channel<Unit>(Channel.CONFLATED)
+        val listener = Background.scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            td.fileUpdates.filter { it.file.id == fileId }.collect { heard.trySend(Unit) }
+        }
+        try {
+            val head = minOf(HEAD_BYTES, size)
+            if (!fetch(td, fileId, 0, head, heard)) return
+            val bytes = readHead(td, fileId, head) ?: return
+            val index = StreamIndex.locate(bytes, size)
+            if (index != null) fetch(td, fileId, index.start, index.length, heard)
+            Logger.i(TAG, "Warmed file $fileId: head ${head / 1024} KB${index?.let { ", index ${it.length / 1024} KB at ${it.start}" } ?: ""} in ${System.currentTimeMillis() - started} ms")
+            keepGoing(td, fileId, head, size)
+        } finally {
+            listener.cancel()
+            // Whatever was asked for and is not the player's now stops: a warm-up given way, run
+            // out or failed leaves no download behind.
+            withContext(NonCancellable) {
+                lock.withLock {
+                    if (!isClaimed(fileId) && !OfflineDownloads.isDownloading(fileId)) {
+                        runCatching { td.cancelDownloadFile(fileId, onlyIfPending = false) }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Leaves TDLib downloading the file from [from] with no limit, where playback will read once
+     * the head is used up, for [CONTINUE_MS] or until the player claims it. Not while a video
+     * plays: the next episode's warm-up must not share the line with the stream.
+     */
+    private suspend fun keepGoing(td: TdlClient, fileId: Int, from: Long, size: Long) {
+        if (from >= size) return
+        lock.withLock {
+            val playing = synchronized(this) { claimed.isNotEmpty() }
+            if (playing || isClaimed(fileId) || OfflineDownloads.isDownloading(fileId)) return
+            td.downloadFile(fileId, PRIORITY, from, 0, false)
+        }
+        delay(CONTINUE_MS)
     }
 
     /** Brings `[offset, offset + length)` onto the disk; false when it could not, or the player came. */
-    private suspend fun fetch(td: TdlClient, fileId: Int, offset: Long, length: Long): Boolean {
+    private suspend fun fetch(td: TdlClient, fileId: Int, offset: Long, length: Long, heard: Channel<Unit>): Boolean {
         if (have(td, fileId, offset) >= length) return true
         lock.withLock {
             if (isClaimed(fileId) || OfflineDownloads.isDownloading(fileId)) return false
@@ -136,7 +194,7 @@ object StreamWarmup {
         val done = withTimeoutOrNull(STRETCH_TIMEOUT_MS) {
             while (have(td, fileId, offset) < length) {
                 if (isClaimed(fileId)) return@withTimeoutOrNull false
-                delay(POLL_MS)
+                withTimeoutOrNull(POLL_MS) { heard.receive() }
             }
             true
         }
