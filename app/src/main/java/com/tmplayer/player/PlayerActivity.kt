@@ -6581,10 +6581,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         player?.release()
         player = null
         // Only once the player, and the reads it had waiting, are gone: a read that asked TDLib
-        // again after [stopDownload] would otherwise have asked for the rest of the film unbounded.
-        // That late request is stopped here too.
-        // The same for "Save mobile data": a late read must not ask for the rest of the film.
-        if (letGoOfStreamBounds()) stopDownload()
+        // again after [stopDownload] would otherwise have asked for the rest of the film unbounded,
+        // and went on fetching with nobody watching. Asked again whatever the stream's bounds (it
+        // used to be only for Low storage mode and "Save mobile data"); the byte window refuses
+        // any request once closed as well (TdByteWindow.shut).
+        letGoOfStreamBounds()
+        stopDownload()
         super.onDestroy()
     }
 

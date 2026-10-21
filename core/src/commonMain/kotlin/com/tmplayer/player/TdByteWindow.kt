@@ -134,6 +134,14 @@ class TdByteWindow(private val td: TdlClient) {
     @Volatile
     private var deleting = false
 
+    /**
+     * Up from [close] until the next [watch]: a read still waiting on another thread when the
+     * player let go (Media3's loader, the cast server) gives up instead of asking TDLib again,
+     * which used to send a fresh request for the rest of the film after the player had gone.
+     */
+    @Volatile
+    private var shut = false
+
     /** One roll at a time, however many readers find it due together. */
     private val rollLock = Mutex()
 
@@ -151,6 +159,7 @@ class TdByteWindow(private val td: TdlClient) {
      * update dropped there is a second of stall for no reason.
      */
     fun watch(fileId: Int) {
+        shut = false
         this.fileId = fileId
         lowStorage = LowStorageStreams.isRolling(fileId)
         saveData = !lowStorage && SaveDataStreams.isActive(fileId)
@@ -246,6 +255,7 @@ class TdByteWindow(private val td: TdlClient) {
      * or a different file, and nothing learned about the old window is safe to carry across.
      */
     fun close() {
+        shut = true
         stopWatching()
         closeHandle()
         window = Window.EMPTY
@@ -325,6 +335,7 @@ class TdByteWindow(private val td: TdlClient) {
         var totalAtAsk = downloadedTotal
         var nudges = 0
         while (available == 0L) {
+            if (shut) throw IOException("File $fileId was closed while a read waited")
             val known = window
             // TDLib can take a request, report itself busy, and fill everything but the bytes that
             // were asked for: seen on the jump to an MKV's index in its last half megabyte, where
@@ -435,6 +446,8 @@ class TdByteWindow(private val td: TdlClient) {
      * says nothing a viewer can act on.
      */
     suspend fun requestDownloadFrom(offset: Long, roll: Boolean = false) {
+        // Nothing is asked for a source that has been closed: see [shut].
+        if (shut) throw IOException("File $fileId is closed")
         // In Low storage mode the request is bounded to the window, and one that would leave more
         // than the window on disk deletes the file first: a roll, or a seek far from what is here.
         val bounded = LowStorageStreams.plan(fileId, offset, size, roll)
