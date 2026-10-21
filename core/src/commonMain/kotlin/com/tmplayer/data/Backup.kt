@@ -138,6 +138,7 @@ object Backups {
         "download_before_playing" to Kind.BOOL,
         "downmix_stereo" to Kind.BOOL,
         "dynamic_colour" to Kind.BOOL,
+        "even_volume" to Kind.BOOL,
         "gesture_brightness" to Kind.BOOL,
         "gesture_seek" to Kind.BOOL,
         "gesture_volume" to Kind.BOOL,
