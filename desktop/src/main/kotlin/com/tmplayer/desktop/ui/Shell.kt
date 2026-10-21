@@ -388,10 +388,12 @@ private fun Browse(state: ShellState, player: PlayerContent) {
             com.tmplayer.ui.browse.GlobalSearchViewModel(onSearched = { state.settings.addRecentSearch(it) })
         }
         // What the device already holds is searched as well as what Telegram answers.
-        val resumed by state.settings.continueWatching.collectAsState(initial = emptyList())
-        val downloaded by state.settings.downloadHistory.collectAsState(initial = emptyList())
-        LaunchedEffect(resumed, downloaded) {
-            searchModel.alsoKnown = (resumed + downloaded).map { it.toMediaItem() }
+        // Followed in an effect rather than read here: a video playing saves its place every ten
+        // seconds, and reading the list in the shell recomposed the whole window each time.
+        LaunchedEffect(state.settings, searchModel) {
+            kotlinx.coroutines.flow.combine(state.settings.continueWatching, state.settings.downloadHistory) { resumed, downloaded ->
+                resumed + downloaded
+            }.collect { known -> searchModel.alsoKnown = known.map { it.toMediaItem() } }
         }
         LaunchedEffect(telegramConnected) { if (telegramConnected) searchModel.reconnected() }
         // Resume across devices, when turned on (ResumeSync): in and out once Telegram is reachable.
