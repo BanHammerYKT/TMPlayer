@@ -12,13 +12,13 @@ class VideoSortTest {
 
     private var nextId = 1L
 
-    private fun video(fileName: String, date: Int, size: Long = 0) = MediaItem(
+    private fun video(fileName: String, date: Int, size: Long = 0, duration: Int = 0) = MediaItem(
         chatId = 3,
         messageId = nextId++,
         fileId = nextId.toInt(),
         title = fileName,
         sizeBytes = size,
-        durationSec = 0,
+        durationSec = duration,
         mimeType = "video/mp4",
         thumbnailFileId = 0,
         miniThumbnail = null,
@@ -76,6 +76,23 @@ class VideoSortTest {
     }
 
     @Test
+    fun `longest puts the longest first, a show by its episodes added up, unknown lengths last`() {
+        val long = video("Long Walk (2010).mkv", date = 9, duration = 7200)
+        val short = video("Short Walk (2011).mkv", date = 8, duration = 1800)
+        val unknown = video("Mystery (2012).mkv", date = 7, duration = 0)
+        val epA = video("Walk.Show.S01E01.mkv", date = 6, duration = 3000)
+        val epB = video("Walk.Show.S01E02.mkv", date = 5, duration = 3000)
+        val shelf = SeriesShelf.arrange(listOf(unknown, short, epA, long, epB), emptyMap())
+        val sorted = VideoSorting.sort(shelf, VideoSort.Longest, locale = Locale.ENGLISH).map {
+            when (it) {
+                is ShelfEntry.Show -> "show"
+                is ShelfEntry.File -> it.item.fileName
+            }
+        }
+        assertEquals(listOf("Long Walk (2010).mkv", "show", "Short Walk (2011).mkv", "Mystery (2012).mkv"), sorted)
+    }
+
+    @Test
     fun `unwatched first, then in progress, then watched, ties in chat order`() {
         val progress = mapOf(harbour10.id to Progress.Watched, coast.id to Progress.InProgress, showOld.id to Progress.Watched)
         val sorted = names(VideoSort.Unwatched) { progress[it.id] ?: Progress.Untouched }
@@ -94,6 +111,12 @@ class VideoSortTest {
         for (sort in VideoSort.entries) assertEquals(sort, VideoSort.decode(sort.name))
         assertEquals(VideoSort.Newest, VideoSort.decode("Sideways"))
         assertEquals(VideoSort.Newest, VideoSort.decode(null))
+    }
+
+    @Test
+    fun `by name sorts any rows by their titles, ties in their own order`() {
+        val rows = listOf("the Run 2", "Part 10", "Part 2", "run 2")
+        assertEquals(listOf("Part 2", "Part 10", "the Run 2", "run 2"), VideoSorting.byName(rows, { it }, Locale.ENGLISH))
     }
 
     @Test

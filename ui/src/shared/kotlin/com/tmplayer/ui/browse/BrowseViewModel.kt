@@ -81,6 +81,10 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
         viewModelScope.launch {
             ChatGate.allowed.collect { publish() }
         }
+        // A chat hidden from its menu, or shown again from Settings, leaves or rejoins the list at once.
+        viewModelScope.launch {
+            com.tmplayer.data.HiddenChats.ids.collect { publish() }
+        }
     }
 
     /**
@@ -487,7 +491,7 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
     private fun publish() {
         val everything = chats ?: return
         val allowed = ChatGate.allowed.value
-        val loaded = KidsLock.chats(everything, allowed)
+        val loaded = com.tmplayer.data.HiddenChats.filter(KidsLock.chats(everything, allowed)) { it.id }
         _state.value = when {
             loaded.isNotEmpty() -> UiState.Content(BrowseData(loaded, account))
             // Said plainly, so a child's empty screen is not mistaken for a broken account.
@@ -632,6 +636,15 @@ class MediaListViewModel(
      * Always 0 during a search, which ignores the limits.
      */
     val sizeHidden: StateFlow<Int> = _sizeHidden.asStateFlow()
+
+    private val _selfDestructing = MutableStateFlow(0)
+
+    /**
+     * How many self-destructing videos the pages read so far have left out
+     * ([com.tmplayer.data.ContentProtection]): they can only be opened in Telegram, so the listing
+     * says so in a quiet line rather than leave them missing with no word.
+     */
+    val selfDestructing: StateFlow<Int> = _selfDestructing.asStateFlow()
 
     private val _audioCount = MutableStateFlow(0)
 
@@ -902,6 +915,7 @@ class MediaListViewModel(
         val previousCursors = cursors
         cursors = MediaCursors()
         hiddenBySize = 0
+        _selfDestructing.value = 0
         archives = emptyList()
         val searching = query.isNotBlank()
         if (previous == null) {
@@ -916,6 +930,7 @@ class MediaListViewModel(
             runCatching { firstPage(repository) }
                 .onSuccess { rawPage ->
                     if (!session.isCurrent()) return@onSuccess
+                    _selfDestructing.value += rawPage.hiddenSelfDestructing
                     val page = rawPage.copy(items = marked(keep(rawPage.items)))
                     cursors = page.cursors
                     archives = com.tmplayer.data.Archives.merge(archives, page.archives)
@@ -1232,6 +1247,7 @@ class MediaListViewModel(
         ) {
             runCatching { repository.mediaPage(chatId, cursors, serverQuery, topicId = topicId) }
                 .onSuccess { rawPage ->
+                    _selfDestructing.value += rawPage.hiddenSelfDestructing
                     val page = rawPage.copy(items = marked(keep(rawPage.items)))
                     cursors = page.cursors
                     archives = com.tmplayer.data.Archives.merge(archives, page.archives)

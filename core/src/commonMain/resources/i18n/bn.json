@@ -846,6 +846,7 @@
     "select_videos_detail": "একসঙ্গে কয়েকটি ডাউনলোড করুন",
     "selected": "নির্বাচিত",
     "selected_count": "{count, plural, one {#টি নির্বাচিত} other {#টি নির্বাচিত}}",
+    "self_destructing_hidden": "{count, plural, one {#টি সেলফ-ডিস্ট্রাক্টিং ভিডিও দেখানো হচ্ছে না: Telegram-এ খুলুন।} other {#টি সেলফ-ডিস্ট্রাক্টিং ভিডিও দেখানো হচ্ছে না: Telegram-এ খুলুন।}}",
     "share_failed": "ওই ভিডিও অন্য অ্যাপে দেওয়া যাচ্ছে না।",
     "share_not_here": "ওই ভিডিও এখনও এই ফোনে নেই।",
     "some_fit": "{needed}-এর মধ্যে {taken}টি সারিতে রাখা হয়েছে। {room}",

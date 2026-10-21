@@ -40,4 +40,26 @@ fun rememberToast(): (String) -> Unit {
     }
 }
 
+/**
+ * [rememberToast] with one action on the snackbar, for a change that is easy to make by mistake
+ * (a chat hidden from its menu): Undo, which runs [onAction] when pressed.
+ */
+@Composable
+fun rememberActionToast(): (message: String, action: String, onAction: () -> Unit) -> Unit {
+    val host = LocalToastHost.current
+    return remember(host) {
+        { message: String, action: String, onAction: () -> Unit ->
+            if (host == null) {
+                Logger.i("Toast", message)
+            } else {
+                noticeScope.launch {
+                    host.currentSnackbarData?.dismiss()
+                    val answer = host.showSnackbar(message, actionLabel = action, duration = androidx.compose.material3.SnackbarDuration.Long)
+                    if (answer == androidx.compose.material3.SnackbarResult.ActionPerformed) onAction()
+                }
+            }
+        }
+    }
+}
+
 private val noticeScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)

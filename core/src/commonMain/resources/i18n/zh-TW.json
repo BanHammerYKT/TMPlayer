@@ -846,6 +846,7 @@
     "select_videos_detail": "一次下載多部",
     "selected": "已選取",
     "selected_count": "{count, plural, other {已選取 #}}",
+    "self_destructing_hidden": "{count, plural, other {有 # 部自動銷毀的影片未顯示：請在 Telegram 中開啟。}}",
     "share_failed": "無法將那部影片交給其他應用程式。",
     "share_not_here": "那部影片還不在這支手機上。",
     "some_fit": "已將 {needed} 部中的 {taken} 部加入佇列。{room}",

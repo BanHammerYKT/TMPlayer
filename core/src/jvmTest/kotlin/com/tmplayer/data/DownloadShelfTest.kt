@@ -9,14 +9,14 @@ import java.time.ZoneOffset
 
 class DownloadShelfTest {
 
-    private data class Row(val id: Long, val name: String, val at: Long)
+    private data class Row(val id: Long, val name: String, val at: Long, val size: Long = 1_000)
 
     private fun item(row: Row) = MediaItem(
         chatId = -100L,
         messageId = row.id,
         fileId = row.id.toInt(),
         title = row.name,
-        sizeBytes = 1_000,
+        sizeBytes = row.size,
         durationSec = 1_400,
         mimeType = "",
         thumbnailFileId = 0,
@@ -28,6 +28,38 @@ class DownloadShelfTest {
 
     private fun arrange(vararg rows: Row) =
         DownloadShelf.arrange(rows.toList(), ::item, { "r${it.id}" }, { it.at }, corrections = emptyMap())
+
+    private fun arranged(sort: DownloadShelf.Sort, vararg rows: Row) =
+        DownloadShelf.arrange(rows.toList(), ::item, { "r${it.id}" }, { it.at }, corrections = emptyMap(), sort = sort, locale = java.util.Locale.ENGLISH)
+            .map { if (it is DownloadShelf.Entry.Show) "show" else (it as DownloadShelf.Entry.Single).row.id.toString() }
+
+    private val sortRows = arrayOf(
+        Row(1, "The Zebra Run (2020).mkv", 40, size = 500),
+        Row(2, "Harbour.Notes.S01E01.mkv", 30, size = 700),
+        Row(3, "Anchor Point (2012).mkv", 20, size = 1_000),
+        Row(4, "Harbour.Notes.S01E02.mkv", 10, size = 700),
+    )
+
+    @Test
+    fun `newest is by when each was downloaded, a show by its newest episode`() {
+        assertEquals(listOf("1", "show", "3"), arranged(DownloadShelf.Sort.Newest, *sortRows))
+    }
+
+    @Test
+    fun `name ignores a leading article and puts a show under its title`() {
+        assertEquals(listOf("3", "show", "1"), arranged(DownloadShelf.Sort.Name, *sortRows))
+    }
+
+    @Test
+    fun `largest counts a show by all its episodes`() {
+        assertEquals(listOf("show", "3", "1"), arranged(DownloadShelf.Sort.Largest, *sortRows))
+    }
+
+    @Test
+    fun `a stored order reads back, an unknown one is newest`() {
+        for (sort in DownloadShelf.Sort.entries) assertEquals(sort, DownloadShelf.Sort.decode(sort.name))
+        assertEquals(DownloadShelf.Sort.Newest, DownloadShelf.Sort.decode("Sideways"))
+    }
 
     @Test
     fun `episodes of one show are grouped in watching order`() {

@@ -13,6 +13,21 @@ import java.time.temporal.ChronoUnit
  */
 object DownloadShelf {
 
+    /**
+     * The orders of the Downloads page, remembered once for the page ([SettingsStore.downloadsSort]):
+     * when each was downloaded, by name, or the largest first, for making room.
+     */
+    enum class Sort {
+        Newest,
+        Name,
+        Largest,
+        ;
+
+        companion object {
+            fun decode(name: String?): Sort = entries.firstOrNull { it.name == name } ?: Newest
+        }
+    }
+
     /** One thing in the list: a show with its episodes, or a video on its own. */
     sealed interface Entry<T> {
         val key: String
@@ -51,6 +66,9 @@ object DownloadShelf {
         key: (T) -> String,
         at: (T) -> Long,
         corrections: Map<String, VideoCorrection> = VideoCorrections.current,
+        /** The page's order: a show by its newest episode, its name, or all its episodes' size. */
+        sort: Sort = Sort.Newest,
+        locale: java.util.Locale = com.tmplayer.i18n.L.messages.locale,
     ): List<Entry<T>> {
         class Found(val row: T, val show: String?, val title: String, val season: Int, val episode: Int)
 
@@ -97,7 +115,22 @@ object DownloadShelf {
         }
         entries += joined
         // Stable, so rows downloaded in the same moment keep the order they came in.
-        return entries.sortedByDescending { it.newest }
+        val newest = entries.sortedByDescending { it.newest }
+        return when (sort) {
+            Sort.Newest -> newest
+            Sort.Name -> VideoSorting.byName(newest, { entry ->
+                when (entry) {
+                    is Entry.Show -> entry.title
+                    is Entry.Single -> SeriesShelf.posterTitle(item(entry.row))
+                }
+            }, locale)
+            Sort.Largest -> newest.sortedByDescending { entry ->
+                when (entry) {
+                    is Entry.Show -> entry.episodes.sumOf { item(it).sizeBytes.coerceAtLeast(0) }
+                    is Entry.Single -> item(entry.row).sizeBytes.coerceAtLeast(0)
+                }
+            }
+        }
     }
 }
 
