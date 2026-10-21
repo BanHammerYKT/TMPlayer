@@ -411,7 +411,12 @@ fun DesktopTheme(settings: SettingsStore, content: @Composable () -> Unit) {
     // fills whatever space it is given, so it is the same at every size.
     val scale by rememberUiScale(settings)
     val accent by settings.accent.collectAsState(initial = com.tmplayer.data.Accent.Default)
-    TmMaterialTheme(dark = dark, black = black, accent = accent) { ProvideFocusVisibility { UiScaled(scale, content) } }
+    val customAccent by settings.customAccent.collectAsState(initial = null)
+    val highContrast by settings.highContrast.collectAsState(initial = false)
+    val typeface by settings.typeface.collectAsState(initial = com.tmplayer.data.AppTypeface.Default)
+    TmMaterialTheme(dark = dark, black = black, accent = accent, customAccent = customAccent, highContrast = highContrast, typeface = typeface) {
+        ProvideFocusVisibility { UiScaled(scale, content) }
+    }
 }
 
 /**

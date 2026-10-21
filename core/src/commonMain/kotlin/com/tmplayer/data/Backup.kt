@@ -126,6 +126,8 @@ object Backups {
      */
     val SETTINGS: Map<String, Kind> = mapOf(
         "accent" to Kind.TEXT,
+        "accent_custom" to Kind.LONG,
+        "app_typeface" to Kind.TEXT,
         "autoplay_next" to Kind.BOOL,
         "background_audio" to Kind.BOOL,
         "chat_filter" to Kind.TEXT,
@@ -141,6 +143,7 @@ object Backups {
         "gesture_brightness" to Kind.BOOL,
         "gesture_seek" to Kind.BOOL,
         "gesture_volume" to Kind.BOOL,
+        "high_contrast" to Kind.BOOL,
         "history_tab" to Kind.TEXT,
         "hold_speed" to Kind.FLOAT,
         "language" to Kind.TEXT,
