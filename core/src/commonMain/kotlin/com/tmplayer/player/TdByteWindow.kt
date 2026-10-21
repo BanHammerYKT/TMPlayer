@@ -473,6 +473,22 @@ class TdByteWindow(private val td: TdlClient) {
     }
 
     /**
+     * The request a source makes when it opens at [offset]: [requestDownloadFrom], unless the
+     * bytes there are on the disk already and TDLib is busy filling the file elsewhere. That is the
+     * demuxer's jump to an index (an MKV's Cues, an MP4's moov) that [StreamWarmup] or an earlier
+     * play brought down, and the jump back: re-aiming the download for each cost a round trip
+     * twice before the first frame, for bytes that needed none. The reads are served from the disk
+     * ([side]); a read that runs past them asks for the download as any read does.
+     */
+    suspend fun requestUnlessOnDisk(offset: Long) {
+        if (!lowStorage && downloading && onDiskAt(offset) >= ON_DISK_ENOUGH) {
+            Logger.i(TAG, "File $fileId opened at $offset, on the disk already: download left where it is")
+            return
+        }
+        requestDownloadFrom(offset)
+    }
+
+    /**
      * Rolls the Low storage window on when reading at [target] has nearly reached the end of it:
      * a seek this source makes to itself, to just behind [target], through [requestDownloadFrom],
      * which deletes the file first because keeping it would double what is on disk. Readers that
@@ -538,6 +554,9 @@ class TdByteWindow(private val td: TdlClient) {
     }
 
     companion object {
+        /** What [requestUnlessOnDisk] wants on the disk at an offset before it leaves the download be. */
+        private const val ON_DISK_ENOUGH = 256L * 1024
+
         /** How long a read may wait for its byte before the stream is declared stalled. */
         const val STALL_TIMEOUT_MS = 60_000L
 
