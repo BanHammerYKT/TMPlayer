@@ -335,6 +335,7 @@ class ShellState(
      *   off, if anywhere.
      */
     fun openPlayer(item: MediaItem, startFromBeginning: Boolean) {
+        warmStream(item)
         if (item.versions.size <= 1) {
             nowPlaying = PlayRequest(item, startFromBeginning, chatTitleOf(item.chatId))
             return
@@ -345,6 +346,20 @@ class ShellState(
         Background.scope.launch {
             val picked = runCatching { settings.copyToPlay(item) }.getOrDefault(item)
             withContext(Dispatchers.Main) { nowPlaying = PlayRequest(picked, startFromBeginning, chatTitleOf(picked.chatId)) }
+        }
+    }
+
+    /**
+     * Starts the head and the index of [item]'s stream coming the moment it is asked for
+     * ([com.tmplayer.player.StreamWarmup]), unless it plays from the Downloads folder. Also the
+     * call for a card under the pointer for a moment, or the details pane's Play.
+     */
+    fun warmStream(item: MediaItem) {
+        if (item.isJoined || item.fileId <= 0) return
+        Background.scope.launch {
+            if (com.tmplayer.desktop.DownloadIndex.fileFor(settings, item.chatId, item.messageId) == null) {
+                com.tmplayer.player.StreamWarmup.warm(item)
+            }
         }
     }
 

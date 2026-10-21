@@ -90,6 +90,7 @@ import com.tmplayer.player.TrackPreferences
 import com.tmplayer.player.TrackRules
 import com.tmplayer.player.VideoScale
 import com.tmplayer.platform.Logger
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -464,6 +465,16 @@ fun PlayerScreen(
         nextUpDismissed = false
         nextUpShown = false
         resumedFrom = null
+        // The head and the index on their way while the settings below are read, for a stream
+        // reached any way (the next episode, a reopen) ([com.tmplayer.player.StreamWarmup]).
+        val openStartedAt = System.currentTimeMillis()
+        if (current.fromTelegram && !item.isJoined && item.fileId > 0) {
+            launch {
+                if (com.tmplayer.desktop.DownloadIndex.fileFor(settings, item.chatId, item.messageId) == null) {
+                    com.tmplayer.player.StreamWarmup.warm(item)
+                }
+            }
+        }
         launch {
             // What the file says of itself straight away, for the title; the chat's answer, then
             // the providers' episode names where lookups are on.
@@ -549,6 +560,14 @@ fun PlayerScreen(
             preparing.cancel()
         }
         phase = Phase.Loading(if (start > 0) s.playerResumingFrom(SeekMath.clock(start)) else s.playerOpeningVideo)
+        Logger.i("PlayerStart", "open to media ready ${System.currentTimeMillis() - openStartedAt} ms (file ${item.fileId}, resume $start ms)")
+        launch {
+            // The first moment mpv is playing rather than buffering: the desktop's "first frame".
+            val playing = kotlinx.coroutines.withTimeoutOrNull(120_000) {
+                engine.state.first { it.opened && !it.buffering && it.error == null }
+            }
+            if (playing != null) Logger.i("PlayerStart", "open to playing ${System.currentTimeMillis() - openStartedAt} ms (file ${item.fileId})")
+        }
         engine.open(data, start, prefs)
         val error = engine.state.value.error
         // On a TV the casting panel says what went wrong, with Play here beside it.

@@ -73,6 +73,16 @@ class TdByteWindow(private val td: TdlClient) {
     @Volatile
     private var window = Window.EMPTY
 
+    /**
+     * A stretch away from TDLib's download that is on the disk all the same, as
+     * `getFileDownloadedPrefixSize` confirmed: an MKV's Cues or an MP4's moov that [StreamWarmup]
+     * (or an earlier play) brought down. Read from where it is, without moving the download there
+     * and back, which used to cost a round trip each way before the first frame. Never in Low
+     * storage mode, whose rolls delete what lies outside the window.
+     */
+    @Volatile
+    private var side = Window.EMPTY
+
     /** Whether the whole file is on disk, as of the last update seen. */
     @Volatile
     var completed = false
@@ -185,13 +195,16 @@ class TdByteWindow(private val td: TdlClient) {
         // Likewise an extension, or a change of connection, in "Save mobile data".
         if (saveData && SaveDataStreams.extendDue(fileId, target, size)) return null
         val known = window
-        return DownloadWindow.availableAt(
+        val main = DownloadWindow.availableAt(
             position = target,
             size = size,
             downloadOffset = known.start,
             downloadedPrefixSize = known.end - known.start,
             completed = completed,
-        ).takeIf { it > 0 }
+        )
+        if (main > 0) return main
+        val aside = side
+        return (if (target >= aside.start && target < aside.end) aside.end - target else 0L).takeIf { it > 0 }
     }
 
     /**
@@ -205,9 +218,11 @@ class TdByteWindow(private val td: TdlClient) {
             // one may stand at the path, holes and all. A read that lost that race is sent back
             // to ask again rather than handed zeros.
             val known = window
+            val aside = side
             val fits = when {
                 completed -> (size - position).coerceAtLeast(0)
                 position >= known.start && position < known.end -> known.end - position
+                position >= aside.start && position < aside.end -> aside.end - position
                 else -> 0L
             }
             if (fits <= 0) throw EOFException("Window moved away from $position of file $fileId")
@@ -219,6 +234,7 @@ class TdByteWindow(private val td: TdlClient) {
             // and asks TDLib what is really there instead of trusting a stale boundary.
             closeHandle()
             window = Window.EMPTY
+            side = Window.EMPTY
             completed = false
             throw EOFException("Short read at $position of file $fileId")
         }
@@ -233,7 +249,9 @@ class TdByteWindow(private val td: TdlClient) {
         stopWatching()
         closeHandle()
         window = Window.EMPTY
+        side = Window.EMPTY
         completed = false
+        if (fileId > 0) StreamWarmup.release(fileId)
     }
 
     /** Records what a fresh [TdFile] tells us, so later reads can skip the round-trip. */
@@ -298,6 +316,7 @@ class TdByteWindow(private val td: TdlClient) {
         val file = td.getFile(fileId).valueOrNull ?: throw IOException("File $fileId disappeared")
         var available = available(file, target)
         if (available > 0) return available
+        onDiskAt(target).takeIf { it > 0 }?.let { return it }
 
         // Wall clock, not a count of turns round the loop: a file updating busily without ever
         // reaching the byte being read must still get the full stall timeout.
@@ -367,6 +386,18 @@ class TdByteWindow(private val td: TdlClient) {
         return available
     }
 
+    /**
+     * Bytes at [target] on the disk outside TDLib's current download (see [side]), recorded so the
+     * reads can be served without re-aiming the download; 0 when there are none or it cannot say.
+     */
+    private suspend fun onDiskAt(target: Long): Long {
+        if (lowStorage || localPath == null) return 0
+        val here = td.getFileDownloadedPrefixSize(fileId, target).valueOrNull?.size ?: return 0
+        if (here <= 0) return 0
+        synchronized(this) { side = Window(target, minOf(size, target + here)) }
+        return here
+    }
+
     private fun available(file: TdFile, target: Long): Long {
         absorb(file)
         if (localPath == null) return 0
@@ -412,6 +443,8 @@ class TdByteWindow(private val td: TdlClient) {
         // extended as reading nears its end; nothing is deleted. Low storage mode's own window
         // wins when both apply, which [SaveDataStreams] sees to.
         val saving = if (bounded == null) SaveDataStreams.plan(fileId, offset, size) else null
+        // Any warm-up of this file stops here, and its last request is already out: this one wins.
+        StreamWarmup.claim(fileId)
         val result = td.downloadFile(
             fileId = fileId,
             priority = PLAYBACK_PRIORITY,

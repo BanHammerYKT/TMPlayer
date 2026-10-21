@@ -414,6 +414,25 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun uploadSize(): Long = if (playingQuality != 0 && uploadFileId != 0) uploadSizeBytes else fileSizeBytes
     private var resumeMs = 0L
 
+    /** When the press that opened this video happened, from the intent ([EXTRA_PRESSED_AT]); 0 unknown. */
+    private var pressedAt = 0L
+
+    /** When this player was created, for the timing log when the press is not known. */
+    private var openedAt = 0L
+
+    /** When the latest seek began, for its "seek to ready" log; 0 when none is pending. */
+    private var seekStartedAt = 0L
+
+    /** Logs press (or open) to first frame once per video, for the device pass to compare. */
+    private fun logFirstFrame() {
+        if (openedAt == 0L) return
+        val now = SystemClock.elapsedRealtime()
+        val fromPress = if (pressedAt > 0) "press to first frame ${now - pressedAt} ms, " else ""
+        Log.i(START_TAG, "${fromPress}open to first frame ${now - openedAt} ms (file $fileId, resume $resumeMs ms, ${if (downloadedFile != null) "download" else "stream"})")
+        openedAt = 0L
+        pressedAt = 0L
+    }
+
     /**
      * The A-B repeat marked from the menu, or null. Media3 has no loop of its own between two
      * points, so [loopWatch] looks at the position a few times a second and seeks back to the start
@@ -1001,6 +1020,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The video's own fields, from the intent that opened it or the one [continueUnseen] set. */
     private fun readItem(from: Intent) {
         fileId = from.getIntExtra(EXTRA_FILE_ID, 0)
+        pressedAt = from.getLongExtra(EXTRA_PRESSED_AT, 0L)
+        openedAt = SystemClock.elapsedRealtime()
+        // Read once: a later open of the same intent (a recreate) is not a press.
+        from.removeExtra(EXTRA_PRESSED_AT)
         chatId = from.getLongExtra(EXTRA_CHAT_ID, 0)
         messageId = from.getLongExtra(EXTRA_MESSAGE_ID, 0)
         mediaTitle = from.getStringExtra(EXTRA_TITLE).orEmpty()
@@ -1070,7 +1093,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // lands. Under "download the whole video first" there is no player to seek yet, so
         // [startPlayback] applies the same position as well; whichever arrives second sets it again.
         // A few seconds before the saved point, as Settings has it ([ResumeRewind]).
-        itemScope.launch {
+        val resumeRead = itemScope.launch {
             // Resume across devices, when on: the other devices' places in first, a couple of
             // seconds at most, so a video half watched on the phone opens there on the TV.
             com.tmplayer.data.ResumeSync.pullFor(settings)
@@ -1146,6 +1169,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 }
                 if (!allowedOnThisConnection(availability)) return@launch
                 if (!makeRoomForThisVideo(availability)) return@launch
+                // The head and the index on their way while the settings are read and the player
+                // is built ([StreamWarmup]); a no-op if the press already started it.
+                if (availability != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(fileId, fileSizeBytes)
                 holdFile(fileId)
                 claimTheWatchCache()
                 val streamsLow = boundTheStream(availability)
@@ -1189,6 +1215,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 syncDelays = runCatching { settings.syncDelays(chatId, messageId) }.getOrDefault(SyncDelays())
             }
             subtitleDelayUs = syncDelays.subtitleMs * 1000
+            // The saved position, given a moment more if it is still being read: set before
+            // prepare(), the first request goes to where the video resumes, not to byte 0 and
+            // then a seek away from it.
+            if (resumeRead.isActive) withTimeoutOrNull(RESUME_WAIT_MS) { resumeRead.join() }
             if (!session.isCurrent()) return@launch
             startPlayback(session.client)
         }
@@ -2639,6 +2669,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
 
         override fun onRenderedFirstFrame() {
+            logFirstFrame()
             if (videoBackAskedAt == 0L) return
             Log.i("TMPlayer", "Background audio: picture back in ${SystemClock.elapsedRealtime() - videoBackAskedAt} ms")
             videoBackAskedAt = 0L
@@ -2693,6 +2724,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 // Playing again is the only proof that a recovery worked, so the budget is
                 // refilled here rather than when the retry is issued.
                 Player.STATE_READY -> {
+                    if (seekStartedAt > 0) {
+                        Log.i(START_TAG, "seek to ready ${SystemClock.elapsedRealtime() - seekStartedAt} ms (file $fileId)")
+                        seekStartedAt = 0L
+                    }
                     recoveryAttempts = 0
                     firstFrameReady = true
                     readChapters()
@@ -2729,6 +2764,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             reason: Int,
         ) {
             if (reason != Player.DISCONTINUITY_REASON_SEEK) return
+            seekStartedAt = SystemClock.elapsedRealtime()
             noteSeek(oldPosition.positionMs, newPosition.positionMs)
         }
 
@@ -5351,6 +5387,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                         val label = _episodes.value.nextTag?.label ?: com.tmplayer.data.SeriesShelf.tileTitle(next)
                         if (nextUpCard?.show(label, (until.coerceAtLeast(0) + 999) / 1000) == true) {
                             nextUpShown = true
+                            // Its head and index, so it starts as fast as this one ends.
+                            com.tmplayer.player.StreamWarmup.warm(next)
                             // The card and the pill share a corner; the card is the offer then.
                             hideSkipPill()
                             liftCornerOffers()
@@ -6709,6 +6747,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     companion object {
         private const val EXTRA_FILE_ID = "file_id"
+
+        /** `SystemClock.elapsedRealtime()` when Play was pressed, for the start timing log. */
+        private const val EXTRA_PRESSED_AT = "pressed_at"
+
+        /** The log tag of the start and seek timings. */
+        private const val START_TAG = "PlayerStart"
+
+        /** How long the player waits for a saved position still being read before it starts anyway. */
+        private const val RESUME_WAIT_MS = 400L
         private const val EXTRA_CHAT_ID = "chat_id"
         private const val EXTRA_MESSAGE_ID = "message_id"
         private const val EXTRA_TITLE = "title"
@@ -6742,8 +6789,16 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         private const val BUFFER_MIN_MS = 15_000
         private const val BUFFER_MAX_MS = 50_000
-        private const val BUFFER_PLAYBACK_MS = 2_500
-        private const val BUFFER_REBUFFER_MS = 5_000
+        /**
+         * What has to be buffered before the first frame plays: 1 s, down from Media3's 2.5 s,
+         * since TDLib keeps filling at its own pace whatever the player holds and a stream that
+         * cannot keep a second ahead is rebuffering either way. Device check: a slow line should
+         * start sooner, not stutter more (see the start timing log, PlayerStart).
+         */
+        private const val BUFFER_PLAYBACK_MS = 1_000
+
+        /** After a stall, more than the start asks, so a struggling line does not stall again at once. */
+        private const val BUFFER_REBUFFER_MS = 4_000
         private const val TARGET_BUFFER_BYTES = 20 * 1024 * 1024
 
         /** See the note on the sink in [buildPlayer]: about two seconds of AC-3 bitstream. */
@@ -6943,6 +6998,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 // A film's other copies go with it, for the player's copy button.
                 if (item.versions.size > 1) CopyHandoff.offer(item.versions, mapOf(item.chatId to chatTitle).filterValues { it.isNotBlank() })
                 putExtra(EXTRA_FILE_ID, item.fileId)
+                putExtra(EXTRA_PRESSED_AT, SystemClock.elapsedRealtime())
                 putExtra(EXTRA_SIZE, item.sizeBytes)
                 putExtra(EXTRA_DURATION, item.durationSec)
                 putExtra(EXTRA_CHAT_ID, item.chatId)
