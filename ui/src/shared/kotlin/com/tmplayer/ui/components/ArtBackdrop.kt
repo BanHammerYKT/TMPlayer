@@ -147,9 +147,13 @@ internal fun rememberBackdropArt(source: BackdropSource, drawn: Int): BackdropAr
     peak[0] = maxOf(peak[0], wanted)
     val widest = peak[0]
     var art by remember(source) { mutableStateOf(peek(source, widest)) }
-    LaunchedEffect(source, widest) {
+    // Keyed on the frame being measured too: a frame narrow enough that its width still asks for
+    // [ONLINE_WIDTH] (the details pane) left widest as it was once measured, so the effect that
+    // returned early below never ran again and the frame stayed an empty box.
+    val measured = !decodesFullSize || drawn > 0
+    LaunchedEffect(source, widest, measured) {
         // Not until the frame has been measured, so the first fetch is the size that is drawn.
-        if (decodesFullSize && drawn == 0) return@LaunchedEffect
+        if (!measured) return@LaunchedEffect
         val started = System.nanoTime()
         val wide = source.wideUrl?.let { url ->
             Thumbnails.peekSharp(url, widest, ONLINE_WIDTH, MetaImageSize::atLeast)
