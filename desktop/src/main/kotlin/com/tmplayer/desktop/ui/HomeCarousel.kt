@@ -49,6 +49,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -92,6 +94,8 @@ import com.tmplayer.data.SeriesShelf
 import com.tmplayer.online.MetaConfidence
 import com.tmplayer.online.MetaQuery
 import com.tmplayer.online.OnlineMetadata
+import com.tmplayer.ui.browse.CarouselDots
+import com.tmplayer.ui.browse.FeaturedInfo
 import com.tmplayer.ui.browse.HeroPill
 import com.tmplayer.ui.browse.SeriesWatch
 import com.tmplayer.ui.browse.seriesPlayLabel
@@ -117,8 +121,10 @@ import kotlinx.coroutines.withContext
 /**
  * The featured carousel at the top of Home, the phone's brought to the window: a mix of the newest
  * films, shows and videos in the starred chats and what the viewer is part way through
- * ([rememberFeatured]), one wide page each, the name and Play and Details alone, moving on by
- * itself every [ADVANCE_MS]. It takes Home's title's place: the page has no "Home" heading.
+ * ([rememberFeatured]), one wide page each: the name (its logo where TMDB has one), a line
+ * of facts and the overview ([FeaturedInfo]), Play and Details, with the dots at the foot of the
+ * end ([CarouselDots]), moving on by itself every [ADVANCE_MS]. One picture stands under the
+ * pages and cross-fades as they turn, while the words slide and fade. It takes Home's title's place: the page has no "Home" heading.
  *
  * A window is not a phone, so the words keep to the start, where they read against the picture's
  * fade, and every way a computer has of moving sideways turns the page, one page a time:
@@ -212,9 +218,16 @@ internal fun FeaturedCarousel(
         val self = remember { FocusRequester() }
         val ring = Tone.accent
 
+        // A frame resized under a page (the detail pane opening beside Home) lands back on that
+        // page whole, never part way into the next.
+        var frameWidth by remember { mutableIntStateOf(0) }
+        LaunchedEffect(frameWidth) {
+            if (frameWidth > 0 && !pager.isScrollInProgress && pager.currentPageOffsetFraction != 0f) pager.scrollToPage(pager.currentPage)
+        }
         Box(
             Modifier
                 .fillMaxSize()
+                .onSizeChanged { frameWidth = it.width }
                 .hoverable(hover)
                 .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { event ->
                     if (event.changes.any { it.type == PointerType.Touch }) touchedAt = System.nanoTime()
@@ -265,6 +278,18 @@ internal fun FeaturedCarousel(
                     }
                 },
         ) {
+            // One picture for the carousel, cross-faded from page to page under the words, rather
+            // than a picture on every page sliding with it: a sliding page showed its picture's
+            // end as a hard edge across the frame and the next page's start peeking in beside it.
+            val up = latest.getOrNull(pager.currentPage)
+            androidx.compose.animation.Crossfade(
+                targetState = up,
+                animationSpec = Motion.standard(Motion.Slow),
+                modifier = Modifier.fillMaxSize(),
+                label = "featuredBackdrop",
+            ) { shown ->
+                if (shown != null) FeaturedBackdrop(shown, chatTitle)
+            }
             HorizontalPager(
                 state = pager,
                 modifier = Modifier.fillMaxSize(),
@@ -272,8 +297,23 @@ internal fun FeaturedCarousel(
                 key = { latest.getOrNull(it)?.key ?: it },
             ) { page ->
                 val pick = latest.getOrNull(page) ?: return@HorizontalPager
-                FeaturedPage(pick, height, side, watch, chatTitle, onPlay, onDetails, current = page == pager.currentPage)
+                // The words fade as they slide, so a page half turned is never two pages of words.
+                val away = { abs((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(0f, 1f) }
+                FeaturedPage(
+                    pick, side, watch, chatTitle, onPlay, onDetails,
+                    current = page == pager.currentPage,
+                    modifier = Modifier.graphicsLayer { alpha = 1f - away() },
+                )
             }
+            // Which page is up, at the foot of the end, level with Play; a click goes to that page.
+            CarouselDots(
+                count = count,
+                current = pager.currentPage,
+                onPick = { page -> go(page) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = side, bottom = PAGE_FOOT + (com.tmplayer.ui.browse.HERO_PILL_HEIGHT - DOTS_HEIGHT) / 2),
+            )
             if (count > 1) {
                 // Pointer and touch only: the keyboard turns the pages with the arrow keys.
                 val arrows = hovered || focusedWithin || touchShown
@@ -326,25 +366,39 @@ private fun playTarget(pick: FeaturedPick, watch: SeriesWatch): MediaItem {
     return watch.pick(episode, progress)
 }
 
-/** One page: the picture under its fades, the name, Play and Details. The facts are only read out. */
+/**
+ * The picture of the page up, at the end, melting into the page at its start, its foot and its
+ * top: the words at the start stand on the page, and the window's buttons over the top fade.
+ */
+@Composable
+private fun FeaturedBackdrop(pick: FeaturedPick, chatTitle: (Long) -> String) {
+    val item = pick.item
+    val meta = rememberMeta(item, showOnly = pick.series != null)
+    val cover = rememberCover(item, chatTitle(item.chatId))
+    val source = remember(item, meta?.wideUrl, cover) { BackdropSource(item.miniThumbnail, item.thumbnailFileId, cover, meta?.wideUrl) }
+    EdgeBackdrop(source, Modifier.fillMaxSize(), topFade = TOP_FADE, onPictured = com.tmplayer.ui.browse.HomeFirstPaint::markReady)
+}
+
+/**
+ * One page's words over the carousel's picture: the name (or its logo), the facts and the
+ * overview ([FeaturedInfo]), Play and Details.
+ */
 @Composable
 private fun FeaturedPage(
     pick: FeaturedPick,
-    height: Dp,
     side: Dp,
     watch: SeriesWatch,
     chatTitle: (Long) -> String,
     onPlay: (MediaItem) -> Unit,
     onDetails: (FeaturedPick) -> Unit,
     current: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val s = LocalStrings.current
     val item = pick.item
     val series = pick.series
     val chat = chatTitle(item.chatId)
     val meta = rememberMeta(item, showOnly = series != null)
-    val cover = rememberCover(item, chat)
-    val source = remember(item, meta?.wideUrl, cover) { BackdropSource(item.miniThumbnail, item.thumbnailFileId, cover, meta?.wideUrl) }
     val title = remember(pick) { series?.title?.ifBlank { null } ?: SeriesShelf.tileTitle(item) }
     val facts = remember(pick, chat, s) { featuredFacts(pick, title, chat, s) }
     val showProgress = remember(series, watch) { series?.let { watch.progress(it) } }
@@ -358,13 +412,10 @@ private fun FeaturedPage(
         s.commonPlay
     }
     Box(
-        Modifier
+        modifier
             .fillMaxSize()
             .semantics { contentDescription = listOf(title, facts).filter { it.isNotBlank() }.joinToString(". ") },
     ) {
-        // The picture at the end, melting into the page at its start and foot: the words at the
-        // start stand on the page, and the window's buttons on a glow of its colour.
-        EdgeBackdrop(source, Modifier.fillMaxSize(), cornerShade = TOP_SCRIM, onPictured = com.tmplayer.ui.browse.HomeFirstPaint::markReady)
         Column(
             Modifier
                 .align(Alignment.BottomStart)
@@ -384,7 +435,8 @@ private fun FeaturedPage(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.height(2.dp))
+            FeaturedInfo(pick, meta, Modifier.widthIn(max = INFO_WIDTH), overviewLines = 3)
+            Spacer(Modifier.height(6.dp))
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -514,7 +566,18 @@ private const val SWIPE_THRESHOLD = 0.5f
 /** A gap this long in the scroll events ends a gesture, its momentum included. */
 private const val SWIPE_QUIET_MS = 280L
 private val MIN_HEIGHT = 340.dp
-private val TOP_SCRIM = 96.dp
+/**
+ * How far down the picture fades into the page from the top, where a window's buttons stand: a
+ * band across the whole width rather than the glow in the corner it replaced, which showed as a
+ * pale blot on the picture in the light theme.
+ */
+private val TOP_FADE = 48.dp
+
+/** The facts and the overview: a comfortable measure for three lines. */
+private val INFO_WIDTH = 560.dp
+
+/** The row of dots' own height: a 6 dp mark with its 8 dp target above and below. */
+private val DOTS_HEIGHT = 22.dp
 private val WORDS_WIDTH = 640.dp
 
 /** Below Play, the foot of a page's words and buttons. */

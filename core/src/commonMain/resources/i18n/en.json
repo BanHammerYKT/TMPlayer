@@ -945,7 +945,9 @@
   "home": {
     "channel_recent": "Recently added",
     "favourites_hint": "{form, select, tv {Add chats to your favourites and their videos show here, a row for each. Hold OK on any chat in the list and pick Add to favourites.} other {Add chats to your favourites and their videos show here, a row for each. Press and hold any chat in the list and pick Add to favourites.}}",
+    "featured_film": "Film",
     "featured_page": "Page {index} of {count}",
+    "featured_series": "Series",
     "first_body": "Forward any video to Saved Messages in Telegram, then open Saved Messages here to play it.",
     "first_more": "Star a chat to give it a row here. Videos you start wait at the top.",
     "first_open_saved": "Open Saved Messages",

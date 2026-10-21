@@ -39,15 +39,15 @@ import com.tmplayer.ui.theme.Scrims
 import com.tmplayer.ui.theme.Tone
 
 /**
- * A Continue watching card's art: the picture (or the generated cover), the tile's foot fade,
- * which episode or part in small type and the name under it, written on the art at the bottom
- * start; how long is left in a chip at the top end; and a pill of progress across the foot.
+ * A Continue watching card's art: the picture (or the generated cover), the tile's foot fade, how
+ * long is left in a chip at the top end, and a pill of progress across the foot. The name is not
+ * on the art: the card writes it under the picture ([continueCardTitle]), above its facts line, so
+ * it is never there twice.
  */
 @Composable
 fun ContinueCardArt(record: ResumeRecord, item: MediaItem, modifier: Modifier = Modifier) {
     val s = LocalStrings.current
     val cover = rememberCover(item)
-    val words = remember(item) { ContinueWords.of(item, s) }
     Box(modifier) {
         OnlineArt(item, Modifier.fillMaxSize()) {
             MediaArt(item.miniThumbnail, item.thumbnailFileId, Modifier.fillMaxSize()) {
@@ -61,33 +61,26 @@ fun ContinueCardArt(record: ResumeRecord, item: MediaItem, modifier: Modifier = 
                 Modifier.align(Alignment.TopEnd).padding(TileBadgeInset),
             )
         }
-        Column(
+        PillProgress(
+            record.fraction,
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
-        ) {
-            words.label?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = Tone.onArtMuted,
-                    maxLines = 1,
-                )
-            }
-            Text(
-                words.title,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = Tone.onArt,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            PillProgress(record.fraction, Modifier.padding(top = 8.dp))
-        }
+        )
     }
 }
 
-/** What a continue card writes on its art: "S1 E3", "Part 4" or nothing, then the name. */
+/**
+ * The name a Continue watching card writes under its picture: "S1 E3  ·  Harbour Notes" for an
+ * episode, "Part 4  ·  Small shelf" for a lesson, the film's or the video's name otherwise.
+ */
+fun continueCardTitle(item: MediaItem, s: Messages): String {
+    val words = ContinueWords.of(item, s)
+    return listOfNotNull(words.label, words.title.ifBlank { null }).joinToString("  ·  ")
+}
+
+/** What a continue card says of its video: "S1 E3", "Part 4" or nothing, then the name. */
 internal class ContinueWords(val label: String?, val title: String) {
     companion object {
         fun of(item: MediaItem, s: Messages): ContinueWords {

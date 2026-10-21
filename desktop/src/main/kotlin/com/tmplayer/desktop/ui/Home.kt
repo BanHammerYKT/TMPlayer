@@ -78,6 +78,7 @@ import com.tmplayer.data.WatchLaterRecord
 import com.tmplayer.ui.browse.BrowseSection
 import com.tmplayer.ui.browse.BrowseTab
 import com.tmplayer.ui.browse.ChatListViewModel
+import com.tmplayer.ui.browse.continueCardTitle
 import com.tmplayer.ui.browse.ContinueCardArt
 import com.tmplayer.ui.browse.FirstVideoCard
 import com.tmplayer.ui.browse.HomeViewModel
@@ -500,6 +501,7 @@ private fun ContinueCell(
     LaunchedEffect(key) { state.noteChatTitle(record.chatId, record.chatTitle) }
     val item = art[key] ?: remember(record) { record.toMediaItem() }
     val chatTitle = record.chatTitle.ifEmpty { titles[record.chatId].orEmpty() }
+    val s = LocalStrings.current
     Poster(
         state = state,
         nav = null,
@@ -509,7 +511,8 @@ private fun ContinueCell(
         // The card draws its own pill of progress, under the name.
         progress = null,
         art = { OnHome { ContinueCardArt(record, item, Modifier.fillMaxSize()) } },
-        titleBelow = false,
+        // The name under the picture, then Telegram's facts; none on the picture.
+        titleText = androidx.compose.runtime.remember(item, s) { continueCardTitle(item, s) },
         // Where it came from and what the file is: Telegram's facts.
         subtitle = telegramFacts(chatTitle, item),
         onDetails = { refocus ->
