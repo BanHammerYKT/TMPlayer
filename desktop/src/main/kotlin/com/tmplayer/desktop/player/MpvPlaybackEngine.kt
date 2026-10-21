@@ -103,6 +103,16 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
             h.option("sub-font-size", SubtitleStyle().size.mpvFontSize.toString())
             h.option("sub-border-size", "2.5")
             h.option("msg-level", "all=warn")
+            // A read ahead worth the name. mpv's cache is "auto", which means on for a network
+            // stream only, and a Telegram stream reaches it as a plain seekable input, so it read
+            // about a second ahead and every dip in the line showed. Thirty seconds, in memory
+            // sized by the machine's, with a little kept behind for a jump back, and a stall
+            // waits only a second of cache before it plays on.
+            h.option("cache", "yes")
+            h.option("demuxer-readahead-secs", "30")
+            h.option("demuxer-max-bytes", "${demuxerMaxMiB()}MiB")
+            h.option("demuxer-max-back-bytes", "${BACK_CACHE_MIB}MiB")
+            h.option("cache-pause-wait", "1")
         })
         watch()
     }
@@ -114,8 +124,17 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
             }
         }
         scope.launch {
+            // mediamp says the position on every video frame, and each copy into the state used
+            // to recompose the whole player screen at the frame rate. About four a second reach
+            // it now, which is all the clock and the bar can show; [poll] brings the last one in
+            // once the picture stops, so a paused position is exact.
+            var lastAt = 0L
             player.currentPositionMillis.collect { ms ->
-                if (seekTarget == null) _state.update { it.copy(positionMs = ms) }
+                if (seekTarget != null) return@collect
+                val now = System.currentTimeMillis()
+                if (now - lastAt < POSITION_EVERY_MS) return@collect
+                lastAt = now
+                _state.update { it.copy(positionMs = ms) }
             }
         }
         scope.launch {
@@ -163,8 +182,15 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
         if (target != null && System.currentTimeMillis() - seekIssuedAt > SEEK_SETTLE_MS && seeking == false && pausedForCache != true) {
             landSeek(null)
         }
+        // The position the throttle in [watch] may have left behind, once the picture has stopped.
+        val stillAt = if (seekTarget == null && !player.state.value.playWhenReady && !_state.value.ended) {
+            player.currentPositionMillis.value.takeIf { it > 0 }
+        } else {
+            null
+        }
         _state.update {
             it.copy(
+                positionMs = stillAt ?: it.positionMs,
                 bufferedMs = cacheEnd?.let { s -> (s * 1000).toLong() } ?: it.bufferedMs,
                 durationMs = duration?.takeIf { d -> d > 0 }?.let { d -> (d * 1000).toLong() } ?: it.durationMs,
                 buffering = pausedForCache == true || it.seekPending || player.state.value.isBuffering,
@@ -721,6 +747,28 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
         const val POLL_MS = 250L
         const val TRACK_POLL_EVERY = 8
         const val SEEK_SETTLE_MS = 600L
+
+        /** What the demuxer keeps behind the position, for a jump back of a few seconds. */
+        const val BACK_CACHE_MIB = 48
+
+        /** How often the position reaches the state while playing: about four times a second. */
+        const val POSITION_EVERY_MS = 250L
+
+        /**
+         * The demuxer's read ahead, by the machine's memory: 128 MiB under 8 GB, 256 MiB under
+         * 16 GB, 512 MiB above, enough for the thirty seconds of a high rate remux. It is mpv's
+         * own memory, outside the JVM's heap. The machine's memory is taken as four times the
+         * heap the JVM may grow to, its default share of it with no -Xmx set (none is): the
+         * runtime image leaves java.management out, which would say it directly.
+         */
+        fun demuxerMaxMiB(): Int {
+            val gib = Runtime.getRuntime().maxMemory() * 4 / (1024L * 1024 * 1024)
+            return when {
+                gib >= 15 -> 512
+                gib >= 7 -> 256
+                else -> 128
+            }
+        }
 
         /** The subtitle box: black at 70 %, dark enough to read on snow, light enough to see through. */
         const val BOX_COLOR = "#B3000000"
