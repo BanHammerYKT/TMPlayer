@@ -1827,3 +1827,25 @@ var tmT = (function () {
 
   window.addEventListener('hashchange', function () { select(location.hash.slice(1), false); });
 })();
+
+/* The info button beside "Support TMPlayer" is a <details> shown as a popover: it opens and
+   closes on its own, and this closes it on a click elsewhere or on Escape, like the language
+   picker. */
+(function () {
+  var tips = document.querySelectorAll('.support-why');
+  if (!tips.length) { return; }
+  document.addEventListener('click', function (event) {
+    Array.prototype.forEach.call(tips, function (tip) {
+      if (tip.open && !tip.contains(event.target)) { tip.open = false; }
+    });
+  });
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') { return; }
+    Array.prototype.forEach.call(tips, function (tip) {
+      if (!tip.open) { return; }
+      tip.open = false;
+      var summary = tip.querySelector('summary');
+      if (summary) { summary.focus(); }
+    });
+  });
+})();
