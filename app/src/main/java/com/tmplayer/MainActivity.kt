@@ -1811,6 +1811,7 @@ private fun Root() {
                     onHomeArtWanted = homeViewModel::requestArt,
                     onHomeLaterArtWanted = homeViewModel::requestArt,
                     onPlayMedia = { item, chatTitle -> play(item, chatTitle = chatTitle) },
+                    homeRefreshing = homeViewModel.refreshing.collectAsStateWithLifecycle().value,
                     onRefreshHome = {
                         homeViewModel.refreshInPlace()
                         chatsViewModel.refreshUnlessRateLimited()

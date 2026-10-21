@@ -293,6 +293,8 @@ internal fun BrowseScreen(
     /** Plays a video from one of Home's rows; the second argument is its chat's name. */
     onPlayMedia: (MediaItem, String) -> Unit = { _, _ -> },
     onRefreshHome: () -> Unit = {},
+    /** True while Home's rows are being fetched again in place: the phone's pull spinner stays up. */
+    homeRefreshing: Boolean = false,
     /** "Mark as watched" (true) or back (false) from a detail panel opened here; the third is the chat's name. */
     onSetMediaWatched: (MediaItem, String, Boolean) -> Unit = { _, _, _ -> },
     /** One line for the viewer, such as what a Download from a detail panel did. */
@@ -764,6 +766,7 @@ internal fun BrowseScreen(
                     else -> null
                 }
             },
+            refreshingOf = { page -> page.isHome && homeRefreshing },
             tab = tab,
             account = (state as? UiState.Content)?.value?.account ?: account,
             pane = pane,

@@ -322,8 +322,9 @@ class HomeViewModel(
      */
     fun refreshInPlace() {
         refreshedAt = (System.nanoTime() / 1_000_000)
-        val chats = _loaded.value.keys.toList()
-        if (chats.isEmpty() && _recent.value == null) return
+        // Every chat with a row, the ones still on their way and the ones that failed included.
+        val chats = (_loaded.value.keys + asked.filter { it.startsWith("chat:") }.mapNotNull { it.removePrefix("chat:").toLongOrNull() } +
+            synchronized(failedChats) { failedChats.toList() }).distinct()
         _refreshing.value = true
         chats.forEach { chatId ->
             asked -= "chat:$chatId"

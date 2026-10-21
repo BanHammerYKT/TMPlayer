@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.withFrameNanos
@@ -91,6 +92,8 @@ internal fun PhoneBrowse(
      * nothing to fetch again. A pull, not a button: a lone floating Refresh reads like a mistake.
      */
     refreshOf: (BrowseSection) -> (() -> Unit)? = { null },
+    /** Whether that refresh is still fetching, so the spinner stays until it is done. */
+    refreshingOf: (BrowseSection) -> Boolean = { false },
     countOf: (BrowseSection) -> Int,
     actions: (@Composable RowScope.() -> Unit)?,
     sections: List<BrowseSection>,
@@ -282,6 +285,7 @@ internal fun PhoneBrowse(
                     section = section,
                     count = if (section.onChatsPage) 0 else countOf(section),
                     refresh = refreshOf(section),
+                    refreshing = refreshingOf(section),
                     pane = pane,
                 )
             }
@@ -426,6 +430,8 @@ private fun PhonePageFrame(
     section: BrowseSection,
     count: Int,
     refresh: (() -> Unit)?,
+    /** Whether [refresh] is still fetching. */
+    refreshing: Boolean = false,
     pane: @Composable (BrowseSection) -> Unit,
 ) {
     val s = LocalStrings.current
@@ -478,9 +484,15 @@ private fun PhonePageFrame(
                 // TDLib answers through the list's own flow, so the spinner is a short
                 // acknowledgement rather than a wait on the fetch itself.
                 var pulling by remember { mutableStateOf(false) }
+                // Home says when its rows are back ([refreshingOf]): the spinner stays until then,
+                // or for the short acknowledgement at least, and at most [PULL_HOLD_MS].
+                val busy by androidx.compose.runtime.rememberUpdatedState(refreshing)
                 LaunchedEffect(pulling) {
                     if (pulling) {
                         kotlinx.coroutines.delay(PULL_ACK_MS)
+                        kotlinx.coroutines.withTimeoutOrNull(PULL_HOLD_MS) {
+                            androidx.compose.runtime.snapshotFlow { busy }.first { done -> !done }
+                        }
                         pulling = false
                     }
                 }
@@ -523,3 +535,6 @@ private const val SLIDE_PART = 12
 
 /** How long the pull's spinner stays after a pull, as the acknowledgement of it. */
 private const val PULL_ACK_MS = 900L
+
+/** The longest the spinner waits on a refresh that says it is still fetching. */
+private const val PULL_HOLD_MS = 8_000L
