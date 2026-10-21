@@ -42,6 +42,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -981,12 +983,24 @@ private fun PopoverRow(
     onClick: () -> Unit,
 ) {
     val press = remember { MutableInteractionSource() }
+    // A held or keyboard-focused row fills, as the desktop's popover rows do, so a press is seen
+    // under the thumb and not only in the ripple round it.
+    val pressed by press.collectIsPressedAsState()
+    val focused by press.collectIsFocusedAsState()
+    val fill by androidx.compose.animation.animateColorAsState(
+        if (pressed || focused) Tone.surfaceHigh else Color.Transparent,
+        com.tmplayer.ui.theme.Motion.standard(com.tmplayer.ui.theme.Motion.Fast),
+        label = "popoverRowFill",
+    )
     Row(
         modifier
             .fillMaxWidth()
             .height(POPOVER_ROW)
+            .padding(horizontal = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(fill)
             .clickable(interactionSource = press, indication = ripple(), role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

@@ -1620,15 +1620,6 @@ private fun Root() {
         // Back from Settings to Downloads puts the remote back on the bar's picture, which opened it.
         var tvBarHold by remember { mutableStateOf(0) }
         var tvBarFocused by remember { mutableStateOf(false) }
-        // Back on such a page: to the bar first, then from the bar to Home, the remote kept on the bar.
-        val tvBarBack: () -> Unit = {
-            if (tvBarFocused) {
-                railReturn = com.tmplayer.ui.browse.RailReturn.Settings
-                browseTo(BrowseSection.of(BrowseTab.Home))
-            } else {
-                runCatching { tvBarFocus.requestFocus() }
-            }
-        }
         val screens: @Composable (Screen) -> Unit = screens@{ current ->
         when (current) {
             is Screen.Chats -> {
@@ -1833,7 +1824,19 @@ private fun Root() {
                     if (downloadsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Downloads
                     screen = downloadsCameFrom
                 }
-                BackHandler(onBack = { if (tvBarShown) tvBarBack() else leaveDownloads() })
+                // On a television one Back leaves too, the remote landing on the account's picture
+                // whose menu opened Downloads, as Back from Settings does: going by way of the bar
+                // took two presses (2026-10-21).
+                BackHandler(
+                    onBack = {
+                        if (tvBarShown) {
+                            if (downloadsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Profile
+                            screen = downloadsCameFrom
+                        } else {
+                            leaveDownloads()
+                        }
+                    },
+                )
                 // Keyed on the ask, so a second "Not enough space" while the page is up opens the
                 // sheet again rather than finding it already spent.
                 key(downloadsFreeUp) {
