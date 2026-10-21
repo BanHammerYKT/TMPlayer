@@ -37,6 +37,17 @@ interface StreamBytes {
      */
     suspend fun askAgain(position: Long) = Unit
 
+    /**
+     * Reads up to [length] bytes at [position] only if they are on the disk already, wherever the
+     * download is: 0 when they are not. Never moves the download, never waits on the network: for
+     * the scrub preview's second decoder ([DiskOnlyInput]), which must not take the playing
+     * video's bandwidth or move its range.
+     */
+    suspend fun readOnDisk(position: Long, buffer: ByteArray, offset: Int, length: Int): Int {
+        val here = cachedAvailable(position) ?: return 0
+        return read(position, buffer, offset, minOf(length.toLong(), here).toInt())
+    }
+
     /** Stops listening. Reads after this are not expected. */
     fun close()
 }

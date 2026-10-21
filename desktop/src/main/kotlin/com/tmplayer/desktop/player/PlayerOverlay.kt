@@ -771,7 +771,9 @@ private fun TimeBar(
             val at = SeekMath.timeAt(labelX, width, duration)
             // Telegram's storyboard tile for the moment under the pointer (CP80), over the time.
             val board = LocalStoryboard.current
-            if (board != null) {
+            // Without a storyboard, the video's own frames, where that part is on the disk.
+            val frames = LocalFrameSource.current
+            if (board != null || frames != null) {
                 val half = TIP_WIDTH / 2
                 Box(
                     Modifier.align(Alignment.CenterStart)
@@ -781,7 +783,7 @@ private fun TimeBar(
                             IntOffset(x, -(48.dp.roundToPx() + (TIP_WIDTH * 9 / 16).roundToPx()))
                         },
                 ) {
-                    StoryboardTip(board, at)
+                    if (board != null) StoryboardTip(board, at) else if (frames != null) FrameTip(frames, at)
                 }
             }
             Box(

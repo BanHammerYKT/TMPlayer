@@ -49,6 +49,8 @@ class TdMediaData(
 
     override suspend fun createInput(coroutineContext: CoroutineContext): SeekableInput {
         if (closed.get()) throw IOException("Media closed")
+        // The scrub preview's own decoder reads only what is on the disk ([PreviewReads]).
+        if (PreviewReads.active.get() > 0) return DiskOnlyInput(bytes)
         return StreamInput(bytes, coroutineContext[Job], prefetchTail)
     }
 
@@ -82,6 +84,54 @@ object TailPrefetch {
         val mime = mimeType.lowercase()
         return name.endsWith(".mkv") || name.endsWith(".webm") || name.endsWith(".mka") ||
             "matroska" in mime || "webm" in mime
+    }
+}
+
+/**
+ * Up while the engine asks mediamp's frame preview for a picture: an input made then is the preview
+ * decoder's (mediamp makes it lazily inside that call), and [TdMediaData] hands it a
+ * [DiskOnlyInput] instead of a reader that would move the playing video's download. The playing
+ * video's own input is made inside the engine's open, never inside a preview call.
+ */
+object PreviewReads {
+    val active = java.util.concurrent.atomic.AtomicInteger()
+}
+
+/**
+ * A read of the file for the scrub preview: only bytes already on the disk, nothing asked of
+ * TDLib's download. A part of the video not here yet fails at once, and the preview has no picture
+ * for that moment rather than a wait or a stolen download.
+ */
+class DiskOnlyInput(private val bytes: StreamBytes) : SeekableInput {
+    @Volatile
+    private var pos = 0L
+
+    @Volatile
+    private var closed = false
+
+    override val position: Long get() = pos
+    override val size: Long get() = bytes.size
+    override val bytesRemaining: Long get() = (bytes.size - pos).coerceAtLeast(0)
+
+    override fun seekTo(position: Long) {
+        if (position < 0) throw IOException("Negative seek $position")
+        if (closed) throw IOException("Input closed")
+        pos = position
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (closed) throw IOException("Input closed")
+        if (length == 0) return 0
+        if (pos >= bytes.size) return -1
+        val n = runBlocking { bytes.readOnDisk(pos, buffer, offset, length) }
+        if (n < 0) return -1
+        if (n == 0) throw IOException("Not on the disk yet at $pos")
+        pos += n
+        return n
+    }
+
+    override fun close() {
+        closed = true
     }
 }
 

@@ -104,6 +104,53 @@ internal fun StoryboardTip(board: DesktopStoryboard, positionMs: Long, modifier:
     }
 }
 
+/**
+ * The video's own frame at [positionMs] for the hover, from [frames] (the engine's second decoder,
+ * [PlaybackEngine.previewFrame]), where there is no storyboard. Asked once per ten seconds of the
+ * video, after the pointer has rested a moment, and kept; the last picture stays up while the
+ * next is decoded, and none shows where that part of the video is not on the disk yet.
+ */
+@Composable
+internal fun FrameTip(frames: FrameSource, positionMs: Long, modifier: Modifier = Modifier) {
+    val slot = positionMs / FRAME_STEP_MS
+    val shown by produceState<ImageBitmap?>(frames.cached(slot), frames, slot) {
+        frames.cached(slot)?.let { value = it; return@produceState }
+        kotlinx.coroutines.delay(FRAME_REST_MS)
+        frames.frameAt(slot)?.let { value = it }
+    }
+    val image = shown ?: return
+    val shape = RoundedCornerShape(6.dp)
+    val height = TIP_WIDTH * image.height / image.width.coerceAtLeast(1)
+    Canvas(
+        modifier
+            .size(TIP_WIDTH, height)
+            .clip(shape)
+            .border(1.5.dp, Color.White.copy(alpha = 0.85f), shape),
+    ) {
+        drawImage(image, dstSize = IntSize(size.width.toInt(), size.height.toInt()))
+    }
+}
+
+/** The hover's frames for one video, by ten second slot, kept in a small cache. */
+internal class FrameSource(private val fetch: suspend (Long) -> ImageBitmap?) {
+    private val cache = object : LinkedHashMap<Long, ImageBitmap>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ImageBitmap>?) = size > FRAME_CACHE
+    }
+    private val gate = Mutex()
+
+    fun cached(slot: Long): ImageBitmap? = synchronized(cache) { cache[slot] }
+
+    suspend fun frameAt(slot: Long): ImageBitmap? = gate.withLock {
+        cached(slot) ?: fetch(slot * FRAME_STEP_MS + FRAME_STEP_MS / 2)?.also { synchronized(cache) { cache[slot] = it } }
+    }
+}
+
+internal val LocalFrameSource = staticCompositionLocalOf<FrameSource?> { null }
+
+private const val FRAME_STEP_MS = 10_000L
+private const val FRAME_REST_MS = 120L
+private const val FRAME_CACHE = 48
+
 /** How wide the hover's picture is drawn. */
 internal val TIP_WIDTH = 160.dp
 
