@@ -675,6 +675,20 @@ class OnlineMetadata(
         }
     }
 
+    /**
+     * Opens the connections to TMDB's API and picture hosts ahead of the first lookup, while the
+     * app is still starting and Telegram connecting: the first secure connection of a process
+     * (the TLS set up, the certificates read, the handshake) took over a second, and every poster
+     * on Home waited behind it (2026-10-21). One small request to each host, whose answer does not
+     * matter; the connection stays in the keep-alive pool for the lookups. Nothing while off.
+     */
+    suspend fun warmUp() {
+        if (!store.now.enabled) return
+        listOf("https://api.themoviedb.org/3/", "https://image.tmdb.org/t/p/w92/").forEach { url ->
+            runCatching { http.send(HttpRequest("HEAD", url, mapOf("User-Agent" to userAgent))) }
+        }
+    }
+
     /** Whether the picture at [url] is on this device already: a screen then shows it sharp at once, with no small copy first. */
     fun hasImage(url: String): Boolean = cache.image(url) != null
 

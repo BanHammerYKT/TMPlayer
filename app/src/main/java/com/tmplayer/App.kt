@@ -129,7 +129,7 @@ class App : Application() {
             store = MetadataStore(java.io.File(filesDir, "online/metadata.properties")),
             cache = MetadataCache(java.io.File(cacheDir, "online-metadata")),
             appVersion = BuildConfig.VERSION_NAME,
-        ).also { metadata -> backgroundScope.launch { runCatching { metadata.cache.prune() } } }
+        ).also { metadata -> backgroundScope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }
         Thumbnails.connectivity = NetworkMonitor
         NetworkMonitor.start(this)
         // TDLib takes a moment to open its database; starting here means the login screen is

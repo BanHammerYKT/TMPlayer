@@ -434,4 +434,4 @@ internal fun desktopOnlineMetadata(): OnlineMetadata = OnlineMetadata(
     store = MetadataStore(java.io.File(DesktopPaths.dataDir, "online-metadata.properties")),
     cache = MetadataCache(java.io.File(DesktopPaths.cacheDir, "online-metadata")),
     appVersion = BuildInfo.VERSION,
-).also { metadata -> Background.scope.launch { runCatching { metadata.cache.prune() } } }
+).also { metadata -> Background.scope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }

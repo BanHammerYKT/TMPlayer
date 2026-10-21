@@ -34,14 +34,31 @@ class OnlineSpeedLiveTest {
     )
 
     @Test
-    fun aScreenfulOfPostersFromCold(): Unit = runBlocking {
+    fun aScreenfulOfPostersFromCold() = measure(warm = false)
+
+    /** As the app starts: the connections opened while Telegram connects ([OnlineMetadata.warmUp]). */
+    @Test
+    fun aScreenfulOfPostersAfterTheStartWarmUp() = measure(warm = true)
+
+    private fun measure(warm: Boolean): Unit = runBlocking {
         assumeTrue(live)
         val key = tmdbKey()
         assumeTrue("no TMDB key", key.isNotBlank())
         val dir = Files.createTempDirectory("tm-meta-speed").toFile()
         val store = MetadataStore(File(dir, "m.properties")).apply { update { it.copy(enabled = true) } }
-        val online = OnlineMetadata(key, store, MetadataCache(File(dir, "cache")), "speed-test", language = { "en" })
         val start = System.nanoTime()
+        val traced = HttpTransport { request ->
+            val sent = System.nanoTime()
+            UrlConnectionTransport.send(request).also {
+                if (System.getenv("TMPLAYER_TRACE") == "1") {
+                    val path = request.url.substringBefore('?').substringAfter(".org")
+                    println("TRACE ${(sent - start) / 1_000_000}+${(System.nanoTime() - sent) / 1_000_000} ms ${it.code} $path")
+                }
+            }
+        }
+        val online = OnlineMetadata(key, store, MetadataCache(File(dir, "cache")), "speed-test", http = traced, language = { "en" })
+        if (warm) online.warmUp()
+        val begin = System.nanoTime()
         val firstPoster = AtomicLong(0)
         val firstTiny = AtomicLong(0)
         coroutineScope {
@@ -55,11 +72,30 @@ class OnlineSpeedLiveTest {
                 }
             }.awaitAll()
         }
-        val all = System.nanoTime() - start
+        val all = System.nanoTime() - begin
+        firstTiny.set(firstTiny.get() - (begin - start))
+        firstPoster.set(firstPoster.get() - (begin - start))
         println(
-            "LIVE speed: first tiny ${firstTiny.get() / 1_000_000} ms, first poster ${firstPoster.get() / 1_000_000} ms, " +
+            "LIVE speed (${if (warm) "warmed" else "cold"}): first tiny ${firstTiny.get() / 1_000_000} ms, first poster ${firstPoster.get() / 1_000_000} ms, " +
                 "all ${names.size} in ${all / 1_000_000} ms",
         )
+        dir.deleteRecursively()
+    }
+
+    @Test
+    fun aWellKnownFilmHasATitleLogo(): Unit = runBlocking {
+        assumeTrue(live)
+        val key = tmdbKey()
+        assumeTrue("no TMDB key", key.isNotBlank())
+        val dir = Files.createTempDirectory("tm-meta-logo").toFile()
+        val store = MetadataStore(File(dir, "m.properties")).apply { update { it.copy(enabled = true) } }
+        val online = OnlineMetadata(key, store, MetadataCache(File(dir, "cache")), "logo-test", language = { "en" })
+        val info = (online.lookup(MetaQuery.of("Interstellar.2014.1080p.mkv")!!) as MetaResult.Found).info
+        val logo = online.logo(info)
+        org.junit.Assert.assertTrue("a PNG logo: $logo", logo?.endsWith(".png") == true)
+        org.junit.Assert.assertTrue("it downloads", (online.image(logo!!)?.length() ?: 0) > 1_000)
+        org.junit.Assert.assertEquals("kept with the answers", logo, online.peekLogo(info)?.url)
+        println("LIVE logo: $logo")
         dir.deleteRecursively()
     }
 }
