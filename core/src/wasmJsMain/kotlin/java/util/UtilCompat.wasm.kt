@@ -34,3 +34,30 @@ object Collections {
     fun <K, V> synchronizedMap(map: MutableMap<K, V>): MutableMap<K, V> = map
     fun <T> synchronizedList(list: MutableList<T>): MutableList<T> = list
 }
+
+/** java.util.Properties: key=value lines, as the desktop's own settings file keeps them. */
+class Properties {
+    private val map = LinkedHashMap<String, String>()
+
+    fun getProperty(key: String): String? = map[key]
+    fun setProperty(key: String, value: String): Any? = map.put(key, value)
+    fun containsKey(key: Any?): Boolean = key in map
+
+    fun load(input: java.io.InputStream) {
+        input.readBytes().decodeToString().lines().forEach { line ->
+            val t = line.trim()
+            if (t.isEmpty() || t.startsWith("#") || t.startsWith("!")) return@forEach
+            val at = t.indexOfFirst { it == '=' || it == ':' }
+            if (at > 0) map[t.substring(0, at).trim()] = t.substring(at + 1).trim()
+        }
+    }
+
+    fun store(output: java.io.OutputStream, comment: String?) {
+        val text = buildString {
+            if (comment != null) append("#").append(comment).append('\n')
+            map.forEach { (k, v) -> append(k).append('=').append(v).append('\n') }
+        }
+        output.write(text.encodeToByteArray())
+        output.flush()
+    }
+}

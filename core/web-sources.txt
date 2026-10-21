@@ -34,3 +34,7 @@ com/tmplayer/data/NewVideoAlerts.kt
 com/tmplayer/data/StorageAlerts.kt
 com/tmplayer/data/DownloadShelf.kt
 com/tmplayer/data/UpdateFeed.kt
+com/tmplayer/data/OfflineDownloads.kt
+com/tmplayer/data/UpdateWords.kt
+com/tmplayer/data/UpdateScheduler.kt
+com/tmplayer/data/StorageRelocationPlan.kt

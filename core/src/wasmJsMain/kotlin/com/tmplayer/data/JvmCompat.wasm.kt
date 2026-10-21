@@ -29,20 +29,3 @@ internal fun androidx.datastore.preferences.core.MutablePreferences.putRaw(name:
 
 /** `java.util.Map.getOrDefault`, which Kotlin's maps have only on the JVM. */
 internal fun <K, V> Map<K, V>.getOrDefault(key: K, defaultValue: V): V = this[key] ?: defaultValue
-
-/**
- * What UpdateScheduler remembers between launches (core/src/commonMain/.../UpdateScheduler.kt).
- * The browser build has no updater, the site being the update, so only the interface the
- * settings store implements comes along, word for word.
- */
-interface UpdatePrefs {
-    suspend fun notify(): Boolean
-    suspend fun lastCheck(): Long
-    suspend fun setLastCheck(at: Long)
-    suspend fun skippedVersion(): String
-    suspend fun setSkippedVersion(version: String)
-    suspend fun snoozedUntil(): Long
-    suspend fun setSnoozedUntil(at: Long)
-    suspend fun popupShownFor(): String
-    suspend fun setPopupShownFor(version: String)
-}

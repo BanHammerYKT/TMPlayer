@@ -11,8 +11,8 @@ open class EOFException(message: String? = null) : com.tmplayer.platform.IOExcep
 
 open class FileNotFoundException(message: String? = null) : com.tmplayer.platform.IOException(message)
 
-interface Closeable {
-    fun close()
+interface Closeable : AutoCloseable {
+    override fun close()
 }
 
 /**
@@ -27,6 +27,13 @@ open class File(val path: String) : Comparable<File> {
     val name: String get() = path.trimEnd('/').substringAfterLast('/')
     val absolutePath: String get() = path
     val absoluteFile: File get() = this
+    val canonicalPath: String get() = path
+    val canonicalFile: File get() = this
+    fun normalize(): File = this
+    fun toPath(): java.nio.file.Path = java.nio.file.Path.of(path)
+    fun isAbsolute(): Boolean = path.startsWith("/")
+    fun canWrite(): Boolean = true
+    fun walkTopDown(): Sequence<File> = sequenceOf(this) + (contents.keys + dirs).filter { it.startsWith("$path/") }.map(::File).asSequence()
     val parentFile: File? get() = path.trimEnd('/').substringBeforeLast('/', "").takeIf { it.isNotEmpty() }?.let(::File)
     val parent: String? get() = parentFile?.path
     val isFile: Boolean get() = path in contents
@@ -63,6 +70,12 @@ open class File(val path: String) : Comparable<File> {
         return true
     }
     fun resolve(child: String): File = File(this, child)
+    fun inputStream(): InputStream = ByteArrayInputStream(readBytes())
+    fun outputStream(): OutputStream = object : ByteArrayOutputStream() {
+        override fun close() {
+            writeBytes(toByteArray())
+        }
+    }
     fun usableSpace(): Long = 0L
     val usableSpace: Long get() = 0L
     val totalSpace: Long get() = 0L
@@ -79,22 +92,47 @@ open class File(val path: String) : Comparable<File> {
     }
 }
 
-/** A stream nothing reads in the browser build: the JVM code that opens one is never reached there. */
-open class InputStream {
+/** A byte stream; in the browser build only ever over bytes already in memory. */
+open class InputStream : Closeable {
     open fun read(): Int = -1
-    open fun close() {}
-    fun readBytes(): ByteArray = ByteArray(0)
-    fun bufferedReader(): Reader = Reader()
+    override fun close() {}
+    open fun readBytes(): ByteArray {
+        val out = ArrayList<Byte>()
+        while (true) {
+            val b = read()
+            if (b < 0) break
+            out += b.toByte()
+        }
+        return out.toByteArray()
+    }
+    fun bufferedReader(): Reader = Reader(readBytes().decodeToString())
 }
 
-open class OutputStream {
+open class ByteArrayInputStream(private val bytes: ByteArray) : InputStream() {
+    private var at = 0
+    override fun read(): Int = if (at < bytes.size) bytes[at++].toInt() and 0xFF else -1
+    override fun readBytes(): ByteArray = bytes.copyOfRange(at, bytes.size).also { at = bytes.size }
+}
+
+open class OutputStream : Closeable {
     open fun write(b: Int) {}
-    open fun write(bytes: ByteArray) {}
+    open fun write(bytes: ByteArray) {
+        bytes.forEach { write(it.toInt()) }
+    }
     open fun flush() {}
-    open fun close() {}
+    override fun close() {}
 }
 
-class Reader {
-    fun readText(): String = ""
-    fun close() {}
+open class ByteArrayOutputStream : OutputStream() {
+    private val buffer = ArrayList<Byte>()
+    override fun write(b: Int) {
+        buffer += b.toByte()
+    }
+    fun toByteArray(): ByteArray = buffer.toByteArray()
+}
+
+class Reader(private val text: String = "") : Closeable {
+    fun readText(): String = text
+    fun readLines(): List<String> = text.lines()
+    override fun close() {}
 }

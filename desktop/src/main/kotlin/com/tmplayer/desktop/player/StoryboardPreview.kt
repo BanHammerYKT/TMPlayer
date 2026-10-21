@@ -133,15 +133,13 @@ internal fun FrameTip(frames: FrameSource, positionMs: Long, modifier: Modifier 
 
 /** The hover's frames for one video, by ten second slot, kept in a small cache. */
 internal class FrameSource(private val fetch: suspend (Long) -> ImageBitmap?) {
-    private val cache = object : LinkedHashMap<Long, ImageBitmap>(32, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ImageBitmap>?) = size > FRAME_CACHE
-    }
+    private val cache = com.tmplayer.platform.LruMap<Long, ImageBitmap>(FRAME_CACHE)
     private val gate = Mutex()
 
-    fun cached(slot: Long): ImageBitmap? = synchronized(cache) { cache[slot] }
+    fun cached(slot: Long): ImageBitmap? = cache[slot]
 
     suspend fun frameAt(slot: Long): ImageBitmap? = gate.withLock {
-        cached(slot) ?: fetch(slot * FRAME_STEP_MS + FRAME_STEP_MS / 2)?.also { synchronized(cache) { cache[slot] = it } }
+        cached(slot) ?: fetch(slot * FRAME_STEP_MS + FRAME_STEP_MS / 2)?.also { cache[slot] = it }
     }
 }
 

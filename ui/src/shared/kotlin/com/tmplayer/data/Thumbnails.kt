@@ -97,7 +97,7 @@ object Thumbnails {
 
         val path = withContext(Dispatchers.IO) { downloadThumbnail(fileId) } ?: return null
         return withContext(Dispatchers.IO) {
-            runCatching { decodeImageFile(path, lighter(MAX_THUMBNAIL_WIDTH)) }.getOrNull()?.also { cache.put(key, it) }
+            runCatching { decodeTdImage(fileId, path, lighter(MAX_THUMBNAIL_WIDTH)) }.getOrNull()?.also { cache.put(key, it) }
         }
     }
 

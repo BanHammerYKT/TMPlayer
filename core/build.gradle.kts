@@ -211,6 +211,21 @@ val fetchTdlSources = tasks.register("fetchTdlSources") {
                 zip.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
             }
         }
+        // tdweb's TDLib (1.8.64) is older than the schema these sources were generated from
+        // (1.8.67): where a type changed in between, the reader takes the older shape as well.
+        // A draft was `input_message_text` before it became `content`.
+        val reader = dir.resolve("dev/g000sha256/tdl/TdlDeserializer.kt")
+        val draft = """content = jsonObject.getObject(key = "content") { data -> deserializeDraftMessageContent(jsonObject = data) },"""
+        val text = reader.readText()
+        if (draft !in text) throw GradleException("tdl-coroutines: the draft message reader changed; review the tdweb compatibility patch")
+        reader.writeText(
+            text.replace(
+                draft,
+                """content = if (jsonObject.containsKey("content")) jsonObject.getObject(key = "content") { data -> deserializeDraftMessageContent(jsonObject = data) } """ +
+                    """else DraftMessageContentText(text = jsonObject.getObjectNullable(key = "input_message_text") { input -> input.getObjectNullable(key = "text") { t -> deserializeFormattedText(jsonObject = t) } } """ +
+                    """?: FormattedText(text = "", entities = emptyArray()), linkPreviewOptions = null),""",
+            ),
+        )
     }
 }
 

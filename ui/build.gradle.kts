@@ -55,6 +55,7 @@ val webOwnPieces = setOf(
     "com/tmplayer/ui/theme/ReducedMotion.kt",
     "com/tmplayer/ui/components/IconTipDesktop.kt",
     "com/tmplayer/ui/onboarding/DeviceFitDesktop.kt",
+    "com/tmplayer/data/ThumbnailDecoding.kt",
 )
 
 val uiWebSources = tasks.register<Sync>("uiWebSources") {

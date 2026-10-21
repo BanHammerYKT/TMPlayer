@@ -52,7 +52,14 @@ internal class TdlEngine(private val deserializer: TdlDeserializer) {
         val requestId = ++requestIds
         val json = serialize(function = function, requestId = requestId)
         val answer = tmTdSend(json).await<JsString>().toString()
-        return deserializer.deserialize(json = answer).third
+        return try {
+            deserializer.deserialize(json = answer).third
+        } catch (e: Throwable) {
+            // tdweb's TDLib can be a few versions behind the schema tdl-coroutines was generated
+            // from; a field it does not send yet is named here, with what was asked.
+            println("TMPlayer: could not read TDLib's answer to ${function::class.simpleName}: ${e.message}: ${answer.take(400)}")
+            throw e
+        }
     }
 }
 
