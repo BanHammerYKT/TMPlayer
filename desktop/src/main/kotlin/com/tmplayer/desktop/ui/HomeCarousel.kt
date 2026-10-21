@@ -104,6 +104,7 @@ import com.tmplayer.ui.components.rememberShimmer
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.rememberMeta
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.theme.FloatingTone
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.Tone
@@ -388,7 +389,7 @@ private fun FeaturedPage(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                HeroPill(label = playLabel, onClick = { onPlay(playItem) })
+                HeroPill(label = playLabel, onClick = { onPlay(playItem) }, modifier = Modifier.warmUpOnIntent(playItem))
                 RoundButton(TmIcons.Info, s.detailOpenDetails, size = com.tmplayer.ui.browse.HERO_PILL_HEIGHT) { onDetails(pick) }
             }
         }

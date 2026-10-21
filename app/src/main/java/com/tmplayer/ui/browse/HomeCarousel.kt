@@ -81,6 +81,7 @@ import com.tmplayer.ui.components.rememberShimmer
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.rememberMeta
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.theme.LocalDarkTheme
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.Scrims
@@ -300,7 +301,7 @@ private fun FeaturedControls(
             label = playLabel,
             onClick = { onPlay(playItem, chatTitle(playItem.chatId)) },
             stretch = true,
-            modifier = Modifier.weight(1f, fill = false),
+            modifier = Modifier.weight(1f, fill = false).then(Modifier.warmUpOnIntent(playItem)),
         )
         com.tmplayer.ui.components.IconTip(s.detailOpenDetails) {
             Box(

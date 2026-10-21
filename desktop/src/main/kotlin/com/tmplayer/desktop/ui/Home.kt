@@ -85,6 +85,7 @@ import com.tmplayer.ui.browse.NewBadge
 import com.tmplayer.ui.browse.rememberHomeRows
 import com.tmplayer.ui.browse.homeRowTitle
 import com.tmplayer.ui.browse.isLoaded
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.components.ScrollToTop
 import com.tmplayer.ui.components.UiState
 import com.tmplayer.ui.components.WithinMargins
@@ -729,7 +730,8 @@ private fun LazyListScope.shelf(
     onOpenSeries: (Series) -> Unit,
 ) {
     items(entries, key = { it.key }, contentType = { if (poster) "poster-${it::class.simpleName}" else it::class }) { entry ->
-        Box(Modifier.width(width)) { ShelfCell(state, entry, poster, chatTitle, onOpenSeries) }
+        // A film's first bytes asked for while the pointer rests on its card (a show opens its page).
+        Box(Modifier.width(width).warmUpOnIntent((entry as? ShelfEntry.File)?.item)) { ShelfCell(state, entry, poster, chatTitle, onOpenSeries) }
     }
 }
 

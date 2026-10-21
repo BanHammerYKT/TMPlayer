@@ -120,4 +120,21 @@ class HomeAutoFillTest {
         assertNull(MetaImageSize.tiny("https://image.tmdb.org/t/p/w92/a.jpg"))
         assertNull(MetaImageSize.tiny("https://static.tvmaze.com/uploads/images/medium_portrait/1/1.jpg"))
     }
+
+    @Test
+    fun `a card's warm-up hint reaches the warmer once, and nothing without one`() {
+        val told = mutableListOf<Long>()
+        PlaybackWarmup.warm(video(1))
+        PlaybackWarmup.warmer = PlaybackWarmup.Warmer { told += it.messageId }
+        try {
+            val a = video(1)
+            PlaybackWarmup.warm(a)
+            PlaybackWarmup.warm(a)
+            val b = video(1)
+            PlaybackWarmup.warm(b)
+            assertEquals(listOf(a.messageId, b.messageId), told)
+        } finally {
+            PlaybackWarmup.warmer = null
+        }
+    }
 }

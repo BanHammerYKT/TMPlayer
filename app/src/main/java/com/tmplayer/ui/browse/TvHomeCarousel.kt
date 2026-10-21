@@ -77,6 +77,7 @@ import com.tmplayer.ui.components.rememberShimmer
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.rememberMeta
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.Tone
@@ -194,7 +195,7 @@ internal fun TvFeaturedCarousel(
             HeroPill(
                 label = playLabel,
                 onClick = { onPlay(playItem, chatTitle(playItem.chatId)) },
-                modifier = Modifier.then(if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier).onPreviewKeyEvent { event ->
+                modifier = Modifier.then(if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier).warmUpOnIntent(playItem).onPreviewKeyEvent { event ->
                     // Back a page; from the first page Left carries on to the rail as usual.
                     if (event.type == KeyEventType.KeyDown && event.key == back && count > 1 && index > 0) {
                         go(index - 1)

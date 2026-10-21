@@ -74,6 +74,7 @@ import androidx.tv.material3.Text
 import com.tmplayer.data.HomeRow
 import com.tmplayer.data.HomeRows
 import com.tmplayer.data.MediaItem
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.Series
 import com.tmplayer.data.SeriesShelf
@@ -604,10 +605,15 @@ private fun LazyListScope.entries(
                 onFocused = {},
                 dense = touch,
                 poster = poster,
-                modifier = modifier,
+                // Its first bytes asked for while the card is in focus or under the finger.
+                modifier = modifier.warmUpOnIntent(entry.item),
             )
             is ShelfEntry.Show -> {
                 val progress = remember(entry.series, watch) { watch.progress(entry.series) }
+                // A show's card warms the episode its page would play.
+                val next = remember(progress, watch) {
+                    (progress.next ?: entry.series.episodes.firstOrNull())?.let { watch.pick(it, progress) }
+                }
                     SeriesCard(
                         series = entry.series,
                         progress = progress,
@@ -615,7 +621,7 @@ private fun LazyListScope.entries(
                         onClick = { onOpenSeries(entry.series) },
                         dense = touch,
                         poster = poster,
-                        modifier = modifier,
+                        modifier = modifier.warmUpOnIntent(next),
                     )
             }
         }
