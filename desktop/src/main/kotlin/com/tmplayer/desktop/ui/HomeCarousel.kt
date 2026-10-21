@@ -124,7 +124,7 @@ import kotlinx.coroutines.withContext
  * ([rememberFeatured]), one wide page each: the name (its logo where TMDB has one), a line
  * of facts and the overview ([FeaturedInfo]), Play and Details, with the dots at the foot of the
  * end ([CarouselDots]), moving on by itself every [ADVANCE_MS]. One picture stands under the
- * pages and cross-fades as they turn, while the words slide and fade. It takes Home's title's place: the page has no "Home" heading.
+ * pages and cross-fades as they turn, and the words cross-fade in place over it. It takes Home's title's place: the page has no "Home" heading.
  *
  * A window is not a phone, so the words keep to the start, where they read against the picture's
  * fade, and every way a computer has of moving sideways turns the page, one page a time:
@@ -297,12 +297,21 @@ internal fun FeaturedCarousel(
                 key = { latest.getOrNull(it)?.key ?: it },
             ) { page ->
                 val pick = latest.getOrNull(page) ?: return@HorizontalPager
-                // The words fade as they slide, so a page half turned is never two pages of words.
-                val away = { abs((pager.currentPage - page) + pager.currentPageOffsetFraction).coerceIn(0f, 1f) }
+                // The words stay where they are and cross-fade, as the picture under them does: the
+                // pager's own slide carried them across the picture, a sentence of the next film
+                // passing over the face of the last. The leaving words are gone by the half turn
+                // and the coming ones only then appear, so two pages of words never show at once.
+                val offset = { (pager.currentPage - page) + pager.currentPageOffsetFraction }
                 FeaturedPage(
                     pick, side, watch, chatTitle, onPlay, onDetails,
                     current = page == pager.currentPage,
-                    modifier = Modifier.graphicsLayer { alpha = 1f - away() },
+                    modifier = Modifier.graphicsLayer {
+                        val o = offset()
+                        // Only a page in the turn is held in place: a neighbour at rest stays off
+                        // the frame, where its invisible buttons cannot take a click meant for Play.
+                        translationX = if (abs(o) < 1f) o * size.width else 0f
+                        alpha = (1f - abs(o).coerceIn(0f, 1f) * 2f).coerceIn(0f, 1f)
+                    },
                 )
             }
             // Which page is up, at the foot of the end, level with Play; a click goes to that page.
