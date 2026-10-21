@@ -287,6 +287,19 @@
                   away first. Stacked under Try again rather than beside it so a remote reaches all
                   three with one axis of the D-pad, in the order they should be tried.
                 -->
+                <!--
+                  On a decoding failure the other decoder can take: the device's own and the app's
+                  FFmpeg decoder are two ways to draw the same track (DecoderSwitch).
+                -->
+                <Button
+                    android:id="@+id/status_decoder"
+                    style="@style/PlayerSheetButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Try the other decoder"
+                    android:visibility="gone" />
+
                 <Button
                     android:id="@+id/status_reload"
                     style="@style/PlayerSheetButton"

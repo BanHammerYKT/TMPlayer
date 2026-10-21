@@ -315,6 +315,7 @@ fun SettingsScreen(
     val trackPrefs by settings.trackPreferences.collectAsStateWithLifecycle(initialValue = TrackPreferences())
     val learntLanguages by settings.learntLanguages.collectAsStateWithLifecycle(initialValue = emptyList())
     val history by settings.continueWatching.collectAsStateWithLifecycle(initialValue = emptyList())
+    val videoDecoder by settings.videoDecoder.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.VideoDecoder.Automatic)
     val watchedStore = remember { WatchedStore(context) }
     val watchedList by watchedStore.history.collectAsStateWithLifecycle(initialValue = emptyList())
     // Only those the kids lock shows, as the Favourites tab counts them.
@@ -358,8 +359,9 @@ fun SettingsScreen(
     // The language picker, the "What's new" sheet and "Report a problem", each over the list.
     var pickingLanguage by remember { mutableStateOf(false) }
     var stylingSubtitles by remember { mutableStateOf(false) }
-    var trackPicker by remember { mutableStateOf<TrackLanguagePicker?>(null) }
     var showingLearnt by remember { mutableStateOf(false) }
+    var trackPicker by remember { mutableStateOf<TrackLanguagePicker?>(null) }
+    var pickingDecoder by remember { mutableStateOf(false) }
     var editingSizes by remember { mutableStateOf(false) }
     var whatsNew by remember { mutableStateOf(false) }
     var reporting by remember { mutableStateOf(false) }
@@ -796,6 +798,16 @@ fun SettingsScreen(
                         onToggle = { scope.launch { settings.setAutoplayNext(!autoplayNext) } },
                     )
                 }
+                // Hardware first, or the app's own software decoder for a device whose decoder
+                // draws broken frames. The player's error sheet offers the other one too.
+                item {
+                    ActionRow(
+                        title = s.settingsDecoder,
+                        subtitle = videoDecoder.label,
+                        icon = TmIcons.Play,
+                        onClick = { pickingDecoder = true },
+                    )
+                }
                 item {
                     ToggleRow(
                         title = s.settingsDetailFirst,
@@ -963,18 +975,6 @@ fun SettingsScreen(
                         onClick = { trackPicker = TrackLanguagePicker.Subtitle },
                     )
                 }
-
-                // ---- online subtitles ------------------------------------------------------------------
-                // Only in a build that carries the OpenSubtitles key; a fork or a CI build has none.
-                if (OnlineSubtitles.available) onlineSubtitlesSection(onDialog = { onlineDialog = it })
-            }
-
-            SettingsPage.Gestures -> {
-                // Touch only: a remote has buttons for every one of these, and its key model is settled.
-                if (touch) {
-                    fun update(change: (TouchPrefs) -> TouchPrefs) {
-                        scope.launch { settings.updateTouchPrefs(change) }
-                    }
                 // What each series learnt from the player, and Forget: the per series memory
                 // above the languages chosen here, made visible.
                 item {
@@ -989,6 +989,18 @@ fun SettingsScreen(
                         onClick = { showingLearnt = true },
                     )
                 }
+
+                // ---- online subtitles ------------------------------------------------------------------
+                // Only in a build that carries the OpenSubtitles key; a fork or a CI build has none.
+                if (OnlineSubtitles.available) onlineSubtitlesSection(onDialog = { onlineDialog = it })
+            }
+
+            SettingsPage.Gestures -> {
+                // Touch only: a remote has buttons for every one of these, and its key model is settled.
+                if (touch) {
+                    fun update(change: (TouchPrefs) -> TouchPrefs) {
+                        scope.launch { settings.updateTouchPrefs(change) }
+                    }
                     item {
                         ToggleRow(
                             title = s.settingsTapPlays,
@@ -1943,18 +1955,6 @@ fun SettingsScreen(
     qrLink?.let { (url, what) -> LinkQrDialog(url = url, what = what, onClose = { qrLink = null }) }
     if (supporting) SupportDialog(from = "settings", onClose = { supporting = false })
     if (pickingLanguage) LanguageDialog(settings, onClose = { pickingLanguage = false })
-    if (stylingSubtitles) {
-        SubtitleStyleDialog(
-            style = subtitleStyle,
-            onChange = { next -> scope.launch { settings.setSubtitleStyle(next) } },
-            onClose = { stylingSubtitles = false },
-        )
-    }
-    trackPicker?.let { picker ->
-        TrackLanguageSheet(
-            picker = picker,
-            prefs = trackPrefs,
-            onChange = { next -> scope.launch { settings.setTrackPreferences(next) } },
     if (showingLearnt) {
         LearntLanguagesSheet(
             learnt = learntLanguages,
@@ -1963,6 +1963,25 @@ fun SettingsScreen(
             onClose = { showingLearnt = false },
         )
     }
+    if (stylingSubtitles) {
+        SubtitleStyleDialog(
+            style = subtitleStyle,
+            onChange = { next -> scope.launch { settings.setSubtitleStyle(next) } },
+            onClose = { stylingSubtitles = false },
+        )
+    }
+    if (pickingDecoder) {
+        DecoderSheet(
+            current = videoDecoder,
+            onPick = { next -> scope.launch { settings.setVideoDecoder(next) } },
+            onClose = { pickingDecoder = false },
+        )
+    }
+    trackPicker?.let { picker ->
+        TrackLanguageSheet(
+            picker = picker,
+            prefs = trackPrefs,
+            onChange = { next -> scope.launch { settings.setTrackPreferences(next) } },
             onClose = { trackPicker = null },
         )
     }
@@ -2948,6 +2967,18 @@ private fun SubtitlePreview(style: SubtitleStyle, modifier: Modifier = Modifier)
 }
 
 /**
+ * The edge as Compose can draw it in a preview: a tight dark halo for the outline, a soft offset
+ * shadow, or nothing. With a box the box is the edge, as in the player.
+ */
+private fun previewShadow(style: SubtitleStyle): Shadow? = when {
+    style.box -> null
+    style.edge == com.tmplayer.player.SubtitleEdge.Outline -> Shadow(Color.Black, blurRadius = 6f)
+    style.edge == com.tmplayer.player.SubtitleEdge.Shadow ->
+        Shadow(Color.Black.copy(alpha = 0.8f), offset = androidx.compose.ui.geometry.Offset(3f, 3f), blurRadius = 4f)
+    else -> null
+}
+
+/**
  * The signed in account at the top of Settings, above the cards, from the start: the picture, with
  * the name and @username beside it.
  */
@@ -2966,18 +2997,6 @@ private fun AccountHeader(account: com.tmplayer.data.Account) {
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-/**
- * The edge as Compose can draw it in a preview: a tight dark halo for the outline, a soft offset
- * shadow, or nothing. With a box the box is the edge, as in the player.
- */
-private fun previewShadow(style: SubtitleStyle): Shadow? = when {
-    style.box -> null
-    style.edge == com.tmplayer.player.SubtitleEdge.Outline -> Shadow(Color.Black, blurRadius = 6f)
-    style.edge == com.tmplayer.player.SubtitleEdge.Shadow ->
-        Shadow(Color.Black.copy(alpha = 0.8f), offset = androidx.compose.ui.geometry.Offset(3f, 3f), blurRadius = 4f)
-    else -> null
-}
-
                 account.name,
                 style = MaterialTheme.typography.titleMedium,
                 color = Tone.text,
@@ -3271,6 +3290,12 @@ private fun SubtitleStyleDialog(style: SubtitleStyle, onChange: (SubtitleStyle) 
                     modifier = if (selected) Modifier.focusRequester(first) else Modifier,
                 ) { onChange(style.copy(size = size)) }
             }
+            ChoiceSection(s.subtitlesColour)
+            com.tmplayer.player.SubtitleColour.entries.forEach { colour ->
+                ChoiceLine(title = colour.label, selected = colour == style.colour) {
+                    onChange(style.copy(colour = colour))
+                }
+            }
             ChoiceSection(s.settingsSubtitleBox)
             com.tmplayer.player.SubtitleBox.entries.forEach { level ->
                 ChoiceLine(
@@ -3298,40 +3323,15 @@ private fun SubtitleStyleDialog(style: SubtitleStyle, onChange: (SubtitleStyle) 
                     onChange(style.copy(face = face))
                 }
             }
+            ChoiceSection(s.subtitlesWeight)
+            ChoiceLine(title = s.subtitlesWeightRegular, selected = !style.bold) { onChange(style.copy(bold = false)) }
+            ChoiceLine(title = s.subtitlesWeightBold, selected = style.bold) { onChange(style.copy(bold = true)) }
             ChoiceSection(s.settingsSubtitlePosition)
             SubtitlePosition.entries.forEach { position ->
                 ChoiceLine(title = position.label, selected = position == style.position) {
                     onChange(style.copy(position = position))
                 }
             }
-        }
-        FocusOnOpen(first)
-    }
-}
-
-/**
-            ChoiceSection(s.subtitlesColour)
-            com.tmplayer.player.SubtitleColour.entries.forEach { colour ->
-                ChoiceLine(title = colour.label, selected = colour == style.colour) {
-                    onChange(style.copy(colour = colour))
-                }
-            }
- * Settings, Video size limits: the range in words, the two-ended slider (a remote moves one end at
- * a time, OK switching ends), and Reset to the defaults beside Close.
- */
-@Composable
-private fun SizeLimitsDialog(
-    minSize: Long,
-    maxSize: Long,
-            ChoiceSection(s.subtitlesWeight)
-            ChoiceLine(title = s.subtitlesWeightRegular, selected = !style.bold) { onChange(style.copy(bold = false)) }
-            ChoiceLine(title = s.subtitlesWeightBold, selected = style.bold) { onChange(style.copy(bold = true)) }
-    editingUpper: Boolean,
-    rangeRow: FocusRequester,
-    onSwitchEnd: () -> Unit,
-    onStep: (upper: Boolean, direction: Int) -> Unit,
-    onSetRange: (min: Long, max: Long) -> Unit,
-    onClose: () -> Unit,
             // Last, and greyed out (still focusable) while the look is the default one.
             ChoiceLine(
                 title = s.subtitlesDefaultLook,
@@ -3339,6 +3339,25 @@ private fun SizeLimitsDialog(
                 icon = TmIcons.Refresh,
                 enabled = !style.isDefault,
             ) { onChange(SubtitleStyle()) }
+        }
+        FocusOnOpen(first)
+    }
+}
+
+/**
+ * Settings, Video size limits: the range in words, the two-ended slider (a remote moves one end at
+ * a time, OK switching ends), and Reset to the defaults beside Close.
+ */
+@Composable
+private fun SizeLimitsDialog(
+    minSize: Long,
+    maxSize: Long,
+    editingUpper: Boolean,
+    rangeRow: FocusRequester,
+    onSwitchEnd: () -> Unit,
+    onStep: (upper: Boolean, direction: Int) -> Unit,
+    onSetRange: (min: Long, max: Long) -> Unit,
+    onClose: () -> Unit,
 ) {
     val s = LocalStrings.current
     val range = s.formatter.sizeRange(minSize, maxSize)
