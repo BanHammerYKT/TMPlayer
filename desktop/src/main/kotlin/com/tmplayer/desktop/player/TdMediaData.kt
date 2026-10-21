@@ -56,6 +56,14 @@ class TdMediaData(
 }
 
 /**
+ * Every byte a [StreamInput] has handed mpv's demuxer, across files: the opening loader's line
+ * ([com.tmplayer.player.OpeningProgress]) counts its own wait from the value when it began.
+ */
+object StreamReads {
+    val delivered = java.util.concurrent.atomic.AtomicLong()
+}
+
+/**
  * Up while the engine asks mediamp's frame preview for a picture: an input made then is the preview
  * decoder's (mediamp makes it lazily inside that call), and [TdMediaData] hands it a
  * [DiskOnlyInput] instead of a reader that would move the playing video's download. The playing
@@ -147,6 +155,7 @@ class StreamInput(
             try {
                 val read = bytes.read(at, buffer, offset, wanted)
                 pos = at + read
+                if (read > 0) StreamReads.delivered.addAndGet(read.toLong())
                 return read
             } catch (e: EOFException) {
                 // The file on disk was shorter than TDLib said: the window was dropped, so the

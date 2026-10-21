@@ -556,6 +556,31 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private var loaderHost: PlayerLoaderHost? = null
     private val speed = SpeedMeter()
 
+    /** The loader's line, filled in stages from what the player measures. See [OpeningProgress]. */
+    private var opening = OpeningProgress()
+
+    /** Every byte the player's data sources have handed Media3, counted on its loading thread. */
+    private val readBytes = java.util.concurrent.atomic.AtomicLong()
+
+    /** [readBytes] when the loader came up, so the line counts this opening's bytes only. */
+    private var openingBytesAt = 0L
+
+    /** How fast [readBytes] grows: the speed the wait's note shows when TDLib's own reads nothing. */
+    private val readSpeed = SpeedMeter()
+
+    /** Moves the loader's line a few times a second while it is up. */
+    private var loaderTick: Job? = null
+
+    /** Counts the bytes into [readBytes]; the loader reads the count, nothing here decides anything. */
+    private val byteCounter = object : androidx.media3.datasource.TransferListener {
+        override fun onTransferInitializing(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+        override fun onTransferStart(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+        override fun onBytesTransferred(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
+            readBytes.addAndGet(bytesTransferred.toLong())
+        }
+        override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
+    }
+
     /**
      * The transport controls the system draws: notification, lock screen, headset and Assistant.
      *
@@ -2459,7 +2484,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                             DefaultDataSource.Factory(this, TdDataSource.Factory(client)),
                             ::leftPiece,
                         ),
-                    ),
+                    ).setTransferListener(byteCounter),
                     extractors,
                 ),
             )
@@ -4587,7 +4612,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         if (openingFilm) {
             showLoadingProgress(fraction)
-            loaderHost?.progress = fraction
+            // The loader's own line is [tickLoader]'s, which follows every stage of the wait.
             renderLoaderStatus()
             statusDetail.text = listOf(rate, left).filter { it.isNotBlank() }.joinToString("  ·  ")
         } else {
@@ -6130,12 +6155,61 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun syncLoader() {
         val host = loaderHost ?: return
         if (openingFilm) {
+            if (!host.shown) {
+                // A new wait: the line starts over and counts this opening's bytes only.
+                opening = OpeningProgress(seeks = resumeMs > 0)
+                openingBytesAt = readBytes.get()
+                readSpeed.reset()
+                host.progress = 0f
+                loaderTick?.cancel()
+                loaderTick = lifecycleScope.launch {
+                    while (true) {
+                        tickLoader()
+                        delay(LOADER_TICK_MS)
+                    }
+                }
+            }
             host.show(SystemClock.elapsedRealtime())
             stopArtDrift()
             renderLoaderStatus()
         } else {
+            loaderTick?.cancel()
+            loaderTick = null
+            // The first frame (or a sheet underneath): the line full as it fades.
+            host.progress = opening.finish()
             host.hide()
         }
+    }
+
+    /**
+     * The loader's line from what Media3 and the data sources say: bytes handed to the
+     * extractor, whether the container is read, whether the resume point has its first samples,
+     * and the buffer ahead of it against [BUFFER_PLAYBACK_MS]. A whole-file download keeps its
+     * own line, the file's share, from [renderProgress].
+     */
+    private fun tickLoader() {
+        val host = loaderHost ?: return
+        if (!openingFilm || waitingForWholeFilm) return
+        val now = SystemClock.elapsedRealtime()
+        val read = readBytes.get() - openingBytesAt
+        readSpeed.sample(read, now)
+        val exo = player
+        val opened = exo != null && (exo.duration != C.TIME_UNSET || !exo.currentTracks.isEmpty)
+        val ahead = if (exo != null && opened) (exo.bufferedPosition - exo.currentPosition).coerceAtLeast(0) else -1L
+        opening.seeks = resumeMs > 0
+        host.progress = opening.update(
+            OpeningProgress.Signals(
+                readBytes = read,
+                onDisk = downloadComplete,
+                opened = opened,
+                seekDone = if (resumeMs > 0) opened && ahead > 0 else null,
+                bufferedMs = ahead,
+                bufferTargetMs = BUFFER_PLAYBACK_MS.toLong(),
+                bytesPerSec = (StreamStats.bytesPerMs(fileSizeBytes, durationSec) * 1000).toLong(),
+            ),
+            now,
+        )
+        renderLoaderStatus()
     }
 
     /**
@@ -6149,9 +6223,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val host = loaderHost ?: return
         val routine = statusMessage.isBlank() || statusMessage == L.playerConnecting ||
             statusMessage == L.playerStarting || statusMessage == L.commonLoading
-        host.status = if (routine) resumeNotice ?: L.playerLoaderStarting else statusMessage
+        val startClock = resumeMs.takeIf { it > 0 }?.let { Translator.messages.formatter.clock(it) }
+        host.status = if (routine) opening.words(L, startClock) else statusMessage
         val slow = SystemClock.elapsedRealtime() - host.shownAt > LOADER_SLOW_MS
-        val rate = speed.bytesPerSec
+        // TDLib's download speed, or the rate the player is being handed bytes where TDLib is
+        // quiet (the start already on the disk from the warm-up).
+        val rate = maxOf(speed.bytesPerSec, readSpeed.bytesPerSec)
         host.note = if (slow && rate >= StreamStats.MIN_MEANINGFUL_SPEED && !downloadComplete) {
             val figure = Translator.messages.formatter.speed(rate)
             val line = if (isRealDownload()) L.playerDownloadingRate(figure) else L.playerCachingRate(figure)
@@ -7143,7 +7220,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         private const val REAL_FRAME_ASPECT = 1.3f
 
         /** How long the opening wait runs before the loader adds the speed. */
-        private const val LOADER_SLOW_MS = 3_000L
+        private const val LOADER_SLOW_MS = OpeningProgress.SPEED_NOTE_AFTER_MS
+        private const val LOADER_TICK_MS = 250L
 
         /** How often [watchOpening] looks at the opening wait. */
         private const val OPENING_WATCH_TICK_MS = 1_000L

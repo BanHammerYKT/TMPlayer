@@ -196,6 +196,7 @@
         if (got[n].byteLength < this.expected(wanted[n])) break;
       }
       this.pos = offset + done;
+      TgSource.stats.bytes += done;
       // Read ahead only while the reads run forward; a jump (a seek, an index probe) starts the
       // run again rather than fetching around a place the player has already left.
       if (first === this.lastBlock || first === this.lastBlock + 1) {
@@ -209,7 +210,7 @@
     }
   }
 
-  /** Counters for the tests and the playback details panel. */
-  TgSource.stats = { reads: 0, last: 0, trace: [] };
+  /** Counters for the tests, the playback details panel and the opening loader (bytes handed to the player). */
+  TgSource.stats = { reads: 0, last: 0, trace: [], bytes: 0 };
   window.TgSource = TgSource;
 })();
