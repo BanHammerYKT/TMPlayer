@@ -322,7 +322,7 @@ private fun cachedKey(chatId: Long, messageId: Long) =
  * instance per file in a process: each app opens it once, with [openDataStore], and every
  * `SettingsStore` shares that instance.
  */
-class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSource, CorrectionsSource {
+class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSource, CorrectionsSource, HiddenChatsSource {
 
     /**
      * One preference, read the way every preference here is read.
@@ -340,7 +340,7 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
     // ---- hidden chats -----------------------------------------------------------------------
 
     /** The chats hidden from TMPlayer's lists, in the order they were hidden. See [HiddenChats]. */
-    val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HIDDEN_CHATS]) }
+    override val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HIDDEN_CHATS]) }
 
     suspend fun hideChat(chatId: Long, title: String) {
         prefs.edit { it[HIDDEN_CHATS] = HiddenChats.encode(HiddenChats.with(HiddenChats.decode(it[HIDDEN_CHATS]), HiddenChat(chatId, title))) }

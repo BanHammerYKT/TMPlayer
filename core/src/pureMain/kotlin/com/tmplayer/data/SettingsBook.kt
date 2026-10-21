@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.map
  * which the browser build either has no use for or keeps in the page. SettingsBookTest holds the
  * two to the same answers over one DataStore file.
  */
-class SettingsBook(private val kv: KeyValueStore) : AllowedChatsSource, CorrectionsSource {
+class SettingsBook(private val kv: KeyValueStore) : AllowedChatsSource, CorrectionsSource, HiddenChatsSource {
 
     private fun <T> read(transform: (Map<String, Any>) -> T): Flow<T> = kv.data.map(transform).distinctUntilChanged()
 
@@ -97,6 +97,13 @@ class SettingsBook(private val kv: KeyValueStore) : AllowedChatsSource, Correcti
     }
 
     override val kidsAllowedChats: Flow<Set<Long>?> = read(::allowedChatsOf)
+
+    /** The chats hidden from the lists, under SettingsStore's own key ([HiddenChats.KEY]). */
+    override val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HiddenChats.KEY] as? String) }
+
+    suspend fun setHiddenChats(chats: List<HiddenChat>) {
+        kv.edit { it[HiddenChats.KEY] = HiddenChats.encode(chats) }
+    }
 
     /** The stored PIN line (salt and hash, as AppLock writes it), or null when none is set. */
     suspend fun pinLine(): String? = kv.snapshot().string(APP_PIN)

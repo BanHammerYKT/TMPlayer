@@ -1,6 +1,8 @@
 package com.tmplayer.data
 
 import com.tmplayer.platform.Background
+import kotlin.concurrent.Volatile
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -8,6 +10,11 @@ import kotlinx.coroutines.launch
 
 /** A chat the viewer hid from TMPlayer's lists, with the name it had then, for Settings' list. */
 data class HiddenChat(val id: Long, val title: String)
+
+/** Where the hidden chats are kept: the apps' SettingsStore, or SettingsBook in the browser. */
+interface HiddenChatsSource {
+    val hiddenChats: Flow<List<HiddenChat>>
+}
 
 /**
  * The chats the viewer hid from a chat's menu: left out of Chats, Home (its rows, Movies and
@@ -34,7 +41,7 @@ object HiddenChats {
     fun shows(chatId: Long): Boolean = chatId !in state.value
 
     /** Keeps [ids] in step with [store] for the life of the process. */
-    fun follow(store: SettingsStore) {
+    fun follow(store: HiddenChatsSource) {
         if (following) return
         following = true
         Background.scope.launch {
