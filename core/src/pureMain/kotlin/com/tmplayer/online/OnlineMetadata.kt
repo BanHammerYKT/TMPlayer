@@ -6,9 +6,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.File
-import java.net.URI
-import java.security.MessageDigest
+import com.tmplayer.platform.IOException
+import com.tmplayer.platform.LruMap
+import com.tmplayer.platform.PlainLock
+import com.tmplayer.platform.nowMillis
+import com.tmplayer.platform.sha256
+import kotlin.concurrent.Volatile
 
 /**
  * Posters and overviews for videos, looked up by name: the one place phone, TV and desktop all
@@ -31,11 +34,11 @@ import java.security.MessageDigest
  */
 class OnlineMetadata(
     private val buildKey: String,
-    val store: MetadataStore,
-    val cache: MetadataCache,
+    val store: MetaSettingsStore,
+    val cache: MetaCacheStore,
     appVersion: String,
-    private val http: HttpTransport = UrlConnectionTransport,
-    private val now: () -> Long = System::currentTimeMillis,
+    private val http: HttpTransport = defaultTransport,
+    private val now: () -> Long = { nowMillis() },
     private val sleep: suspend (Long) -> Unit = { delay(it) },
     private val language: () -> String = { Translator.messages.tag },
     /** The viewer's region, for the age rating: the device's country, else the US. */
@@ -54,10 +57,10 @@ class OnlineMetadata(
     )
 
     private val locks = HashMap<String, Mutex>()
-    private val memory = object : LinkedHashMap<String, MetaResult>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MetaResult>?) = size > MEMORY_ENTRIES
-    }
+    private val locksLock = PlainLock()
+    private val memory = LruMap<String, MetaResult>(MEMORY_ENTRIES)
     private val pausedUntil = HashMap<MetaProvider, Long>()
+    private val pausedLock = PlainLock()
 
     val settings: StateFlow<MetaSettings> get() = store.settings
 
@@ -94,7 +97,7 @@ class OnlineMetadata(
         s.refusedKey.isNotEmpty() && s.refusedKey == print(key) && (own || now() - s.refusedAt < REFUSED_RETRY_MS)
 
     private fun print(key: String): String =
-        MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).take(6).joinToString("") { "%02x".format(it) }
+        sha256(key.encodeToByteArray()).take(6).joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
 
     /** The language tag TMDB is asked in: the UI's, with the pseudo-locales and plain English as en-US. */
     fun tmdbLanguage(tag: String = language()): String = when {
@@ -107,7 +110,7 @@ class OnlineMetadata(
     /** What is already known for [query] in memory, for the first frame. Never touches the disk or the network. */
     fun peek(query: MetaQuery): MetaResult? {
         if (!store.now.enabled) return MetaResult.Off
-        return synchronized(memory) { memory[query.cacheKey(tmdbLanguage())] }
+        return memory[query.cacheKey(tmdbLanguage())]
     }
 
     /**
@@ -124,20 +127,20 @@ class OnlineMetadata(
             val (result, keep) = resolve(query, lang)
             if (keep) {
                 cache.putAnswer(key, result)
-                synchronized(memory) { memory[key] = result }
+                memory[key] = result
             }
             result
         }
     }
 
     private fun remembered(key: String): MetaResult? {
-        synchronized(memory) { memory[key] }?.let { return it }
+        memory[key]?.let { return it }
         val stored = cache.answer(key) ?: return null
-        synchronized(memory) { memory[key] = stored }
+        memory[key] = stored
         return stored
     }
 
-    private fun lockFor(key: String): Mutex = synchronized(locks) {
+    private fun lockFor(key: String): Mutex = locksLock.locked {
         if (locks.size > MEMORY_ENTRIES) locks.entries.removeAll { !it.value.isLocked }
         locks.getOrPut(key) { Mutex() }
     }
@@ -185,7 +188,7 @@ class OnlineMetadata(
         }
     }
 
-    private fun paused(provider: MetaProvider): Boolean = synchronized(pausedUntil) {
+    private fun paused(provider: MetaProvider): Boolean = pausedLock.locked {
         (pausedUntil[provider] ?: 0L) > now()
     }
 
@@ -193,7 +196,7 @@ class OnlineMetadata(
     private fun <T> trouble(provider: MetaProvider, reply: MetaReply<T>, key: String? = null): Outcome? = when (reply) {
         is MetaReply.Ok -> null
         is MetaReply.Throttled -> {
-            synchronized(pausedUntil) { pausedUntil[provider] = now() + reply.retryAfterMs }
+            pausedLock.locked { pausedUntil[provider] = now() + reply.retryAfterMs }
             Outcome.Blocked
         }
         MetaReply.Refused -> {
@@ -396,9 +399,7 @@ class OnlineMetadata(
 
     // ---- the detail page's extras -------------------------------------------------------------
 
-    private val extrasMemory = object : LinkedHashMap<String, MetaExtras>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MetaExtras>?) = size > EXTRAS_MEMORY_ENTRIES
-    }
+    private val extrasMemory = LruMap<String, MetaExtras>(EXTRAS_MEMORY_ENTRIES)
 
     private fun extrasKey(info: MetaInfo, lang: String, region: String): String =
         listOf("extras2", info.provider.name, info.kind.name, info.id, lang, region).joinToString("|")
@@ -406,7 +407,7 @@ class OnlineMetadata(
     /** The extras for [info] already in memory, for the first frame. Never touches the disk or the network. */
     fun peekExtras(info: MetaInfo): MetaExtras? {
         if (!store.now.enabled) return null
-        return synchronized(extrasMemory) { extrasMemory[extrasKey(info, tmdbLanguage(), region())] }
+        return extrasMemory[extrasKey(info, tmdbLanguage(), region())]
     }
 
     /**
@@ -499,15 +500,15 @@ class OnlineMetadata(
             rememberedExtras(key)?.let { return@withLock it }
             val found = fetchExtras(info, lang) ?: return@withLock null
             cache.putExtras(key, found)
-            synchronized(extrasMemory) { extrasMemory[key] = found }
+            extrasMemory[key] = found
             found
         }
     }
 
     private fun rememberedExtras(key: String): MetaExtras? {
-        synchronized(extrasMemory) { extrasMemory[key] }?.let { return it }
+        extrasMemory[key]?.let { return it }
         val stored = cache.extras(key) ?: return null
-        synchronized(extrasMemory) { extrasMemory[key] = stored }
+        extrasMemory[key] = stored
         return stored
     }
 
@@ -536,9 +537,7 @@ class OnlineMetadata(
 
     // ---- a show's episode lists ----------------------------------------------------------------
 
-    private val seasonMemory = object : LinkedHashMap<String, List<MetaEpisode>>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<MetaEpisode>>?) = size > EXTRAS_MEMORY_ENTRIES
-    }
+    private val seasonMemory = LruMap<String, List<MetaEpisode>>(EXTRAS_MEMORY_ENTRIES)
 
     private fun seasonKey(info: MetaInfo, season: Int, lang: String): String =
         listOf("season", info.provider.name, info.id, season, lang).joinToString("|")
@@ -546,7 +545,7 @@ class OnlineMetadata(
     /** [season]'s list already in memory, for the first frame. */
     fun peekSeason(info: MetaInfo, season: Int): List<MetaEpisode>? {
         if (!store.now.enabled || info.kind != MetaKind.Show) return null
-        return synchronized(seasonMemory) { seasonMemory[seasonKey(info, season, tmdbLanguage())] }
+        return seasonMemory[seasonKey(info, season, tmdbLanguage())]
     }
 
     /**
@@ -560,11 +559,11 @@ class OnlineMetadata(
         if (!store.now.enabled || info.kind != MetaKind.Show || info.provider == MetaProvider.AniList) return null
         val lang = tmdbLanguage()
         val key = seasonKey(info, season, lang)
-        synchronized(seasonMemory) { seasonMemory[key] }?.let { return it }
+        seasonMemory[key]?.let { return it }
         return lockFor(key).withLock {
-            synchronized(seasonMemory) { seasonMemory[key] }?.let { return@withLock it }
+            seasonMemory[key]?.let { return@withLock it }
             cache.season(key)?.let { stored ->
-                synchronized(seasonMemory) { seasonMemory[key] = stored }
+                seasonMemory[key] = stored
                 return@withLock stored
             }
             if (paused(info.provider)) return@withLock null
@@ -580,7 +579,7 @@ class OnlineMetadata(
                         else -> return@withLock null
                     }
                     cache.putSeason(key, found)
-                    synchronized(seasonMemory) { seasonMemory[key] = found }
+                    seasonMemory[key] = found
                     found
                 }
                 MetaProvider.TvMaze -> {
@@ -594,12 +593,12 @@ class OnlineMetadata(
                     all.groupBy { it.season }.forEach { (number, list) ->
                         val k = seasonKey(info, number, lang)
                         cache.putSeason(k, list)
-                        synchronized(seasonMemory) { seasonMemory[k] = list }
+                        seasonMemory[k] = list
                     }
                     val found = all.filter { it.season == season }
                     if (found.isEmpty()) {
                         cache.putSeason(key, found)
-                        synchronized(seasonMemory) { seasonMemory[key] = found }
+                        seasonMemory[key] = found
                     }
                     found
                 }
@@ -649,17 +648,17 @@ class OnlineMetadata(
      * The picture at [url] as a file on this device, fetched once and kept with the answers. Only
      * the three providers' own image hosts are fetched from.
      */
-    suspend fun image(url: String): File? {
+    suspend fun image(url: String): CachedImage? {
         cache.image(url)?.let { return it }
         if (!store.now.enabled) return null
-        val host = runCatching { URI(url).host }.getOrNull() ?: return null
+        val host = hostOf(url) ?: return null
         if (!url.startsWith("https://") || host !in IMAGE_HOSTS) return null
         return lockFor("image|$url").withLock {
             cache.image(url)?.let { return@withLock it }
             imageLimiter.acquire()
             val response = try {
                 http.send(HttpRequest("GET", url, mapOf("User-Agent" to userAgent)))
-            } catch (e: java.io.IOException) {
+            } catch (e: IOException) {
                 return@withLock null
             }
             if (response.code !in 200..299 || response.body.isEmpty()) return@withLock null
@@ -682,9 +681,9 @@ class OnlineMetadata(
     /** Every answer and picture, from the disk and from memory. */
     fun purge() {
         cache.purge()
-        synchronized(memory) { memory.clear() }
-        synchronized(extrasMemory) { extrasMemory.clear() }
-        synchronized(seasonMemory) { seasonMemory.clear() }
+        memory.clear()
+        extrasMemory.clear()
+        seasonMemory.clear()
     }
 
     companion object {
@@ -709,20 +708,9 @@ class OnlineMetadata(
     }
 }
 
-/** What Settings says about TMDB. Shows still come from TVmaze and AniList in every state. */
-enum class TmdbState {
-    /** The build's key. */
-    AppKey,
-
-    /** The viewer's own key. */
-    OwnKey,
-
-    /** No key at all: a fork or a CI build without the secret, and no key of the viewer's own. */
-    NoKey,
-
-    /** TMDB refused the build's key, so films go without until an update or a key of the viewer's own. */
-    AppKeyRefused,
-
-    /** TMDB refused the viewer's own key. */
-    OwnKeyRefused,
+/** The host of an `https://` URL, as `URI(url).host`, or null. */
+internal fun hostOf(url: String): String? {
+    val rest = url.substringAfter("://", "").takeIf { it.isNotEmpty() } ?: return null
+    val authority = rest.substringBefore('/').substringBefore('?').substringBefore('#').substringAfterLast('@')
+    return authority.substringBefore(':').lowercase().takeIf { it.isNotEmpty() }
 }

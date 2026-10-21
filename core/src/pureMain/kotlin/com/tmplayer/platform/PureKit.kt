@@ -52,3 +52,11 @@ fun interface TextCollator {
 
 /** A collator for [locale]; [primary] ignores case and accents, as Collator.PRIMARY does. */
 expect fun textCollator(locale: TmLocale, primary: Boolean = false): TextCollator
+
+/** The device's own locale as a BCP 47 tag ("en-GB"), as `Locale.getDefault()` says it. */
+expect fun deviceLocaleTag(): String
+
+/** A lock for the few maps several threads share on the JVM; nothing to lock in the browser. */
+expect class PlainLock() {
+    fun <T> locked(block: () -> T): T
+}

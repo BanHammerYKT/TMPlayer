@@ -1,9 +1,8 @@
 package com.tmplayer.online
 
+import com.tmplayer.platform.stripCombiningMarks
 import com.tmplayer.data.MediaName
-import org.json.JSONObject
-import java.text.Normalizer
-import java.util.Locale
+import com.tmplayer.json.JSONObject
 
 /** Where a poster and an overview came from. Each one is credited where its words appear. */
 enum class MetaProvider(val label: String) {
@@ -201,7 +200,7 @@ object MetaMatch {
 
     /** Lower case, accents and punctuation gone, "&" as "and", a leading article dropped. */
     fun normalise(title: String): String {
-        val plain = Normalizer.normalize(title.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace(MARKS, "")
+        val plain = stripCombiningMarks(title.lowercase()).replace(MARKS, "")
         return plain.replace("&", " and ").replace(NOT_WORD, " ").trim().replace(ARTICLE, "")
     }
 

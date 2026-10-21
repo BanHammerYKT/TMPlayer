@@ -1,7 +1,7 @@
 package com.tmplayer.online
 
-import org.json.JSONArray
-import org.json.JSONObject
+import com.tmplayer.json.JSONArray
+import com.tmplayer.json.JSONObject
 
 /**
  * What a stretch of an episode is. A show's intro and an anime's opening are told apart only for

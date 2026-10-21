@@ -1,9 +1,11 @@
 package com.tmplayer.online
 
+import com.tmplayer.platform.LruMap
+import com.tmplayer.platform.deviceLocaleTag
+import com.tmplayer.platform.putIfMissing
 import com.tmplayer.data.MediaItem
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.Locale
+import com.tmplayer.json.JSONArray
+import com.tmplayer.json.JSONObject
 
 /** One name in the cast: the actor (or, for anime, the character) and who they play or voice. */
 data class MetaPerson(
@@ -184,16 +186,16 @@ object MetaRules {
     /** The rating to show, rounded to one decimal, or null when too few voted or nobody did. */
     fun rating(average: Double, votes: Int): Double? {
         if (votes < MIN_VOTES || average <= 0.0 || average.isNaN()) return null
-        return Math.round(average.coerceAtMost(10.0) * 10) / 10.0
+        return kotlin.math.round(average.coerceAtMost(10.0) * 10) / 10.0
     }
 
     /** The viewer's region: the device's country, or the US where it has none. */
-    fun region(locale: Locale = Locale.getDefault()): String = locale.country.uppercase(Locale.ROOT).takeIf { it.length == 2 } ?: "US"
+    fun region(tag: String = deviceLocaleTag()): String = tag.replace('_', '-').split('-').drop(1).firstOrNull { it.length == 2 && it.all(Char::isLetter) }?.uppercase() ?: "US"
 
     /** The age rating for [region], else the US one, else none. Blank ratings are none. */
     fun certification(byRegion: Map<String, String>, region: String): String? {
-        val clean = byRegion.filterValues { it.isNotBlank() }.mapKeys { it.key.uppercase(Locale.ROOT) }
-        return clean[region.uppercase(Locale.ROOT)] ?: clean["US"]
+        val clean = byRegion.filterValues { it.isNotBlank() }.mapKeys { it.key.uppercase() }
+        return clean[region.uppercase()] ?: clean["US"]
     }
 
     /**
@@ -214,9 +216,9 @@ object MetaRules {
      * one in the UI language, then English, then any; the newest of what is left.
      */
     fun trailer(videos: List<MetaVideo>, uiLanguage: String): MetaTrailer? {
-        val ui = uiLanguage.substringBefore('-').lowercase(Locale.ROOT)
+        val ui = uiLanguage.substringBefore('-').lowercase()
         fun languageRank(v: MetaVideo): Int {
-            val lang = v.language.lowercase(Locale.ROOT)
+            val lang = v.language.lowercase()
             return when {
                 lang.isNotEmpty() && lang == ui -> 0
                 lang == "en" -> 1
@@ -243,10 +245,10 @@ object MetaRules {
      * the title's own record names.
      */
     fun poster(posters: List<MetaPoster>, uiLanguage: String, original: String?): MetaPoster? {
-        val ui = uiLanguage.substringBefore('-').lowercase(Locale.ROOT)
-        val first = original?.substringBefore('-')?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }
+        val ui = uiLanguage.substringBefore('-').lowercase()
+        val first = original?.substringBefore('-')?.lowercase()?.takeIf { it.isNotBlank() }
         fun tier(p: MetaPoster): Int? {
-            val lang = p.language?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() && it != "xx" }
+            val lang = p.language?.lowercase()?.takeIf { it.isNotBlank() && it != "xx" }
             return when {
                 lang != null && lang == ui -> 0
                 lang == null || lang == "en" -> 1
@@ -281,7 +283,7 @@ object MetaRules {
         if (similar.isEmpty() || known.isEmpty()) return emptyList()
         val selfKey = MetaRef.matchKey(self.provider, self.kind, self.id)
         val byKey = LinkedHashMap<String, KnownTitle>()
-        for (k in known) byKey.putIfAbsent(MetaRef.matchKey(k.info.provider, k.info.kind, k.info.id), k)
+        for (k in known) byKey.putIfMissing(MetaRef.matchKey(k.info.provider, k.info.kind, k.info.id), k)
         return similar.asSequence()
             .map { it.matchKey }
             .filter { it != selfKey }
@@ -300,9 +302,7 @@ object MetaRules {
 object KnownMedia {
     private const val LIMIT = 1_500
 
-    private val items = object : LinkedHashMap<String, MediaItem>(256, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MediaItem>?) = size > LIMIT
-    }
+    private val items = LruMap<String, MediaItem>(LIMIT)
 
     private val changes = kotlinx.coroutines.flow.MutableStateFlow(0)
 
@@ -314,15 +314,15 @@ object KnownMedia {
 
     fun note(list: Collection<MediaItem>) {
         if (list.isEmpty()) return
-        synchronized(items) { list.forEach { items[it.id] = it } }
+        items.locked { list.forEach { this[it.id] = it } }
         changes.value = changes.value + 1
     }
 
     /** Most recently listed last. */
-    fun all(): List<MediaItem> = synchronized(items) { items.values.toList() }
+    fun all(): List<MediaItem> = items.values.toList()
 
     fun clear() {
-        synchronized(items) { items.clear() }
+        items.clear()
         changes.value = changes.value + 1
     }
 }

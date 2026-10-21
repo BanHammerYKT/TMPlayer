@@ -52,3 +52,9 @@ actual fun textCollator(locale: TmLocale, primary: Boolean): TextCollator {
     val collator = Collator.getInstance(locale).apply { if (primary) strength = Collator.PRIMARY }
     return TextCollator { a, b -> collator.compare(a, b) }
 }
+
+actual fun deviceLocaleTag(): String = java.util.Locale.getDefault().toLanguageTag()
+
+actual class PlainLock actual constructor() {
+    actual fun <T> locked(block: () -> T): T = synchronized(this) { block() }
+}

@@ -48,3 +48,11 @@ actual fun textCollator(locale: TmLocale, primary: Boolean): TextCollator {
     val tag = locale.tag
     return TextCollator { a, b -> jsCompare(tag, primary, a, b) }
 }
+
+private fun jsLanguage(): String = js("(navigator.languages && navigator.languages[0]) || navigator.language || 'en-US'")
+
+actual fun deviceLocaleTag(): String = runCatching { jsLanguage() }.getOrDefault("en-US")
+
+actual class PlainLock actual constructor() {
+    actual fun <T> locked(block: () -> T): T = block()
+}

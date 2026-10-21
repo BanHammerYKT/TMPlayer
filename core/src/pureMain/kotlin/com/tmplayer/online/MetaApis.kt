@@ -1,9 +1,9 @@
 package com.tmplayer.online
 
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.IOException
-import java.net.URLEncoder
+import com.tmplayer.json.JSONArray
+import com.tmplayer.json.JSONObject
+import com.tmplayer.platform.IOException
+import com.tmplayer.platform.formEncode
 
 /** A metadata provider's answer, sorted into what [OnlineMetadata] has to tell apart. */
 sealed interface MetaReply<out T> {
@@ -33,7 +33,7 @@ data class MetaCandidate(
     val originalLanguage: String = "",
 )
 
-private fun enc(text: String): String = URLEncoder.encode(text, "UTF-8")
+private fun enc(text: String): String = formEncode(text)
 
 /** The objects in [list], skipping anything that is not one. */
 private fun objects(list: JSONArray?): List<JSONObject> =

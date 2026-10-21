@@ -1,5 +1,6 @@
 package com.tmplayer.data
 
+import com.tmplayer.platform.sortedDistinct
 import com.tmplayer.online.MetaAiring
 import com.tmplayer.online.MetaEpisode
 import com.tmplayer.online.MetaSeason
@@ -41,7 +42,7 @@ object EpisodeGuide {
         val meta: MetaEpisode?,
         val state: State,
     ) {
-        val code: String get() = "S%02dE%02d".format(java.util.Locale.ROOT, season, number)
+        val code: String get() = "S${season.toString().padStart(2, '0')}E${number.toString().padStart(2, '0')}"
     }
 
     /**
@@ -52,7 +53,7 @@ object EpisodeGuide {
     fun seasons(series: Series?, listed: List<MetaSeason>, next: MetaAiring?, today: String): List<Season> {
         val held = series?.seasons.orEmpty().associate { it.number to it.episodes.size }
         val provider = listed.associateBy { it.number }
-        val numbers = (held.keys + provider.keys + listOfNotNull(next?.season)).filter { it > 0 }.toSortedSet()
+        val numbers = (held.keys + provider.keys + listOfNotNull(next?.season)).filter { it > 0 }.sortedDistinct()
         return numbers.map { n ->
             val listedSeason = provider[n]
             val have = held[n] ?: 0
@@ -75,7 +76,7 @@ object EpisodeGuide {
     fun episodes(season: Int, series: Series?, listed: List<MetaEpisode>?, today: String): List<Episode> {
         val held = series?.seasons?.firstOrNull { it.number == season }?.episodes.orEmpty().associateBy { it.episode }
         val provider = listed.orEmpty().filter { it.season == season }.associateBy { it.number }
-        val numbers = (held.keys + provider.keys).toSortedSet()
+        val numbers = (held.keys + provider.keys).sortedDistinct()
         return numbers.map { n ->
             val mine = held[n]
             val meta = provider[n]
