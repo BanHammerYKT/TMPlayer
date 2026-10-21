@@ -67,6 +67,17 @@ class App : Application() {
                 AppLocales.apply(this@App, saved)
             }
         }
+        // The stream warm-up stays out of Low storage mode and of "Save mobile data" on a metered
+        // line, whatever asks for it ([com.tmplayer.player.StreamWarmup]).
+        backgroundScope.launch {
+            val store = SettingsStore(this@App)
+            val tv = com.tmplayer.data.FormFactor.isTv(this@App)
+            kotlinx.coroutines.flow.combine(store.lowStorageMode, store.saveMobileData) { low, save -> low to save }
+                .collect { (low, save) ->
+                    val saving = com.tmplayer.data.MeteredPolicy.saveMobileDataInForce(save, tv)
+                    com.tmplayer.player.StreamWarmup.allowed = { !low && !(saving && NetworkMonitor.metered.value) }
+                }
+        }
         // Lighter pictures and Reduce motion (CP68), from the stored choice and whenever it changes.
         // Before the promo return, so the fixture shows a screen as a low-end device draws it.
         backgroundScope.launch {
@@ -178,13 +189,18 @@ class App : Application() {
         override fun onActivityStarted(activity: android.app.Activity) {
             started++
             inFront = true
+            // Back in view: TDLib reopens a line it lost in the background at once (Td).
+            Td.onForegroundChanged(true)
         }
 
         override fun onActivityStopped(activity: android.app.Activity) {
             started = (started - 1).coerceAtLeast(0)
             inFront = started > 0
             // A rotation stops and starts the same activity; it is not the app being left.
-            if (started == 0 && !activity.isChangingConfigurations) AppLockSession.lock()
+            if (started == 0 && !activity.isChangingConfigurations) {
+                AppLockSession.lock()
+                Td.onForegroundChanged(false)
+            }
         }
 
         override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit

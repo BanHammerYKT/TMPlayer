@@ -23,6 +23,8 @@ enum class PlayerMenuEntry {
     VolumeBoost,
     /** Night mode: the range squeezed, so loud scenes are quieter and dialogue clearer. */
     NightMode,
+    /** Even out volume: a quiet track lifted to the level of other videos. On or off. */
+    EvenVolume,
     /** A page of lengths, and the time left on one that is running. */
     SleepTimer,
     /** A-B repeat: set the start, then the end, then stop; the line says which comes next. */
@@ -67,6 +69,7 @@ enum class PhoneMenuEntry {
     PictureShape,
     VolumeBoost,
     NightMode,
+    EvenVolume,
     SleepTimer,
     /** A-B repeat, as on the television: one line that says what the next press does. */
     AbLoop,
@@ -109,6 +112,7 @@ fun PhoneMenuEntry.label(
     PhoneMenuEntry.PictureShape -> shape?.let { L.commonWithDetail(L.playerPictureShape, it.label) } ?: L.playerPictureShape
     PhoneMenuEntry.VolumeBoost -> L.playerVolumeBoost
     PhoneMenuEntry.NightMode -> L.playerNightMode
+    PhoneMenuEntry.EvenVolume -> L.playerEvenVolume
     PhoneMenuEntry.SleepTimer -> sleepDetail?.let { L.playerSleepTimerNow(it) } ?: L.playerSleepTimer
     PhoneMenuEntry.AbLoop -> PlayerMenu.loopLabel(loop)
     PhoneMenuEntry.NextChapter -> L.playerChapterNext
@@ -174,6 +178,7 @@ object PlayerMenu {
         add(PlayerMenuEntry.StartOver)
         add(PlayerMenuEntry.VolumeBoost)
         add(PlayerMenuEntry.NightMode)
+        add(PlayerMenuEntry.EvenVolume)
         add(PlayerMenuEntry.SleepTimer)
         add(PlayerMenuEntry.AbLoop)
         if (chapters) {
@@ -221,6 +226,7 @@ object PlayerMenu {
         if (pictureShape) add(PhoneMenuEntry.PictureShape)
         add(PhoneMenuEntry.VolumeBoost)
         add(PhoneMenuEntry.NightMode)
+        add(PhoneMenuEntry.EvenVolume)
         add(PhoneMenuEntry.SleepTimer)
         add(PhoneMenuEntry.AbLoop)
         if (chapters) {

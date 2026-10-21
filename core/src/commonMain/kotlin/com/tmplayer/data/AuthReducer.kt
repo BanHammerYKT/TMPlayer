@@ -83,8 +83,12 @@ sealed interface AuthState {
     /** Telegram wants an answer and the user has not said which way they want to give it. */
     data object ChooseMethod : AuthState
 
-    /** Scan [link] with Telegram on your phone: Settings -> Devices -> Link Desktop Device. */
-    data class Qr(val link: String) : AuthState
+    /**
+     * Scan [link] with Telegram on your phone: Settings -> Devices -> Link Desktop Device.
+     * [scanned] only on the screen's own copy held for a moment after the scan ([rememberScanHold]
+     * in :ui); TDLib never reports one.
+     */
+    data class Qr(val link: String, val scanned: Boolean = false) : AuthState
 
     /** Waiting for a phone number, in international form. */
     data class Phone(val wrong: Boolean = false) : AuthState

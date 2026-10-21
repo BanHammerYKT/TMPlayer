@@ -945,7 +945,6 @@
     "size_smaller": "Daha küçük"
   },
   "keep": {
-    "cannot_post": "Bu sohbette paylaşım yapamazsın.",
     "export_failed": "Kopyalanamadı: {reason}",
     "export_folder": "Bir klasöre kopyala",
     "export_folder_detail": "İndirilen dosyanın seçtiğin yere bir kopyası",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Diğer uygulamalar için Movies/TMPlayer içinde bir kopya",
     "exported_folder": "Kopyalandı: {folder}",
     "exported_gallery": "Movies/TMPlayer klasörüne kaydedildi",
-    "exporting": "Kopyalanıyor: {title}",
-    "failed": "İletilemedi: {reason}",
-    "forward_chat": "Bir sohbete ilet",
-    "forward_chat_detail": "Gönderiyi paylaşır, hiçbir şey indirilmez",
-    "forward_none": "İletilecek sohbet yok.",
-    "forward_saved": "Kayıtlı Mesajlar'a ilet",
-    "forward_saved_detail": "Kendi Telegram'ında saklar, hiçbir şey indirilmez",
-    "forward_search": "Sohbet bul",
-    "forward_title": "Şuraya ilet",
-    "forwarded_saved": "Kayıtlı Mesajlar'a iletildi",
-    "forwarded_to": "İletildi: {chat}",
-    "forwarding": "İletiliyor",
-    "not_forwardable": "Telegram bu gönderinin iletilmesine izin vermiyor.",
-    "protected": "Bu sohbet videolarının iletilmesine ya da kaydedilmesine izin vermiyor."
+    "exporting": "Kopyalanıyor: {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

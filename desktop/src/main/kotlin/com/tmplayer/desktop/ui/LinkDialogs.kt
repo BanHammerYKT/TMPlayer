@@ -51,8 +51,6 @@ import com.tmplayer.ui.browse.LinkFlow
 import com.tmplayer.ui.browse.LinkRequests
 import com.tmplayer.ui.browse.LinkStep
 import com.tmplayer.ui.browse.PagedVideos
-import com.tmplayer.ui.browse.forwardVideo
-import com.tmplayer.ui.browse.rememberForwardTargets
 import com.tmplayer.ui.components.rememberToast
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
@@ -266,69 +264,6 @@ internal fun MoreVideosDialog(
 }
 
 private fun Modifier.height8(): Modifier = this.then(Modifier.padding(top = 8.dp))
-
-/**
- * Forward to a chat (CP82): Saved Messages first, then people and groups, a field to find one by
- * name. A click forwards and closes; the toast says where it went.
- */
-@Composable
-internal fun ForwardDialog(item: MediaItem, onDismiss: () -> Unit) {
-    val s = LocalStrings.current
-    val toast = rememberToast()
-    val targets = rememberForwardTargets()
-    var query by remember { mutableStateOf("") }
-    val field = remember { FocusRequester() }
-    DesktopSheet(onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(s.keepForwardTitle, style = MaterialTheme.typography.headlineSmall)
-            Text(item.title, color = Tone.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                placeholder = { Text(s.keepForwardSearch) },
-                leadingIcon = { Icon(TmIcons.Search, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth().focusRequester(field),
-            )
-            LaunchedEffect(Unit) { runCatching { field.requestFocus() } }
-            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
-                val shown = targets?.filter { query.isBlank() || it.title.contains(query.trim(), ignoreCase = true) }
-                when {
-                    shown == null -> CircularProgressIndicator(Modifier.padding(16.dp).size(24.dp))
-                    shown.isEmpty() -> Text(s.keepForwardNone, color = Tone.muted, modifier = Modifier.padding(vertical = 8.dp))
-                    else -> shown.forEach { chat -> ForwardTargetLine(chat) { forwardTo(item, chat, toast); onDismiss() } }
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onDismiss) { Text(s.commonClose) }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun ForwardTargetLine(chat: ChatSummary, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = MaterialTheme.shapes.small, color = Color.Transparent, modifier = Modifier.fillMaxWidth().pointerHoverIcon(PointerIcon.Hand)) {
-        Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            ChatAvatar(chat.miniThumbnail, chat.photoFileId, chat.title, 32.dp)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (chat.kind != ChatKind.Saved) Text(chat.kind.label, color = Tone.muted, style = MaterialTheme.typography.bodySmall)
-            }
-            Icon(TmIcons.Send, contentDescription = null, tint = Tone.muted, modifier = Modifier.size(18.dp))
-        }
-    }
-}
-
-/** Forwards on the process's scope, so the closed card does not take the forward with it. */
-internal fun forwardTo(item: MediaItem, chat: ChatSummary?, toast: (String) -> Unit) {
-    toast(L.keepForwarding)
-    Background.scope.launch {
-        val toSaved = chat == null || chat.kind == ChatKind.Saved
-        toast(forwardVideo(item, if (toSaved) null else chat!!.id, chat?.title.orEmpty()))
-    }
-}
 
 /** The way into a chat's round videos over its posters (CP81). */
 @Composable

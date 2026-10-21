@@ -181,10 +181,9 @@ internal fun MediaDetailOpened(
         return
     }
 
-    // The comments under a channel post (CP81), and the two sheets that keep a video (CP82).
+    // The comments under a channel post (CP81).
     val comments = rememberCommentCount(item)
     var commentsOpen by remember { mutableStateOf(false) }
-    var forwardOpen by remember { mutableStateOf(false) }
     if (commentsOpen) {
         val list = remember(item.id) { PagedVideos.comments(scope, item.chatId, item.messageId) }
         MoreVideosSheet(
@@ -197,10 +196,6 @@ internal fun MediaDetailOpened(
             onPlay = { video -> onDismiss(); LinkRequests.play(video) },
             onDismiss = { commentsOpen = false },
         )
-        return
-    }
-    if (forwardOpen) {
-        ForwardPickerSheet(item, onDismiss = { forwardOpen = false; onDismiss() })
         return
     }
 
@@ -224,7 +219,6 @@ internal fun MediaDetailOpened(
             matched = matched,
             wrongMatch = correction?.wrongMatch == true,
             comments = comments,
-            canForward = true,
             // The phone's gallery: Android 10 and later, where MediaStore needs no permission. A
             // television has no gallery anyone looks at.
             canExport = touch && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q,
@@ -281,14 +275,6 @@ internal fun MediaDetailOpened(
             } }
             DetailAction.Rename -> { { renaming = true } }
             DetailAction.CommentVideos -> { { commentsOpen = true } }
-            DetailAction.ForwardToSaved -> { {
-                com.tmplayer.ui.components.showMessage(context, s.keepForwarding)
-                App.backgroundScope.launch(Dispatchers.Main) {
-                    com.tmplayer.ui.components.showMessage(context, forwardVideo(item, null))
-                }
-                onDismiss()
-            } }
-            DetailAction.ForwardToChat -> { { forwardOpen = true } }
             DetailAction.ExportCopy -> { {
                 com.tmplayer.ui.components.showMessage(context, s.keepExporting(item.title))
                 App.backgroundScope.launch(Dispatchers.Main) {
@@ -309,7 +295,6 @@ internal fun MediaDetailOpened(
             cancelRow(s, downloading, run)
         } else {
             detailRow(action, s, watched, chatTitle, run, free = free)
-                .refusedForwarding(item) { com.tmplayer.ui.components.showMessage(context, it) }
         }
     }
 

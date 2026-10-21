@@ -1401,6 +1401,18 @@ internal fun BoxScope.StatusSheet(
                     // The logs to send with a report of it: saved and shown, or straight to GitHub.
                     Spacer(Modifier.height(8.dp))
                     com.tmplayer.desktop.ui.SendLogsActions()
+                    // What went wrong, in words a report or a forum post can carry.
+                    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                    var copied by remember(phase) { mutableStateOf(false) }
+                    TextButton(onClick = {
+                        val details = buildString {
+                            appendLine("TMPlayer ${com.tmplayer.desktop.BuildInfo.VERSION}, ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
+                            appendLine(if (subtitle.isNotBlank()) "$title ($subtitle)" else title)
+                            appendLine(phase.message)
+                        }
+                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(details))
+                        copied = true
+                    }) { Text(if (copied) s.playerDetailsCopied else s.playerCopyDetails) }
                 }
                 is Phase.Countdown -> {
                     Text(s.playerNextUp(nextLabel(phase.next)), color = Color.White, fontSize = 17.sp)

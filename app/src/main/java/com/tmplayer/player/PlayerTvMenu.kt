@@ -84,6 +84,8 @@ class PlayerTvMenu(
     private val volumeBoost: () -> Boolean = { false },
     /** Whether Night mode is on, for the line's detail. */
     private val nightMode: () -> Boolean = { false },
+    /** Whether Even out volume is on, for the line's detail. */
+    private val evenVolume: () -> Boolean = { true },
     /** The running sleep timer's detail ("23 minutes left"), or null when there is none. */
     private val sleepTimer: () -> String? = { null },
     /** A sleep timer chosen from its page: minutes, [SleepTimer.END_OF_VIDEO], or null for off. */
@@ -178,6 +180,11 @@ class PlayerTvMenu(
                 label = s.playerNightMode,
                 icon = TmIcons.VolumeDown,
                 detail = if (nightMode()) s.playerNightModeOnDetail else s.commonOff,
+            ) { choose(entry) }
+            PlayerMenuEntry.EvenVolume -> MenuAction(
+                label = s.playerEvenVolume,
+                icon = ImageVector.vectorResource(R.drawable.ic_volume),
+                detail = if (evenVolume()) s.playerEvenVolumeOnDetail else s.commonOff,
             ) { choose(entry) }
             PlayerMenuEntry.SleepTimer -> MenuAction(
                 label = s.playerSleepTimer,

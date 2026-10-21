@@ -945,7 +945,6 @@
     "size_smaller": "ছোট"
   },
   "keep": {
-    "cannot_post": "আপনি ওই চ্যাটে পোস্ট করতে পারবেন না।",
     "export_failed": "কপি করা গেল না: {reason}",
     "export_folder": "একটি ফোল্ডারে কপি করুন",
     "export_folder_detail": "ডাউনলোডের একটি কপি, যেখানে আপনি চান",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Movies/TMPlayer-এ একটি কপি, অন্য অ্যাপের জন্য",
     "exported_folder": "{folder}-এ কপি হয়েছে",
     "exported_gallery": "Movies/TMPlayer-এ সেভ হয়েছে",
-    "exporting": "{title} কপি হচ্ছে",
-    "failed": "ফরওয়ার্ড করা গেল না: {reason}",
-    "forward_chat": "একটি চ্যাটে ফরওয়ার্ড করুন",
-    "forward_chat_detail": "পোস্টটি শেয়ার করে, কিছুই ডাউনলোড হয় না",
-    "forward_none": "ফরওয়ার্ড করার মতো কোনো চ্যাট নেই।",
-    "forward_saved": "সেভড মেসেজে ফরওয়ার্ড করুন",
-    "forward_saved_detail": "এটি আপনার নিজের Telegram-এ রাখে, কিছুই ডাউনলোড হয় না",
-    "forward_search": "চ্যাট খুঁজুন",
-    "forward_title": "ফরওয়ার্ড করুন",
-    "forwarded_saved": "সেভড মেসেজে ফরওয়ার্ড হয়েছে",
-    "forwarded_to": "{chat}-এ ফরওয়ার্ড হয়েছে",
-    "forwarding": "ফরওয়ার্ড হচ্ছে",
-    "not_forwardable": "Telegram এই পোস্ট ফরওয়ার্ড করতে দেয় না।",
-    "protected": "এই চ্যাট এর ভিডিও ফরওয়ার্ড বা সেভ করতে দেয় না।"
+    "exporting": "{title} কপি হচ্ছে"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

@@ -38,6 +38,7 @@ private val COMPACT_NAV = booleanPreferencesKey("compact_nav")
 private val DOWNMIX_STEREO = booleanPreferencesKey("downmix_stereo")
 private val VOLUME_BOOST = booleanPreferencesKey("volume_boost")
 private val NIGHT_MODE = booleanPreferencesKey("night_mode")
+private val EVEN_VOLUME = booleanPreferencesKey("even_volume")
 private val RESUME_SYNC = booleanPreferencesKey("resume_sync")
 private val RESUME_SYNC_MESSAGE = longPreferencesKey("resume_sync_message")
 private val RESUME_SYNC_KEYS = stringPreferencesKey("resume_sync_keys")
@@ -684,6 +685,20 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
 
     /** Read before the player is built, like [volumeBoostNow]. */
     suspend fun nightModeNow(): Boolean = prefs.data.first()[NIGHT_MODE] ?: false
+
+    /**
+     * Even out volume: a track mastered quietly (a film made for a cinema, most surround tracks)
+     * lifted towards the level of everything else, never past a cap and never clipped. On until
+     * turned off, because a film 10 dB quieter than the video before it is the common case.
+     */
+    val evenVolume: Flow<Boolean> = read { it[EVEN_VOLUME] ?: true }
+
+    suspend fun setEvenVolume(value: Boolean) {
+        prefs.edit { it[EVEN_VOLUME] = value }
+    }
+
+    /** Read before the player is built, like [volumeBoostNow]. */
+    suspend fun evenVolumeNow(): Boolean = prefs.data.first()[EVEN_VOLUME] ?: true
 
     /**
      * Resume across devices ([ResumeSync]): Continue watching kept in a message in the viewer's

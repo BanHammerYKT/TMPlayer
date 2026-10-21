@@ -205,7 +205,17 @@ internal fun HeroPill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
     ) {
-        Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(24.dp))
+        // A press of Play on its way to the player turns the triangle into a spinner, so the
+        // press answers at once even while the file is still being looked up (PlayPress).
+        androidx.compose.animation.Crossfade(com.tmplayer.ui.components.PlayPress.starting, label = "heroPillBusy") { busy ->
+            if (busy) {
+                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator(color = ink, strokeWidth = 2.5.dp, modifier = Modifier.size(20.dp))
+                }
+            } else {
+                Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(24.dp))
+            }
+        }
         // A long label in a long language wraps rather than losing its end.
         Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = ink, maxLines = 2)
     }
