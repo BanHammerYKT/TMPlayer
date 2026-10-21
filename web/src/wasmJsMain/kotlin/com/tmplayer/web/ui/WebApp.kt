@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFontFamilyResolver
@@ -29,10 +30,11 @@ import com.tmplayer.web.js.TmHost
 fun WebApp(app: WebAppState, family: FontFamily?, firstFallbacks: List<FontFamily>) {
     val theme by app.prefs.themeState.collectAsState()
     val black by app.prefs.blackState.collectAsState()
+    val systemDark by produceState(TmHost.prefersDark()) { TmHost.onDarkChange { value = it } }
     val dark = when (theme) {
         "dark" -> true
         "light" -> false
-        else -> TmHost.prefersDark()
+        else -> systemDark
     }
     WebTheme(family, dark, black) {
         val resolver = LocalFontFamilyResolver.current

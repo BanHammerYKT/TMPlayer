@@ -80,6 +80,10 @@ fun WebTheme(
         LocalStrings provides messages,
         LocalLayoutDirection provides if (messages.rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
     ) {
-        MaterialTheme(colorScheme = scheme, typography = typography(family), shapes = TmShapes, content = content)
+        MaterialTheme(colorScheme = scheme, typography = typography(family), shapes = TmShapes) {
+            // Text and icons outside a Surface read LocalContentColor, which defaults to black:
+            // the ground's own text colour, so nothing is drawn black on the dark theme.
+            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides scheme.onBackground, content = content)
+        }
     }
 }

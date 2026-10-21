@@ -32,6 +32,7 @@ fun main() {
         val firstFallbacks = WebFonts.firstFor(tag).mapNotNull { name ->
             WebFonts.bytes("fonts/$name.ttf")?.let { WebFonts.family(name, it) }
         }
+        com.tmplayer.web.player.WebPlayer.installStrings()
         app.start()
         ComposeViewport(document.getElementById("app")!!) {
             WebApp(app, family, firstFallbacks)

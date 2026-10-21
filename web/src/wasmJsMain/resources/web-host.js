@@ -28,6 +28,12 @@
 
   let popHandler = null;
   window.addEventListener('popstate', () => {
+    // The player's own history entry (web/player/player.js) is not one of the app's screens.
+    if (window.__tmSkipPop) {
+      window.__tmSkipPop = false;
+      return;
+    }
+    if (window.TmPlayer && window.TmPlayer.isOpen) return;
     if (popHandler) popHandler();
   });
 
@@ -152,6 +158,11 @@
       } catch (e) {
         return true;
       }
+    },
+    onDarkChange(handler) {
+      try {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => handler(e.matches));
+      } catch (e) {}
     },
     setThemeColor(color, dark) {
       const m = document.querySelector('meta[name="theme-color"]');

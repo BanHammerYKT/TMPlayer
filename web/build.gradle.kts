@@ -1,5 +1,6 @@
 import java.net.URI
 import java.security.MessageDigest
+import java.util.Base64
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 
@@ -85,12 +86,114 @@ val fetchTdweb = tasks.register("fetchTdweb") {
             val target = dir.resolve(name)
             if (target.exists() && sha256(target.readBytes()) == hash) continue
             val url = "https://raw.githubusercontent.com/DIBgram/tdweb/$tdwebCommit/dist/$name"
-            val bytes = URI(url).toURL().openStream().use { it.readBytes() }
+            // The network here can be slow; three tries before giving up.
+            var bytes = ByteArray(0)
+            for (attempt in 1..3) {
+                bytes = runCatching {
+                    val conn = URI(url).toURL().openConnection().apply {
+                        connectTimeout = 30_000
+                        readTimeout = 120_000
+                    }
+                    conn.getInputStream().use { it.readBytes() }
+                }.getOrElse { if (attempt == 3) throw it else ByteArray(0) }
+                if (bytes.isNotEmpty()) break
+            }
             val got = sha256(bytes)
             if (got != hash) throw GradleException("tdweb: $name has SHA-256 $got, expected $hash")
             target.writeBytes(bytes)
         }
     }
+}
+
+// tdweb's worker with sparse storage for TDLib's files directory (web/tdweb/sparse-fs.js): on
+// OPFS where the browser has it, else in memory chunks with a ceiling, instead of stock MEMFS's
+// dense arrays, so seeking into a 4 GB video does not allocate 4 GB. Three exact text edits over
+// the verified original; a missing anchor fails the build rather than shipping half a patch.
+val patchTdweb = tasks.register("patchTdweb") {
+    val source = layout.buildDirectory.dir("tdweb")
+    val sparse = layout.projectDirectory.file("tdweb/sparse-fs.js")
+    val out = layout.buildDirectory.dir("tdweb-site")
+    dependsOn(fetchTdweb)
+    inputs.dir(source)
+    inputs.file(sparse)
+    outputs.dir(out)
+    doLast {
+        val dir = out.get().asFile.apply { deleteRecursively(); mkdirs() }
+        val src = source.get().asFile
+        for (name in tdwebFiles.keys) src.resolve(name).copyTo(dir.resolve(name), overwrite = true)
+        val workerName = "8a2ea5aea50674d967ce.worker.js"
+        var worker = src.resolve(workerName).readText()
+        fun edit(anchor: String, replacement: String) {
+            val count = worker.split(anchor).size - 1
+            if (count != 1) throw GradleException("tdweb patch: '$anchor' found $count times, expected once")
+            worker = worker.replace(anchor, replacement)
+        }
+        // Open the disk files of the last session before TDLib's files directory is made...
+        edit(
+            "return ifs.idb;",
+            "return Promise.all([ifs.idb, self.TmSparse.prepare()]).then(function (r) { return r[0]; });",
+        )
+        // ...and make that directory sparse once it exists.
+        edit("ifs.FS.mkdir(root);", "ifs.FS.mkdir(root);\n                self.TmSparse.mount(ifs.FS, root);")
+        // A finished video is not read whole into memory to be copied into IndexedDB: it stays
+        // where it is, and is read from there in parts. Small files (thumbnails) still are.
+        edit(
+            "value: function saveFile(pid, file) {",
+            "value: function saveFile(pid, file) {\n      if ((file.size || file.expected_size || 0) > 8388608) {\n        return file;\n      }",
+        )
+        dir.resolve(workerName).writeText(sparse.asFile.readText() + "\n" + worker)
+    }
+}
+
+// movi-player 0.4.1 (Apache-2.0; FFmpeg inside its wasm is LGPL-2.1+, dav1d BSD-2-Clause): the
+// decoder for what the browser cannot play itself (docs/WEB.md, "Playback"). The npm tarball is
+// fetched at the version below and checked against the registry's SHA-512 integrity; only the
+// slim element, its wasm and the licence are served, under player/movi/, and only loaded when a
+// video needs it.
+val moviVersion = "0.4.1"
+val moviIntegrity = "sha512-oA91s8nxyt7tnd7SaZNKVkjkz8UeHVrcZNxWQSBo5Jj/MOog7pnGtwv0edimjwocJkZVBBtBMy8Ef4HOGzBJGQ=="
+
+val fetchMovi = tasks.register("fetchMovi") {
+    val out = layout.buildDirectory.file("movi/movi-player-$moviVersion.tgz")
+    inputs.property("version", moviVersion)
+    inputs.property("integrity", moviIntegrity)
+    outputs.file(out)
+    doLast {
+        val target = out.get().asFile
+        fun check(bytes: ByteArray): Boolean =
+            "sha512-" + Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-512").digest(bytes)) == moviIntegrity
+        if (target.exists() && check(target.readBytes())) return@doLast
+        val url = "https://registry.npmjs.org/movi-player/-/movi-player-$moviVersion.tgz"
+        var bytes = ByteArray(0)
+        for (attempt in 1..3) {
+            bytes = runCatching {
+                URI(url).toURL().openConnection().apply {
+                    connectTimeout = 30_000
+                    readTimeout = 300_000
+                }.getInputStream().use { it.readBytes() }
+            }.getOrElse { if (attempt == 3) throw it else ByteArray(0) }
+            if (bytes.isNotEmpty()) break
+        }
+        if (!check(bytes)) throw GradleException("movi-player $moviVersion does not match its integrity hash")
+        target.parentFile.mkdirs()
+        target.writeBytes(bytes)
+    }
+}
+
+val moviSite = tasks.register<Sync>("moviSite") {
+    dependsOn(fetchMovi)
+    from(tarTree(resources.gzip(layout.buildDirectory.file("movi/movi-player-$moviVersion.tgz")))) {
+        include("package/dist/element.slim.js", "package/dist/movi.wasm", "package/LICENSE")
+        eachFile { path = "player/movi/" + name }
+        includeEmptyDirs = false
+    }
+    into(layout.buildDirectory.dir("movi-site"))
+}
+
+// The player layer (web/player), served under player/.
+val playerSite = tasks.register<Sync>("playerSite") {
+    from(layout.projectDirectory.dir("player")) { into("player") }
+    into(layout.buildDirectory.dir("player-site"))
 }
 
 // The UI catalogs the apps use, served as they are and fetched by the page for the chosen
@@ -126,7 +229,9 @@ kotlin {
     sourceSets {
         wasmJsMain {
             kotlin.srcDir(generateBuildInfo)
-            resources.srcDir(fetchTdweb)
+            resources.srcDir(patchTdweb)
+            resources.srcDir(moviSite)
+            resources.srcDir(playerSite)
             resources.srcDir(copyCatalogs.map { layout.buildDirectory.dir("catalogs").get() })
             resources.srcDir(copyFonts.map { layout.buildDirectory.dir("fonts").get() })
             dependencies {

@@ -32,6 +32,7 @@ external object TmHost : JsAny {
     fun deviceKind(): String
     fun platform(): String
     fun prefersDark(): Boolean
+    fun onDarkChange(handler: (Boolean) -> Unit)
     fun setThemeColor(color: String, dark: Boolean)
     fun setTitle(text: String)
     fun pushState(name: String)

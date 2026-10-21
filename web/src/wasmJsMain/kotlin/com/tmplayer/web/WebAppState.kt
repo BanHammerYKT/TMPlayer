@@ -3,6 +3,8 @@ package com.tmplayer.web
 import com.tmplayer.web.data.WebChats
 import com.tmplayer.web.data.WebFiles
 import com.tmplayer.web.data.WebPrefs
+import com.tmplayer.web.data.WebResume
+import com.tmplayer.web.data.WebVideos
 import com.tmplayer.web.td.WebAuth
 import com.tmplayer.web.td.WebTd
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +16,8 @@ class WebAppState(val scope: CoroutineScope) {
     val auth = WebAuth(td, scope)
     val files = WebFiles(td, scope)
     val chats = WebChats(td, scope, files)
+    val videos = WebVideos(td)
+    val resume = WebResume(prefs)
 
     fun start() {
         auth.onReady = { chats.onSignedIn() }
