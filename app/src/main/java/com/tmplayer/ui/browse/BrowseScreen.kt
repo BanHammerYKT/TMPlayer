@@ -366,6 +366,19 @@ internal fun BrowseScreen(
     LaunchedEffect(searchConnected) { if (searchConnected) search.reconnected() }
     val panelScope = rememberCoroutineScope()
     val panelContext = LocalContext.current
+    // Hiding a chat from its menu: gone from the lists at once, with Undo on a touch screen. Under
+    // a remote the message says where it is shown again instead, as the pill takes no focus.
+    val hiddenToast = com.tmplayer.ui.components.rememberActionToast()
+    val hideScope = rememberCoroutineScope()
+    val hideStore = remember(panelContext) { SettingsStore(panelContext) }
+    val hideTouch = !FormFactor.isTv(panelContext)
+    val hideChat: (ChatSummary) -> Unit = { chat ->
+        hideScope.launch { hideStore.hideChat(chat.id, chat.title) }
+        hiddenToast(
+            if (hideTouch) s.browseChatHidden(chat.title) else s.browseChatHiddenWhere(chat.title),
+            s.browseUndo,
+        ) { hideScope.launch { hideStore.showChat(chat.id) } }
+    }
     // A hold, the info key or a right click: the quick menu, which leads to the page by Details.
     var held by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }
     val holdMedia: (MediaItem, String) -> Unit = { item, title -> held = item to title }
@@ -1032,6 +1045,17 @@ internal fun BrowseScreen(
                         chatMenu = null
                         justStarred = if (favorite) null else chat.id
                         onToggleFavorite(chat)
+                    },
+                )
+                // Also private to this device: the chat leaves TMPlayer's lists, never Telegram.
+                add(
+                    MenuAction(
+                        label = s.browseHideChat,
+                        icon = TmIcons.VisibilityOff,
+                        detail = s.browseHideChatDetail,
+                    ) {
+                        chatMenu = null
+                        hideChat(chat)
                     },
                 )
                 // Everything below this point changes the chat in Telegram itself rather than

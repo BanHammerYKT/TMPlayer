@@ -266,6 +266,8 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
     val allowedChats by com.tmplayer.data.ChatGate.allowed.collectAsState()
     val favourites = remember(storedFavourites, allowedChats) { com.tmplayer.data.KidsLock.favourites(storedFavourites, allowedChats) }
     val watchedList by state.watched.history.collectAsState(initial = emptyList())
+    // The chats hidden from their menus (see HiddenChats), listed below with Show.
+    val hiddenChats by settings.hiddenChats.collectAsState(initial = emptyList())
     var confirm by remember { mutableStateOf<Confirm?>(null) }
     var confirmClearWatched by remember { mutableStateOf(false) }
     // A backup file picked, with what restoring it would change, while the prompt is up.
@@ -348,6 +350,24 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
             if (on) {
                 toast(s.settingsResumeSyncStarted)
                 com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
+            }
+        }
+    }
+    // Hidden chats: each one with Show, and Show all for several; the empty list says how one gets here.
+    if (hiddenChats.isEmpty()) {
+        Setting(s.settingsHiddenChats, s.settingsHiddenChatsNone, icon = TmIcons.VisibilityOff) {}
+    } else {
+        Setting(s.settingsHiddenChats, s.settingsHiddenChatsNote, icon = TmIcons.VisibilityOff) {}
+        hiddenChats.forEach { chat ->
+            Action(chat.title.ifBlank { chat.id.toString() }, s.settingsHiddenChatOne, TmIcons.Chats, value = s.settingsHiddenChatsShow, end = RowEnd.None) {
+                scope.launch { settings.showChat(chat.id) }
+                toast(s.settingsHiddenChatsShown(chat.title))
+            }
+        }
+        if (hiddenChats.size > 1) {
+            Action(s.settingsHiddenChatsShowAll, s.settingsHiddenChatsDetail(hiddenChats.size), TmIcons.Checklist, end = RowEnd.None) {
+                scope.launch { settings.showAllChats() }
+                toast(s.settingsHiddenChatsAllShown)
             }
         }
     }

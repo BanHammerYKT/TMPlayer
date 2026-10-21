@@ -610,8 +610,15 @@ fun rememberHomeRows(
      */
     autoFill: Boolean = true,
 ): List<HomeRow> {
-    val loaded by model.loaded.collectAsState()
-    val recent by model.recent.collectAsState()
+    // A hidden chat's videos leave Home with it: its Continue watching and Watch later cards too.
+    val hidden by com.tmplayer.data.HiddenChats.ids.collectAsState()
+    val continueWatching = remember(continueWatching, hidden) { com.tmplayer.data.HiddenChats.filter(continueWatching, hidden) { it.chatId } }
+    val watchLater = remember(watchLater, hidden) { com.tmplayer.data.HiddenChats.filter(watchLater, hidden) { it.chatId } }
+    val loadedAll by model.loaded.collectAsState()
+    val recentAll by model.recent.collectAsState()
+    // What was read before the chat was hidden goes too, without waiting for the next refresh.
+    val loaded = remember(loadedAll, hidden) { if (hidden.isEmpty()) loadedAll else loadedAll - hidden }
+    val recent = remember(recentAll, hidden) { recentAll?.let { all -> com.tmplayer.data.HiddenChats.filter(all, hidden) { it.chatId } } }
     val partial by model.partial.collectAsState()
     val fresh by model.newEpisodes.collectAsState()
     LaunchedEffect(model, continueWatching, watched) { model.followShows(continueWatching, watched) }

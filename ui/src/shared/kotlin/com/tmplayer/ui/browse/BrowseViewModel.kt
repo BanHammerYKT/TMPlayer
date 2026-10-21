@@ -81,6 +81,10 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
         viewModelScope.launch {
             ChatGate.allowed.collect { publish() }
         }
+        // A chat hidden from its menu, or shown again from Settings, leaves or rejoins the list at once.
+        viewModelScope.launch {
+            com.tmplayer.data.HiddenChats.ids.collect { publish() }
+        }
     }
 
     /**
@@ -487,7 +491,7 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
     private fun publish() {
         val everything = chats ?: return
         val allowed = ChatGate.allowed.value
-        val loaded = KidsLock.chats(everything, allowed)
+        val loaded = com.tmplayer.data.HiddenChats.filter(KidsLock.chats(everything, allowed)) { it.id }
         _state.value = when {
             loaded.isNotEmpty() -> UiState.Content(BrowseData(loaded, account))
             // Said plainly, so a child's empty screen is not mistaken for a broken account.

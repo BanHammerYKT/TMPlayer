@@ -25,6 +25,7 @@ import okio.Path.Companion.toPath
 import java.io.File
 
 private val FAVORITES = stringSetPreferencesKey("favorite_chats")
+private val HIDDEN_CHATS = stringPreferencesKey("hidden_chats") // HiddenChats.KEY
 private val PLAYER_HINT_SEEN = booleanPreferencesKey("player_hint_seen")
 private val FIRST_VIDEO_TIP_DISMISSED = booleanPreferencesKey("first_video_tip_dismissed")
 private val TV_BROWSE_HINT_SEEN = booleanPreferencesKey("tv_browse_hint_seen")
@@ -325,6 +326,27 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
         .map(transform)
         .distinctUntilChanged()
         .flowOn(Dispatchers.Default)
+
+    // ---- hidden chats -----------------------------------------------------------------------
+
+    /** The chats hidden from TMPlayer's lists, in the order they were hidden. See [HiddenChats]. */
+    val hiddenChats: Flow<List<HiddenChat>> = read { HiddenChats.decode(it[HIDDEN_CHATS]) }
+
+    suspend fun hideChat(chatId: Long, title: String) {
+        prefs.edit { it[HIDDEN_CHATS] = HiddenChats.encode(HiddenChats.with(HiddenChats.decode(it[HIDDEN_CHATS]), HiddenChat(chatId, title))) }
+    }
+
+    /** Lists [chatId] again, wherever it was left out. */
+    suspend fun showChat(chatId: Long) {
+        prefs.edit { prefs ->
+            val left = HiddenChats.decode(prefs[HIDDEN_CHATS]).filter { it.id != chatId }
+            if (left.isEmpty()) prefs.remove(HIDDEN_CHATS) else prefs[HIDDEN_CHATS] = HiddenChats.encode(left)
+        }
+    }
+
+    suspend fun showAllChats() {
+        prefs.edit { it.remove(HIDDEN_CHATS) }
+    }
 
     // ---- favourites -------------------------------------------------------------------------
 
