@@ -383,22 +383,18 @@ class PromoCaptureActivity : ComponentActivity() {
                             val page = SettingsPage.entries.firstOrNull {
                                 it.name.equals(intent.getStringExtra("page"), ignoreCase = true)
                             }
-                            // Settings' own list on a television stands under the top bar, as in the app.
-                            PromoTvBar(
-                                shown = tv && page == null,
-                                current = com.tmplayer.ui.browse.TvBarTab.Settings,
-                                inProfile = false,
-                                go = { screen = it },
-                            ) {
-                                SettingsScreen(
-                                    chats = promoChats(),
-                                    onLoggedOut = {},
-                                    onBack = { screen = "chats" },
-                                    onOpenAbout = { screen = "about" },
-                                    initialPage = page,
-                                    accountFolders = if (intent.getBooleanExtra("folders", false) || groupsDemo) PROMO_FOLDERS else emptyList(),
-                                )
-                            }
+                            // A screen of its own, opened from the account's menu: no top bar over it,
+                            // as in the app.
+                            SettingsScreen(
+                                chats = promoChats(),
+                                // The demo account at the top, as the signed in one is in the app.
+                                account = Account("Demo", "demo", null, 0),
+                                onLoggedOut = {},
+                                onBack = { screen = "chats" },
+                                onOpenAbout = { screen = "about" },
+                                initialPage = page,
+                                accountFolders = if (intent.getBooleanExtra("folders", false) || groupsDemo) PROMO_FOLDERS else emptyList(),
+                            )
                         }
                         "about" -> AboutScreen(onBack = { screen = "settings" })
                         // The Downloads screen as it is, over this build's own empty index: the
@@ -1142,8 +1138,8 @@ internal fun promoTvNav(
 )
 
 /**
- * Settings' list and Downloads under the television's top bar, as MainActivity puts them; a
- * tab picked on it goes to that fixture screen.
+ * Downloads under the television's top bar, as MainActivity puts it; a tab picked on it, or a
+ * row of the account's menu, goes to that fixture screen.
  */
 @Composable
 private fun PromoTvBar(
@@ -1177,7 +1173,6 @@ private fun PromoTvBar(
                 searchOpen = false,
                 onHome = nav.onHome,
                 onChats = nav.onChats,
-                onSettings = nav.onSettings,
                 onSearch = { go("chats") },
                 onRefresh = null,
                 currentFocus = barFocus,

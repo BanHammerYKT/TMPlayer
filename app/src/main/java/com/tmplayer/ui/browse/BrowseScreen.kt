@@ -842,6 +842,8 @@ internal fun BrowseScreen(
         var tvSearchOpen by rememberSaveable { mutableStateOf(false) }
         val barFocus = remember { FocusRequester() }
         val pageFocus = remember { FocusRequester() }
+        // The account's picture, which Back from Settings returns the remote to.
+        val profileFocus = remember { FocusRequester() }
         var barRefocus by remember { mutableIntStateOf(0) }
         LaunchedEffect(barRefocus) {
             if (barRefocus == 0) return@LaunchedEffect
@@ -869,7 +871,7 @@ internal fun BrowseScreen(
             search.submit(text)
             tvSearchOpen = true
         }
-        // Search picked on the bar over Settings or Downloads.
+        // Search picked on the bar over Downloads.
         val barAsked by TvBarSignals.searchAsked.collectAsState()
         LaunchedEffect(barAsked) {
             if (!barAsked) return@LaunchedEffect
@@ -881,10 +883,11 @@ internal fun BrowseScreen(
         val pressedSinceArrival = remember { booleanArrayOf(false) }
         LaunchedEffect(returnToRail) {
             if (returnToRail == null) return@LaunchedEffect
+            val landing = if (returnToRail == RailReturn.Profile) profileFocus else barFocus
             repeat(RETURN_HOLD_FRAMES) {
                 if (pressedSinceArrival[0]) return@repeat
                 withFrameNanos { }
-                if (!pressedSinceArrival[0]) runCatching { barFocus.requestFocus() }
+                if (!pressedSinceArrival[0]) runCatching { landing.requestFocus() }
             }
             onReturnedToRail()
         }
@@ -952,7 +955,6 @@ internal fun BrowseScreen(
                     query = ""
                     tvNav.onChats()
                 },
-                onSettings = onOpenSettings,
                 onSearch = { tvSearchOpen = true },
                 beforeProfile = {
                     tvSearchOpen = false
@@ -970,6 +972,7 @@ internal fun BrowseScreen(
                 modifier = Modifier.onFocusChanged { tvBarHasFocus = it.hasFocus },
                 solid = { barGround },
                 onDown = { homeShown && runCatching { tvPlayFocus.requestFocus(FocusDirection.Enter) }.getOrDefault(false) },
+                profileFocus = profileFocus,
             )
         }
     }
@@ -1558,8 +1561,11 @@ private fun ContinueArt(text: VideoCardText, modifier: Modifier = Modifier, badg
 
 // ---- the television's top bar ----------------------------------------------------------------
 
-/** Back from Settings or Downloads, or a tab picked on their top bar: the remote goes to the browser's bar. */
-enum class RailReturn { Downloads, Settings }
+/**
+ * Back from Downloads, or a tab picked on its top bar: the remote goes to the browser's bar, on the
+ * page's own item. Back from Settings ([Profile]): onto the account's picture, whose menu opened it.
+ */
+enum class RailReturn { Downloads, Settings, Profile }
 
 /** How many frames, about a second and a half at 60 Hz, the top bar holds focus on its item. */
 private const val RETURN_HOLD_FRAMES = 90

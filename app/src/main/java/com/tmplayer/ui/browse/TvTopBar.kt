@@ -87,10 +87,10 @@ internal val TV_START: Dp = Tv.SafeH
 internal val TV_BAR_END: Dp = Tv.SafeH + Tv.FocusClearance
 
 
-/** The phone's three tabs, which the television's bar carries in the same order. */
-internal enum class TvBarTab { Home, Chats, Settings }
+/** The phone's two tabs, which the television's bar carries in the same order. */
+internal enum class TvBarTab { Home, Chats }
 
-/** Asks from the bar that a page outside the browser (Settings, Downloads) cannot answer itself. */
+/** Asks from the bar that a page outside the browser (Downloads) cannot answer itself. */
 internal object TvBarSignals {
     /** Search was picked on a page with no search of its own: the browser opens its search. */
     val searchAsked = MutableStateFlow(false)
@@ -104,9 +104,9 @@ internal object TvBarSignals {
 
 /**
  * The bar: the account's picture at the start, which opens what the phone's picture opens
- * (Favourites, Downloads, History, Watch later, Refresh where the page has something to fetch again
- * ([onRefresh]), and Update when there is one); then Search, and the tabs Home, Chats and Settings
- * in the phone's order; and at the end the app's mark, which takes no focus.
+ * (Favourites, Downloads, History, Watch later, Settings, Refresh where the page has something to
+ * fetch again ([onRefresh]), and Update when there is one); then Search, and the tabs Home and
+ * Chats in the phone's order; and at the end the app's mark, which takes no focus.
  *
  * Nothing is behind it: every page but Home starts below it and is clipped at its foot, and Home's
  * carousel picture melts into the page at its top; once Home's rows scroll up under the bar, the
@@ -124,7 +124,6 @@ internal fun TvTopBar(
     searchOpen: Boolean,
     onHome: () -> Unit,
     onChats: () -> Unit,
-    onSettings: () -> Unit,
     onSearch: () -> Unit,
     /** Called before any item of the account's menu goes anywhere (closes the search, say). */
     beforeProfile: () -> Unit = {},
@@ -139,13 +138,14 @@ internal fun TvTopBar(
     solid: () -> Float = { 0f },
     /** Down from the bar, for a page with a place of its own to land (Home's Play): true if it took the remote. */
     onDown: (() -> Boolean)? = null,
+    /** Also on the account's picture, for Back from Settings to put the remote back where it opened. */
+    profileFocus: FocusRequester? = null,
 ) {
     val s = LocalStrings.current
     var profileOpen by remember { mutableStateOf(false) }
     val ground = Tone.background
     val homeFocus = remember { FocusRequester() }
     val chatsFocus = remember { FocusRequester() }
-    val settingsFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val profileFocus = remember { FocusRequester() }
     // Which item the shared requester sits on; every other one keeps its own.
@@ -193,7 +193,9 @@ internal fun TvTopBar(
                 label = nav.account?.name ?: s.browseTabHistory,
                 onClick = { profileOpen = true },
                 open = profileOpen,
-                modifier = Modifier.focusRequester(profileRequester),
+                modifier = Modifier
+                    .focusRequester(profileRequester)
+                    .then(if (profileFocus != null) Modifier.focusRequester(profileFocus) else Modifier),
             )
             Spacer(Modifier.width(18.dp))
             Row(
@@ -204,7 +206,6 @@ internal fun TvTopBar(
                 BarTab(s.commonSearch, TmIcons.Search, searchOpen, onSearch, Modifier.focusRequester(searchRequester))
                 BarTab(s.browseTabHome, TmIcons.Home, current == TvBarTab.Home && !searchOpen, onHome, Modifier.focusRequester(focusOf(TvBarTab.Home, homeFocus)))
                 BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)))
-                BarTab(s.navSettings, TmIcons.Settings, current == TvBarTab.Settings && !searchOpen, onSettings, Modifier.focusRequester(focusOf(TvBarTab.Settings, settingsFocus)))
             }
             Spacer(Modifier.width(18.dp))
             // The app's own mark, the way a television's home screen signs itself: the picture's size.
@@ -229,6 +230,8 @@ internal fun TvTopBar(
                 add(MenuAction(s.navDownloads, TmIcons.Download, detail = nav.downloadCount.takeIf { it > 0 }?.toString(), onSelect = go(nav.onDownloads)))
                 add(MenuAction(s.browseTabHistory, TmIcons.History, onSelect = go { nav.onHistory(HistoryTab.Continue) }))
                 add(MenuAction(s.browseTabWatchLater, TmIcons.Clock, onSelect = go { nav.onHistory(HistoryTab.WatchLater) }))
+                // Settings, with the account at its top and Sign out at its foot, as on the phone.
+                add(MenuAction(s.navSettings, TmIcons.Settings, onSelect = go(nav.onSettings)))
                 // Home and the chat list fetch again from here: Home also refreshes itself when
                 // the app comes back after a while (MainActivity).
                 if (onRefresh != null) add(MenuAction(s.commonRefresh, TmIcons.Refresh, onSelect = { profileOpen = false; onRefresh() }))
@@ -374,9 +377,9 @@ private fun ProfileButton(
 }
 
 /**
- * The bar over a page outside the browser (Settings, Downloads): the same items, and the page
- * under it. Kept in one shape whether or not [shown], so the page under it keeps its state when
- * the bar comes and goes (a Settings page opened from its list hides the bar).
+ * The bar over a page outside the browser (Downloads): the same items, and the page under it.
+ * Kept in one shape whether or not [shown], so the page under it keeps its state when the bar
+ * comes and goes (Settings, About and the PIN pad have none).
  */
 @Composable
 internal fun TvBarFrame(
@@ -384,8 +387,9 @@ internal fun TvBarFrame(
     barFocus: FocusRequester,
     contentFocus: FocusRequester,
     /**
-     * Bumped when the page was opened from a bar's tab: the remote stays on the bar, held there
-     * against the page taking focus as it comes up, until a key is pressed.
+     * Bumped when the remote belongs on the bar as the page comes up (back from Settings, which
+     * the picture's menu opened): it is held there against the page taking focus, until a key is
+     * pressed.
      */
     holdBar: Int = 0,
     bar: @Composable () -> Unit,

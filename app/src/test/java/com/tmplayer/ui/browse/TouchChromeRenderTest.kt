@@ -87,26 +87,26 @@ class TouchChromeRenderTest {
 
     @Test
     @Config(sdk = [35], qualifiers = "w411dp-h891dp-port-night-xhdpi")
-    fun settingsLightsItsButton() {
+    fun chatsLightsItsButton() {
         val chrome = TouchChrome()
-        render("chrome-settings.png", chrome, "settings") {
-            TouchPage(TouchPageSpec(current = TouchDestination.Settings))
+        render("chrome-chats.png", chrome, "chats") {
+            TouchPage(TouchPageSpec(current = TouchDestination.Chats))
             rows()()
         }
-        // Settings is on the bar itself, so its own button is lit and the picture is not.
-        assertEquals(TouchDestination.Settings, chrome.specs["settings"]?.current)
-        assertFalse(chrome.specs["settings"]!!.inProfile)
-        assertEquals("settings", chrome.pageKey)
+        // Chats is on the bar itself, so its own button is lit and the picture is not.
+        assertEquals(TouchDestination.Chats, chrome.specs["chats"]?.current)
+        assertFalse(chrome.specs["chats"]!!.inProfile)
+        assertEquals("chats", chrome.pageKey)
     }
 
     @Test
     @Config(sdk = [35], qualifiers = "w360dp-h891dp-port-night-xhdpi")
     fun germanCaptionsFitTheirButtons() {
-        // "Einstellungen" is the longest caption the bar carries; it steps down rather than being cut.
+        // A long German caption steps down to fit its button rather than being cut.
         com.tmplayer.i18n.Translator.use("de")
         try {
             render("chrome-bar-de.png", TouchChrome(), "settings") {
-                TouchPage(TouchPageSpec(current = TouchDestination.Settings))
+                TouchPage(TouchPageSpec(current = TouchDestination.Chats))
                 rows()()
             }
         } finally {
