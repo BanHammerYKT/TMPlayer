@@ -65,10 +65,8 @@ class HomeAutoFillTest {
         assertEquals(listOf(HomeRow.Across.Kind.Videos, HomeRow.Across.Kind.Shows), across.map { it.kind })
         assertEquals("right under the carousel", listOf("recent", "across-videos", "across-shows"), rows.take(3).map { it.key })
         across.forEach { row -> assertTrue(row.entries.all { HomeRows.kindOf(it) == row.kind }) }
-        val chatRows = rows.filterIsInstance<HomeRow.Chat>()
-        chatRows.forEach { row -> assertTrue(row.entries.all { HomeRows.kindOf(it) == row.kind }) }
-        // Chat 1 has both, so two rows keyed apart; chat 2 only movies and videos.
-        assertEquals(listOf("chat-1", "chat-1-more", "chat-2"), chatRows.map { it.key })
+        // Carousel, Movies and Shows only: no row per chat, Watch later or New episodes.
+        assertEquals(listOf("recent", "across-videos", "across-shows"), rows.map { it.key })
         // Films come first among the videos.
         val videos = across.first { it.kind == HomeRow.Across.Kind.Videos }.entries.map { (it as ShelfEntry.File).item.messageId }
         assertEquals(e.messageId, videos.last())

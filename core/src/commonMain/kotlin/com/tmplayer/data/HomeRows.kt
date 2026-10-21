@@ -115,8 +115,9 @@ sealed interface HomeRow {
  *   ([homeChats], the app's default since 2026-10-21) the chats the search across chats found the
  *   most videos in, which leaves out family groups and news that only ever post a clip. Starred
  *   chats alone need two at least: with one, it would repeat that chat's own row.
- * - Filling itself, Home puts Movies and Shows across its chats straight under Continue watching,
- *   and gives each chat a row of its movies and a row of its shows: the two never share a row.
+ * - Filling itself, Home is the carousel, Continue watching, Movies and Shows, and nothing else
+ *   (user, 2026-10-21): no Watch later, New episodes or per chat rows, which stay in their own
+ *   pages. Movies and Shows are drawn across its chats, already inside the size limits.
  * - Every row holds at most [LIMIT] tiles. A show folded into one tile counts once.
  * - Continue watching holds one record per film or episode: copies of it (a 1080p and a 720p)
  *   fold into the one watched last ([foldCopies]).
@@ -242,13 +243,12 @@ object HomeRows {
         val everyLater = watchLater.distinctBy { it.key }.filterNot { it.key in inContinue }
         val later = everyLater.take(LIMIT)
         later.forEach { seen += it.key }
-        if (later.isNotEmpty()) add(HomeRow.WatchLater(later, everyLater.drop(LIMIT)))
+        if (later.isNotEmpty() && !autoFill) add(HomeRow.WatchLater(later, everyLater.drop(LIMIT)))
         val newEpisodes = fresh.filterNot { keyOf(it.item.chatId, it.item.messageId) in seen }.take(LIMIT)
-        if (newEpisodes.isNotEmpty()) add(HomeRow.NewEpisodes(newEpisodes))
+        if (newEpisodes.isNotEmpty() && !autoFill) add(HomeRow.NewEpisodes(newEpisodes))
 
-        // Shows, then films and other videos, across the chats: only where Home fills itself, and
-        // from two chats at least, or they would be one chat's row twice over.
-        if (autoFill && homeChats.size >= 2) {
+        // Movies (films first, then the other videos) and Shows across the chats, where Home fills itself.
+        if (autoFill && homeChats.isNotEmpty()) {
             val pool = recent.orEmpty().filter { it.chatId in homeIds } + homeIds.flatMap { loaded[it].orEmpty() }
             // A copy of what is seen: the chat rows below still show these in their own chats.
             val across = arranged(pool, HashSet(seen), shownCopies, inContinue)
@@ -261,7 +261,8 @@ object HomeRows {
             if (shows.isNotEmpty()) add(HomeRow.Across(HomeRow.Across.Kind.Shows, shows))
         }
 
-        homeChats.forEach { chat ->
+        // Filling itself, Home has no row per chat: Movies and Shows above draw from them all.
+        if (!autoFill) homeChats.forEach { chat ->
             val items = loaded[chat.id]
             if (items == null) {
                 add(HomeRow.Chat(chat.id, chat.title, emptyList(), loaded = false))
