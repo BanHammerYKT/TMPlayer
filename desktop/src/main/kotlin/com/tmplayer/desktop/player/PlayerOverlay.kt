@@ -350,6 +350,12 @@ private const val HOLD_MS = 500L
 internal fun BoxScope.PlayerOverlay(
     visible: Boolean,
     status: PlaybackStatus,
+    /**
+     * The live position and the buffer's end, read only by the time row and the bar, so the clock
+     * recomposes those and not the overlay; [status]'s own pair is the fixtures' default.
+     */
+    positionMs: () -> Long = { status.positionMs },
+    bufferedMs: () -> Long = { status.bufferedMs },
     title: String,
     subtitle: String,
     episodes: Episodes,
@@ -475,34 +481,7 @@ internal fun BoxScope.PlayerOverlay(
                     .hoverReport(onHoverControls)
                     .padding(start = 24.dp, end = 24.dp, top = 32.dp, bottom = 16.dp),
             ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(SeekMath.clock(status.positionMs), color = OnArtMuted, fontSize = 13.sp)
-                    // The chapter playing, as YouTube names it beside the time.
-                    val chapter = Chapters.at(status.chapters, status.positionMs)
-                    if (chapter >= 0) {
-                        Text(
-                            "  ·  " + Chapters.label(status.chapters, chapter),
-                            color = OnArtMuted,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (loop != null) {
-                        Chip(
-                            loop.endMs?.let { s.playerLoopChip(SeekMath.clock(loop.startMs), SeekMath.clock(it)) }
-                                ?: s.playerLoopStartChip(SeekMath.clock(loop.startMs)),
-                        )
-                        Spacer(Modifier.weight(1f))
-                    }
-                    Text(
-                        if (showRemaining) SeekMath.remaining(status.positionMs, status.durationMs) else SeekMath.clock(status.durationMs),
-                        color = OnArtMuted,
-                        fontSize = 13.sp,
-                        modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onToggleRemaining).padding(horizontal = 4.dp, vertical = 2.dp),
-                    )
-                }
-                TimeBar(status.positionMs, status.durationMs, status.bufferedMs, onSeekTo, status.chapters, loop, bookmarks.orEmpty())
+                TimesAndBar(positionMs, bufferedMs, status.durationMs, status.chapters, loop, bookmarks, showRemaining, onToggleRemaining, onSeekTo)
                 Spacer(Modifier.height(4.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     ControlsPill {
@@ -678,6 +657,54 @@ private fun VolumeControl(volume: Int, muted: Boolean, onVolume: (Int) -> Unit, 
         }
         OverlayButton(icon, if (muted) s.playerUnmuteHint else s.playerMuteHint, onToggleMute)
     }
+}
+
+/**
+ * The time, the chapter and the time left over the bar, and the bar: the only parts of the
+ * controls that read the position, in a scope of their own so the clock recomposes just these.
+ */
+@Composable
+private fun TimesAndBar(
+    positionMs: () -> Long,
+    bufferedMs: () -> Long,
+    durationMs: Long,
+    chapters: List<Chapter>,
+    loop: AbLoop?,
+    bookmarks: List<Bookmark>?,
+    showRemaining: Boolean,
+    onToggleRemaining: () -> Unit,
+    onSeekTo: (Long) -> Unit,
+) {
+    val s = LocalStrings.current
+    val position = positionMs()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(SeekMath.clock(position), color = OnArtMuted, fontSize = 13.sp)
+        // The chapter playing, as YouTube names it beside the time.
+        val chapter = Chapters.at(chapters, position)
+        if (chapter >= 0) {
+            Text(
+                "  ·  " + Chapters.label(chapters, chapter),
+                color = OnArtMuted,
+                fontSize = 13.sp,
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        if (loop != null) {
+            Chip(
+                loop.endMs?.let { s.playerLoopChip(SeekMath.clock(loop.startMs), SeekMath.clock(it)) }
+                    ?: s.playerLoopStartChip(SeekMath.clock(loop.startMs)),
+            )
+            Spacer(Modifier.weight(1f))
+        }
+        Text(
+            if (showRemaining) SeekMath.remaining(position, durationMs) else SeekMath.clock(durationMs),
+            color = OnArtMuted,
+            fontSize = 13.sp,
+            modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable(onClick = onToggleRemaining).padding(horizontal = 4.dp, vertical = 2.dp),
+        )
+    }
+    TimeBar(position, durationMs, bufferedMs(), onSeekTo, chapters, loop, bookmarks.orEmpty())
 }
 
 /**

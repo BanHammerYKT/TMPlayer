@@ -451,7 +451,10 @@ class TelegramPlayerMedia(
                 val size = if (f.size > 0) f.size else f.expectedSize
                 _downloaded.value = when {
                     f.local.isDownloadingCompleted -> 1f
-                    size > 0 -> (f.local.downloadedSize.toFloat() / size).coerceIn(0f, 1f)
+                    // In tenths of a percent: TDLib reports every few hundred kilobytes, and each
+                    // new figure recomposed the player screen. The screen shows whole percents,
+                    // and the stall watch still sees a tenth of one move.
+                    size > 0 -> (kotlin.math.floor(f.local.downloadedSize.toDouble() / size * 1000) / 1000).toFloat().coerceIn(0f, 1f)
                     else -> null
                 }
             }

@@ -19,6 +19,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -259,7 +260,13 @@ fun PlayerScreen(
 
     val scope = rememberCoroutineScope()
     val activeEngine by engine.activeFlow.collectAsState()
-    val status by activeEngine.state.collectAsState()
+    // Every update of the engine, the clock's four a second among them. Read in handlers, in the
+    // derived values below and by the small parts that draw the time, never in this body, so a
+    // tick of the clock recomposes the time label and the bar rather than the whole screen.
+    val liveStatus = activeEngine.state.collectAsState()
+    // The same status with the position and the buffer's end left as they were, which is what the
+    // body reads: it changes when something other than the clock does (SteadyStatus).
+    val status by remember(liveStatus) { derivedStateOf(SteadyStatus) { liveStatus.value } }
     val tracks by activeEngine.tracks.collectAsState()
     val castState by com.tmplayer.desktop.cast.DesktopCast.state.collectAsState()
 
@@ -403,15 +410,15 @@ fun PlayerScreen(
      */
     fun jumpTo(target: Long) {
         val to = SeekMath.clampTarget(target, status.durationMs)
-        undoOffer = seekUndo.seeked(status.positionMs, to, System.currentTimeMillis())
+        undoOffer = seekUndo.seeked(liveStatus.value.positionMs, to, System.currentTimeMillis())
         // The resume notice holds the same corner and answers the same question; the newer wins.
         if (undoOffer != null) resumedFrom = null
         engine.seekTo(target)
     }
 
     fun jumpBy(delta: Long) {
-        val to = SeekMath.clampSeek(status.positionMs, delta, status.durationMs)
-        undoOffer = seekUndo.seeked(status.positionMs, to, System.currentTimeMillis())
+        val to = SeekMath.clampSeek(liveStatus.value.positionMs, delta, status.durationMs)
+        undoOffer = seekUndo.seeked(liveStatus.value.positionMs, to, System.currentTimeMillis())
         if (undoOffer != null) resumedFrom = null
         engine.seekBy(delta)
     }
@@ -922,22 +929,36 @@ fun PlayerScreen(
         playerScope.launch { runCatching { settings.setNightMode(on) } }
     }
 
-    val left = status.durationMs - status.positionMs
     val next = episodes.next
     // The card comes up in the last half minute, or where the closing credits begin when the skip
     // times know that and it is earlier: once the credits roll, the next episode is the offer.
     val creditsAt = SkipSegments.creditsStart(skips, status.durationMs)
     val nextUpLead = maxOf(NEXT_UP_LEAD_MS, creditsAt?.let { status.durationMs - it } ?: 0L)
+    // What the clock decides, each derived from the live position so the body hears of it only
+    // when the answer changes, not on every tick.
+    val nearEnd by remember(liveStatus, nextUpLead) {
+        derivedStateOf { liveStatus.value.let { it.durationMs - it.positionMs } in 1..nextUpLead }
+    }
+    val pastLead by remember(liveStatus, nextUpLead) {
+        derivedStateOf { liveStatus.value.let { it.durationMs - it.positionMs } > nextUpLead }
+    }
     val nextUpVisible = phase == Phase.Playing && next != null && autoplayNext && !nextUpDismissed &&
-        status.durationMs > 0 && left in 1..nextUpLead
+        status.durationMs > 0 && nearEnd
     LaunchedEffect(nextUpVisible) { if (nextUpVisible) nextUpShown = true }
-    LaunchedEffect(left > nextUpLead) { if (left > nextUpLead) nextUpShown = false }
+    LaunchedEffect(pastLead) { if (pastLead) nextUpShown = false }
     // Credits timed to start well before the last half minute: the card counts [CREDITS_COUNTDOWN_MS]
     // down from where they begin and then moves on, rather than counting through every name.
     val earlyCredits = creditsAt != null && status.durationMs - creditsAt > NEXT_UP_LEAD_MS
-    val nextUpIn = if (earlyCredits) creditsAt!! + CREDITS_COUNTDOWN_MS - status.positionMs else left
-    LaunchedEffect(earlyCredits && nextUpVisible && nextUpIn <= 0) {
-        if (!(earlyCredits && nextUpVisible && nextUpIn <= 0) || next == null) return@LaunchedEffect
+    // The countdown in whole seconds, the unit the card shows, so it changes once a second.
+    val nextUpSeconds by remember(liveStatus, earlyCredits, creditsAt) {
+        derivedStateOf {
+            val now = liveStatus.value
+            val inMs = if (earlyCredits) creditsAt!! + CREDITS_COUNTDOWN_MS - now.positionMs else now.durationMs - now.positionMs
+            if (inMs <= 0) 0 else ((inMs + 999) / 1000).toInt()
+        }
+    }
+    LaunchedEffect(earlyCredits && nextUpVisible && nextUpSeconds <= 0) {
+        if (!(earlyCredits && nextUpVisible && nextUpSeconds <= 0) || next == null) return@LaunchedEffect
         recordWatched(current, status.durationMs, manual = false)
         runCatching { settings.clearResumePosition(item.chatId, item.messageId) }
         if (StillWatching.askBeforeAutoplay(autoplayedInARow)) {
@@ -950,9 +971,12 @@ fun PlayerScreen(
     // The segment the pill offers to skip. Credits that run to the end are the next-up card's
     // when there is a next episode, so they get no pill of their own; without one, the pill
     // skips to the end like any other. Never while the card is up, which has the same corner.
+    // Derived from the live position, so the body hears of it as a pill comes and goes only.
+    val skipAtPosition by remember(liveStatus, skips, skipped) {
+        derivedStateOf { liveStatus.value.let { SkipSegments.active(skips, it.positionMs, it.durationMs, skipped) } }
+    }
     val activeSkip = if (phase == Phase.Playing && status.durationMs > 0 && !nextUpVisible) {
-        SkipSegments.active(skips, status.positionMs, status.durationMs, skipped)
-            ?.takeUnless { next != null && isClosing(it, status.durationMs) }
+        skipAtPosition?.takeUnless { next != null && isClosing(it, status.durationMs) }
     } else {
         null
     }
@@ -1215,7 +1239,7 @@ fun PlayerScreen(
             showFlash(Flash.Kind.Text, com.tmplayer.data.ContentProtection.NOT_SAVABLE)
             return
         }
-        val at = status.positionMs
+        val at = liveStatus.value.positionMs
         // The name the title bar shows ("Night Train S01E02"), not the release name with its dots.
         val parsed = MediaName.parse(item.nameForParsing, item.caption)
         val name = listOfNotNull(parsed.title.ifBlank { null }, parsed.episodeCode).joinToString(" ").ifBlank { item.title }
@@ -1232,7 +1256,7 @@ fun PlayerScreen(
 
     /** R: the loop's start, then its end (and the loop runs), then off. */
     fun pressAbRepeat() {
-        val at = status.positionMs
+        val at = liveStatus.value.positionMs
         val before = abLoop
         val after = AbLoop.press(before, at)
         abLoop = after
@@ -1260,7 +1284,7 @@ fun PlayerScreen(
             seekFlash(delta)
             return
         }
-        val at = status.positionMs
+        val at = liveStatus.value.positionMs
         val target = if (forward) Chapters.next(chapters, at) else Chapters.previous(chapters, at)
         if (target == null) {
             showFlash(Flash.Kind.Text, if (forward) L.playerLastChapter else L.playerBeforeFirstChapter)
@@ -1273,7 +1297,7 @@ fun PlayerScreen(
     /** B and the menu's Add bookmark: the moment playing, with a note asked for in a dialog. */
     fun addBookmark() {
         if (!marksOn) return
-        notePrompt = NotePrompt(item.chatId, item.messageId, positionMs = status.positionMs)
+        notePrompt = NotePrompt(item.chatId, item.messageId, positionMs = liveStatus.value.positionMs)
     }
 
     fun saveNote(prompt: NotePrompt, note: String) {
@@ -1585,6 +1609,8 @@ fun PlayerScreen(
             ) { PlayerOverlay(
                 visible = showControls,
                 status = status,
+                positionMs = { liveStatus.value.positionMs },
+                bufferedMs = { liveStatus.value.bufferedMs },
                 title = title,
                 subtitle = subtitle,
                 episodes = episodes,
@@ -1741,7 +1767,7 @@ fun PlayerScreen(
             if (nextUpVisible && next != null) {
                 NextUpCard(
                     label = episodes.labelFor(next),
-                    secondsLeft = ((nextUpIn.coerceAtLeast(0) + 999) / 1000).toInt(),
+                    secondsLeft = nextUpSeconds,
                     lifted = showControls,
                     onPlayNow = {
                         switchTo(next)
@@ -1802,7 +1828,7 @@ fun PlayerScreen(
                 phase = phase,
                 item = current.item,
                 downloaded = downloaded,
-                bufferedMs = (status.bufferedMs - status.positionMs).coerceAtLeast(0),
+                bufferedMs = { liveStatus.value.let { (it.bufferedMs - it.positionMs).coerceAtLeast(0) } },
                 isDownload = current.isDownload,
                 onBack = onBack,
                 thumbnailOverride = loaderThumbnail,
@@ -1827,12 +1853,12 @@ fun PlayerScreen(
             // A stall while playing that runs on says why, with the opening's three ways on.
             PlaybackStall(
                 buffering = phase == Phase.Playing && status.buffering && !status.seekPending,
-                bufferedMs = status.bufferedMs,
+                bufferedMs = { liveStatus.value.bufferedMs },
                 downloaded = downloaded,
                 onRetry = {
                     // The connections reopened and the stream asked for again from where it stands.
                     scope.launch { runCatching { com.tmplayer.data.Td.retryConnecting() } }
-                    engine.seekTo(status.positionMs)
+                    engine.seekTo(liveStatus.value.positionMs)
                     refocus()
                 },
                 onDownloadFirst = if (savable && !current.isDownload) {
@@ -1940,7 +1966,7 @@ fun PlayerScreen(
             if (timePrompt) {
                 GoToTimeDialog(
                     durationMs = status.durationMs,
-                    positionMs = status.positionMs,
+                    positionMs = liveStatus.value.positionMs,
                     onGo = { target ->
                         timePrompt = false
                         jumpTo(target)
@@ -2068,3 +2094,12 @@ private fun isClosing(segment: SkipSegment, durationMs: Long): Boolean =
 private const val AUTOPLAY_COUNTDOWN_SEC = 8
 private const val SEEK_RUN_MS = 1_000L
 private const val STILL_WATCHING_TICK_MS = 5_000L
+
+/**
+ * Two statuses are the same to the player screen's body when only the clock moved: the position
+ * and the buffer's end are read live, by the time label, the bar and the values derived from them.
+ */
+private object SteadyStatus : androidx.compose.runtime.SnapshotMutationPolicy<PlaybackStatus> {
+    override fun equivalent(a: PlaybackStatus, b: PlaybackStatus): Boolean =
+        a.copy(positionMs = 0, bufferedMs = 0) == b.copy(positionMs = 0, bufferedMs = 0)
+}
