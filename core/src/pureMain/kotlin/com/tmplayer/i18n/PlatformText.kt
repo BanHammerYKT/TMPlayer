@@ -49,6 +49,12 @@ internal expect object PlatformText {
     /** ISO 639-2 and 639-3 codes to their two letter ISO 639-1 form. */
     fun threeLetterCodes(): Map<String, String>
 
+    /** Every language the platform knows, by its English name in lower case, to its code. */
+    fun englishLanguageNames(): Map<String, String>
+
+    /** The ISO 639-2 code of a two letter one (`de` to `deu`), or null when there is none. */
+    fun iso3Of(iso1: String): String?
+
     /** [text]'s first letter in title case, as [locale] has it (Turkish dotted I). */
     fun capitalize(text: String, locale: TmLocale): String
 }

@@ -7,34 +7,14 @@ import dev.g000sha256.tdl.dto.ConnectionStateReady
 import dev.g000sha256.tdl.dto.ConnectionStateUpdating
 import dev.g000sha256.tdl.dto.ConnectionStateWaitingForNetwork
 
-/**
- * Where TDLib's line to Telegram stands, as its `updateConnectionState` says.
- *
- * [Starting] is before the client has said anything at all, which is also what a client that has
- * just been replaced is.
- */
-enum class TelegramLink {
-    Starting,
-    WaitingForNetwork,
-    ConnectingToProxy,
-    Connecting,
-    Updating,
-    Ready,
-    ;
-
-    /** Requests are answered from [Updating] on, so both count as connected (see [Td.connected]). */
-    val isUp: Boolean get() = this == Updating || this == Ready
-
-    companion object {
-        fun of(state: ConnectionState): TelegramLink = when (state) {
-            is ConnectionStateWaitingForNetwork -> WaitingForNetwork
-            is ConnectionStateConnectingToProxy -> ConnectingToProxy
-            is ConnectionStateConnecting -> Connecting
-            is ConnectionStateUpdating -> Updating
-            is ConnectionStateReady -> Ready
-            else -> Connecting
-        }
-    }
+/** TDLib's `updateConnectionState`, as the [TelegramLink] it means. */
+fun TelegramLink.Companion.of(state: ConnectionState): TelegramLink = when (state) {
+    is ConnectionStateWaitingForNetwork -> TelegramLink.WaitingForNetwork
+    is ConnectionStateConnectingToProxy -> TelegramLink.ConnectingToProxy
+    is ConnectionStateConnecting -> TelegramLink.Connecting
+    is ConnectionStateUpdating -> TelegramLink.Updating
+    is ConnectionStateReady -> TelegramLink.Ready
+    else -> TelegramLink.Connecting
 }
 
 /** The kind of network the device is on, which is what TDLib's `setNetworkType` takes. */
