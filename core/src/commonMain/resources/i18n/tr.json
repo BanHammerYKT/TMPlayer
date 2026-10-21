@@ -846,6 +846,7 @@
     "select_videos_detail": "Birkaçını birden indir",
     "selected": "Seçili",
     "selected_count": "{count, plural, one {# seçili} other {# seçili}}",
+    "self_destructing_hidden": "{count, plural, one {# kendini imha eden video gösterilmiyor: Telegram'da aç.} other {# kendini imha eden video gösterilmiyor: Telegram'da aç.}}",
     "share_failed": "Bu video başka bir uygulamaya verilemez.",
     "share_not_here": "Bu video henüz bu telefonda değil.",
     "some_fit": "{needed} içinden {taken} sıraya alındı. {room}",

@@ -846,6 +846,7 @@
     "select_videos_detail": "ഒരേസമയം പലതും ഡൗൺലോഡ് ചെയ്യുക",
     "selected": "തിരഞ്ഞെടുത്തു",
     "selected_count": "{count, plural, one {# തിരഞ്ഞെടുത്തു} other {# തിരഞ്ഞെടുത്തു}}",
+    "self_destructing_hidden": "{count, plural, one {സ്വയം നശിക്കുന്ന # വീഡിയോ കാണിക്കുന്നില്ല: Telegram-ൽ തുറക്കുക.} other {സ്വയം നശിക്കുന്ന # വീഡിയോകൾ കാണിക്കുന്നില്ല: Telegram-ൽ തുറക്കുക.}}",
     "share_failed": "ആ വീഡിയോ മറ്റൊരു ആപ്പിന് കൈമാറാൻ കഴിയില്ല.",
     "share_not_here": "ആ വീഡിയോ ഇതുവരെ ഈ ഫോണിൽ ഇല്ല.",
     "some_fit": "{needed}-ൽ {taken} ക്യൂവിൽ ചേർത്തു. {room}",

@@ -846,6 +846,7 @@
     "select_videos_detail": "여러 개를 한 번에 다운로드해요",
     "selected": "선택됨",
     "selected_count": "{count, plural, other {#개 선택됨}}",
+    "self_destructing_hidden": "{count, plural, other {자동 삭제 영상 #개는 표시되지 않아요. Telegram에서 열어 보세요.}}",
     "share_failed": "그 영상을 다른 앱으로 넘길 수 없어요.",
     "share_not_here": "그 영상은 아직 이 휴대폰에 없어요.",
     "some_fit": "{needed}개 중 {taken}개를 대기열에 추가했어요. {room}",

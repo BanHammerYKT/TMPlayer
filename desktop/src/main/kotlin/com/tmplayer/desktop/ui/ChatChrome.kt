@@ -135,6 +135,8 @@ internal fun ChatBar(
     onToggleFavourite: () -> Unit,
     onSort: () -> Unit,
     sortAnchor: com.tmplayer.ui.components.PopoverAnchor,
+    /** A filter is on in this chat: the Sort button is drawn in the accent. */
+    filtered: Boolean = false,
 ) {
     val s = LocalStrings.current
     val command = if (OsInfo.isMac) "⌘" else "Ctrl+"
@@ -209,7 +211,7 @@ internal fun ChatBar(
                         },
                     )
                 }
-                BarIcon(TmIcons.Sort, s.gridSort, null, onSort, caption = s.gridSort, modifier = sortAnchor.modifier)
+                BarIcon(TmIcons.Sort, if (filtered) s.gridFilterOn else s.gridSort, null, onSort, caption = s.gridSort, modifier = sortAnchor.modifier, tint = if (filtered) Tone.accent else Tone.text)
                 BarIcon(
                     if (state.chatRows) TmIcons.Grid else TmIcons.List,
                     if (state.chatRows) s.browseShowAsTiles else s.browseShowAsRows,
@@ -249,12 +251,13 @@ private fun BarIcon(
     enabled: Boolean = true,
     caption: String? = null,
     modifier: Modifier = Modifier,
+    tint: androidx.compose.ui.graphics.Color = Tone.text,
 ) {
     // A glyph alone carries its own tooltip; one with its caption has the bar's here, as before.
     if (caption != null && shortcut == null) {
-        BarTooltip(label, null) { FloatingBarIcon(icon, label, onClick, modifier = modifier, enabled = enabled, caption = caption) }
+        BarTooltip(label, null) { FloatingBarIcon(icon, label, onClick, modifier = modifier, tint = tint, enabled = enabled, caption = caption) }
     } else {
-        FloatingBarIcon(icon, label, onClick, modifier = modifier, enabled = enabled, caption = caption, shortcut = shortcut)
+        FloatingBarIcon(icon, label, onClick, modifier = modifier, tint = tint, enabled = enabled, caption = caption, shortcut = shortcut)
     }
 }
 

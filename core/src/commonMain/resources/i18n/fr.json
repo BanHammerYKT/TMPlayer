@@ -846,6 +846,7 @@
     "select_videos_detail": "En télécharger plusieurs à la fois",
     "selected": "Sélectionnée",
     "selected_count": "{count, plural, one {# sélectionnée} many {# sélectionnées} other {# sélectionnées}}",
+    "self_destructing_hidden": "{count, plural, one {# vidéo éphémère n'est pas affichée : ouvrez-la dans Telegram.} many {# de vidéos éphémères ne sont pas affichées : ouvrez-les dans Telegram.} other {# vidéos éphémères ne sont pas affichées : ouvrez-les dans Telegram.}}",
     "share_failed": "Cette vidéo ne peut pas être transmise à une autre application.",
     "share_not_here": "Cette vidéo n'est pas encore sur ce téléphone.",
     "some_fit": "{taken} sur {needed} en file d'attente. {room}",

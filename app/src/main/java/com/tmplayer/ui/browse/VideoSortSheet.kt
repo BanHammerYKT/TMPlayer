@@ -1,83 +1,45 @@
 package com.tmplayer.ui.browse
 
 import androidx.compose.runtime.Composable
-import com.tmplayer.data.VideoSort
-import com.tmplayer.i18n.Messages
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import com.tmplayer.ui.components.ChoiceLine
-import com.tmplayer.ui.components.ChoicePopover
-import com.tmplayer.ui.components.PopoverAnchor
-import com.tmplayer.ui.components.PopoverChoice
-import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.components.ChoiceList
+import com.tmplayer.ui.components.ChoiceSection
 import com.tmplayer.ui.components.ChoiceSheet
+import com.tmplayer.ui.components.FocusOnOpen
 import com.tmplayer.ui.components.isTouch
 import com.tmplayer.ui.i18n.LocalStrings
-import androidx.compose.ui.focus.focusRequester
 
 /**
- * A chat's Sort menu: the orders of [VideoSort] as one radio group, the [current] one marked.
- * The same panel on a phone and under a remote ([ChoiceSheet]); a pick closes it.
+ * A chat's Sort menu under a remote: the panel every picker uses, with the same three groups as
+ * the phone's popover ([videoMenuGroups]): Sort videos by, Show and, while limits are set, Size
+ * limits, each a subheader over its lines with the one in force marked. A pick applies it and
+ * closes the panel, so the grid is seen to change behind it.
  */
 @Composable
-internal fun VideoSortSheet(current: VideoSort, onPick: (VideoSort) -> Unit, onDismiss: () -> Unit) {
+internal fun VideoSortSheet(state: VideoMenuState, onDismiss: () -> Unit) {
     val s = LocalStrings.current
     // The remote opens on the order in force, not on the first line, as every other picker does.
-    val chosen = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
-    ChoiceSheet(title = s.gridSortLabel, onDismiss = onDismiss, onClose = onDismiss, ignoreRelease = !isTouch()) {
+    val chosen = remember { FocusRequester() }
+    val groups = videoMenuGroups(state, s)
+    ChoiceSheet(title = s.gridSort, onDismiss = onDismiss, onClose = onDismiss, ignoreRelease = !isTouch()) {
         ChoiceList {
-            for (sort in VideoSort.entries) {
-                ChoiceLine(
-                    sortLabel(sort, s),
-                    modifier = if (sort == current) androidx.compose.ui.Modifier.focusRequester(chosen) else androidx.compose.ui.Modifier,
-                    selected = sort == current,
-                ) { onPick(sort) }
+            groups.forEachIndexed { index, group ->
+                ChoiceSection(group.title)
+                group.choices.forEach { choice ->
+                    ChoiceLine(
+                        choice.label,
+                        modifier = if (index == 0 && choice.chosen) Modifier.focusRequester(chosen) else Modifier,
+                        selected = choice.chosen,
+                        icon = choice.icon,
+                        onClick = choice.onPick,
+                    )
+                }
             }
         }
-        com.tmplayer.ui.components.FocusOnOpen(chosen)
+        FocusOnOpen(chosen)
     }
-}
-
-/** What [sort] is called in the menu. */
-internal fun sortLabel(sort: VideoSort, s: Messages): String = when (sort) {
-    VideoSort.Newest -> s.gridSortNewest
-    VideoSort.Oldest -> s.gridSortOldest
-    VideoSort.Name -> s.gridSortName
-    VideoSort.Year -> s.gridSortYear
-    VideoSort.Size -> s.gridSortSize
-    VideoSort.Unwatched -> s.gridSortUnwatched
-}
-
-/**
- * A chat's Sort menu on a phone: a small popover grown out of the Sort button in the chat's bar
- * ([ChoicePopover]), each order with its glyph, the [current] one tinted and ticked rather than a
- * radio button. A pick applies it and closes the card.
- */
-@Composable
-internal fun VideoSortPopover(
-    open: Boolean,
-    anchor: PopoverAnchor,
-    current: VideoSort,
-    onPick: (VideoSort) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val s = LocalStrings.current
-    ChoicePopover(
-        open = open,
-        anchor = anchor,
-        choices = VideoSort.entries.map { PopoverChoice(it, sortLabel(it, s), sortIcon(it)) },
-        selected = current,
-        onPick = onPick,
-        onDismiss = onDismiss,
-    )
-}
-
-/** The glyph beside [sort] in the phone's popover. */
-internal fun sortIcon(sort: VideoSort): ImageVector = when (sort) {
-    VideoSort.Newest -> TmIcons.Clock
-    VideoSort.Oldest -> TmIcons.History
-    VideoSort.Name -> TmIcons.TextSize
-    VideoSort.Year -> TmIcons.Trailer
-    VideoSort.Size -> TmIcons.Download
-    VideoSort.Unwatched -> TmIcons.Play
 }

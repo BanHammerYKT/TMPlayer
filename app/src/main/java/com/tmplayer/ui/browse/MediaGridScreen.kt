@@ -316,6 +316,29 @@ fun MediaGridScreen(
     val sort by remember(chatId) { recentStore.videoSort(chatId) }.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.VideoSort.DEFAULT)
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsStateWithLifecycle()
     var sorting by remember { mutableStateOf(false) }
+    // Which of the chat's videos are listed (see VideoFilter), remembered per chat beside its order.
+    val filter by remember(chatId) { recentStore.videoFilter(chatId) }.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.VideoFilter.DEFAULT)
+    val allSizes by viewModel.allSizes.collectAsStateWithLifecycle()
+    val limitsSet = minSizeBytes > com.tmplayer.data.SizeFilter.FLOOR || maxSizeBytes < com.tmplayer.data.SizeFilter.CEILING
+    val clearFilter: () -> Unit = { recentScope.launch { recentStore.setVideoFilter(chatId, com.tmplayer.data.VideoFilter.All) } }
+    // One menu for the order, the Show filter and the size limits, the same groups on every device.
+    val menu = VideoMenuState(
+        sort = sort,
+        filter = filter,
+        allSizes = if (limitsSet || allSizes) allSizes else null,
+        onSort = { picked ->
+            sorting = false
+            if (picked != sort) recentScope.launch { recentStore.setVideoSort(chatId, picked) }
+        },
+        onFilter = { picked ->
+            sorting = false
+            if (picked != filter) recentScope.launch { recentStore.setVideoFilter(chatId, picked) }
+        },
+        onAllSizes = { all ->
+            sorting = false
+            if (all) viewModel.showHidden() else viewModel.keepSizeLimits()
+        },
+    )
     // A search for the developer phrase turns on the hidden name check in Settings instead.
     val submit: () -> Unit = {
         if (query.trim().equals(com.tmplayer.data.DEVELOPER_PHRASE, ignoreCase = true)) {
@@ -328,10 +351,7 @@ fun MediaGridScreen(
     }
     // A phone's Sort is a popover over the chat's bar, drawn by TouchMediaScaffold; a remote's is this panel.
     if (sorting && !isTouch()) {
-        VideoSortSheet(sort, onPick = { picked ->
-            sorting = false
-            recentScope.launch { recentStore.setVideoSort(chatId, picked) }
-        }, onDismiss = { sorting = false })
+        VideoSortSheet(menu, onDismiss = { sorting = false })
     }
     // Whatever the remote is standing on, for the name strip along the bottom.
     var standingOn by remember { mutableStateOf<MediaItem?>(null) }
@@ -535,9 +555,11 @@ fun MediaGridScreen(
             // file each into shows; later pages keep the previous listing up while they are read.
             // Sorted only outside a search, whose order is its ranking.
             val order = if (query.isBlank()) sort else com.tmplayer.data.VideoSort.Newest
-            val arrangedShelf by produceState<Shelved?>(null, list.items, watchProgress, grouping, layout, order, corrections, watchedVideos) {
+            // Filtered too, outside a search and outside ticking, where every video has to be reachable.
+            val shownFilter = if (grouping) filter else com.tmplayer.data.VideoFilter.All
+            val arrangedShelf by produceState<Shelved?>(null, list.items, watchProgress, grouping, layout, order, corrections, watchedVideos, shownFilter) {
                 value = withContext(Dispatchers.Default) {
-                    arrangeShelf(list.items, watchProgress, grouping, layout, order, watchedVideos.keys, corrections)
+                    arrangeShelf(list.items, watchProgress, grouping, layout, order, watchedVideos.keys, corrections, shownFilter)
                 }
             }
             val (shelf, repeatedCaptions, posterKeys) = arrangedShelf ?: run {
@@ -561,7 +583,23 @@ fun MediaGridScreen(
             // an episode missing with no word about why reads as TMPlayer having lost it.
             val sizeHidden by viewModel.sizeHidden.collectAsStateWithLifecycle()
             val sizeNote = query.isBlank() && sizeHidden > 0
+            // A filter in force says so over the listing, with the way out, so a chat that seems to
+            // have lost half its videos never reads as TMPlayer losing them.
+            val filterNote = shownFilter != com.tmplayer.data.VideoFilter.All
+            val filterTotal = arrangedShelf?.total ?: 0
+            // Self-destructing videos are left out (only Telegram opens them): a quiet line says so.
+            val selfDestructing by viewModel.selfDestructing.collectAsStateWithLifecycle()
+            val selfDestructNote = query.isBlank() && selfDestructing > 0
             val courseHeader: @Composable () -> Unit = {
+                if (filterNote) {
+                    FilterNote(
+                        label = videoFilterLabel(shownFilter, s),
+                        shown = shelf.size,
+                        total = filterTotal,
+                        onClear = clearFilter,
+                        modifier = Modifier.padding(horizontal = if (touch && layout == CardLayout.Grid) 4.dp else 0.dp).padding(bottom = 6.dp),
+                    )
+                }
                 if (sizeNote) {
                     HiddenBySizeNote(
                         count = sizeHidden,
@@ -572,6 +610,14 @@ fun MediaGridScreen(
                 if (loadedOnly) {
                     Text(
                         s.gridSortLoadedNote(list.items.size),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Tone.muted,
+                        modifier = Modifier.padding(horizontal = if (touch && layout == CardLayout.Grid) 4.dp else 0.dp).padding(bottom = 6.dp),
+                    )
+                }
+                if (selfDestructNote) {
+                    Text(
+                        s.gridSelfDestructingHidden(selfDestructing),
                         style = MaterialTheme.typography.bodySmall,
                         color = Tone.muted,
                         modifier = Modifier.padding(horizontal = if (touch && layout == CardLayout.Grid) 4.dp else 0.dp).padding(bottom = 6.dp),
@@ -700,7 +746,7 @@ fun MediaGridScreen(
                             if (metaNotice) {
                                 item(key = "meta-notice", span = { GridItemSpan(maxLineSpan) }) { metaNoticeCard() }
                             }
-                            if (course != null || loadedOnly || sizeNote) {
+                            if (course != null || loadedOnly || sizeNote || filterNote || selfDestructNote) {
                                 item(key = "course", span = { GridItemSpan(maxLineSpan) }) { courseHeader() }
                             }
                             // The chat's pinned video, its audio and its round videos, over its videos.
@@ -782,7 +828,7 @@ fun MediaGridScreen(
                             verticalArrangement = Arrangement.spacedBy(if (touch) 2.dp else 4.dp),
                         ) {
                             if (metaNotice) item(key = "meta-notice") { metaNoticeCard() }
-                            if (course != null || loadedOnly || sizeNote) item(key = "course") { courseHeader() }
+                            if (course != null || loadedOnly || sizeNote || filterNote || selfDestructNote) item(key = "course") { courseHeader() }
                             val pinnedShown = pinnedPost
                             if (pinnedShown != null && query.isBlank()) {
                                 item(key = "pinned") {
@@ -1084,17 +1130,9 @@ fun MediaGridScreen(
             onClearRecent = clearRecent,
             onSort = { sorting = true },
             sortPopover = { anchor ->
-                VideoSortPopover(
-                    open = sorting,
-                    anchor = anchor,
-                    current = sort,
-                    onPick = { picked ->
-                        sorting = false
-                        recentScope.launch { recentStore.setVideoSort(chatId, picked) }
-                    },
-                    onDismiss = { sorting = false },
-                )
+                VideoMenuPopover(open = sorting, anchor = anchor, state = menu, onDismiss = { sorting = false })
             },
+            filtered = filter != com.tmplayer.data.VideoFilter.All,
             topicTabs = topicBar?.let { bar ->
                 { TopicTabs(bar, viewModel::selectTopic, Modifier.padding(vertical = 6.dp), edge = edge) }
             },
@@ -1157,6 +1195,7 @@ fun MediaGridScreen(
                     recentSearches = recentSearches,
                     onClearRecent = clearRecent,
                     onSort = { sorting = true },
+                    filtered = filter != com.tmplayer.data.VideoFilter.All,
                     onChatInfo = { chatInfoOpen = true },
                 )
             }
@@ -1231,8 +1270,10 @@ internal fun TouchMediaScaffold(
     onClearRecent: () -> Unit = {},
     /** Opens the Sort menu; null leaves it out. */
     onSort: (() -> Unit)? = null,
-    /** The Sort menu ([VideoSortPopover]), drawn over everything and grown out of the Sort button ([anchor]). */
+    /** The Sort menu ([VideoMenuPopover]), drawn over everything and grown out of the Sort button ([anchor]). */
     sortPopover: (@Composable (anchor: PopoverAnchor) -> Unit)? = null,
+    /** A filter is on: the Sort button is drawn in the accent, so the filtered state shows from the bar. */
+    filtered: Boolean = false,
     /** The topic row of a group with topics, under the title. Null for every other chat. */
     topicTabs: (@Composable () -> Unit)? = null,
     /** Opens with the search already showing, for the screenshot fixture. */
@@ -1397,7 +1438,16 @@ internal fun TouchMediaScaffold(
                     )
                     // Search and Sort at the end, Sort last, where the thumb reaches first.
                     FloatingBarIcon(TmIcons.Search, s.gridSearchThisChat, { searching = true }, caption = caption(s.commonSearch))
-                    onSort?.let { FloatingBarIcon(TmIcons.Sort, s.gridSort, it, modifier = sortAnchor.modifier, caption = caption(s.gridSort)) }
+                    onSort?.let {
+                        FloatingBarIcon(
+                            TmIcons.Sort,
+                            if (filtered) s.gridFilterOn else s.gridSort,
+                            it,
+                            modifier = sortAnchor.modifier,
+                            tint = if (filtered) Tone.accent else Tone.text,
+                            caption = caption(s.gridSort),
+                        )
+                    }
                 }
             }
         }
@@ -1505,6 +1555,8 @@ internal fun Header(
     alwaysShowRecent: Boolean = false,
     /** Opens the Sort menu ([VideoSortSheet]); null leaves it out. */
     onSort: (() -> Unit)? = null,
+    /** A filter is on: the Sort pill's glyph is drawn in the accent. */
+    filtered: Boolean = false,
     /** Opens the chat's info panel, from a button beside its name; null leaves it out. */
     onChatInfo: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -1599,7 +1651,7 @@ internal fun Header(
                 showLabel = false,
                 onClick = onToggleLayout,
             )
-            onSort?.let { Pill(s.gridSort, TmIcons.Sort, showLabel = false, onClick = it) }
+            onSort?.let { Pill(if (filtered) s.gridFilterOn else s.gridSort, TmIcons.Sort, tintWhenIdle = if (filtered) Tone.accent else Tone.text, showLabel = false, onClick = it) }
             // Telegram pushes new messages into TDLib's database, but this grid was built from a
             // search that ran when it opened, so a video posted since then needs a fresh search.
             // Icon only, like the refresh on the chat list: a label costs the search field 90dp.
@@ -2787,6 +2839,8 @@ internal data class Shelved(
     val shelf: List<ShelfEntry>,
     val repeatedCaptions: Set<String>,
     val posterKeys: Set<String>,
+    /** How many entries there were before the filter, for "Showing Unwatched: 3 of 40". */
+    val total: Int = shelf.size,
 )
 
 /**
@@ -2806,7 +2860,17 @@ internal fun arrangeShelf(
     /** The Watched list's keys, keyed like [watchProgress], for "Unwatched first". */
     watchedKeys: Set<String> = emptySet(),
     corrections: Map<String, com.tmplayer.data.VideoCorrection> = com.tmplayer.data.VideoCorrections.current,
+    /** Which entries are listed (see [com.tmplayer.data.VideoFiltering]); every one by default. */
+    filter: com.tmplayer.data.VideoFilter = com.tmplayer.data.VideoFilter.All,
 ): Shelved {
+    val progressOf: (MediaItem) -> com.tmplayer.data.VideoSorting.Progress = { item ->
+        val key = SettingsStore.progressKey(item.chatId, item.messageId)
+        when {
+            key in watchedKeys -> com.tmplayer.data.VideoSorting.Progress.Watched
+            key in watchProgress -> com.tmplayer.data.VideoSorting.Progress.InProgress
+            else -> com.tmplayer.data.VideoSorting.Progress.Untouched
+        }
+    }
     val arranged = if (grouping) {
         SeriesShelf.arrange(items, corrections)
     } else {
@@ -2819,17 +2883,11 @@ internal fun arrangeShelf(
             if (started == null) entry else ShelfEntry.File(started.asVersion(film))
         },
         sort,
-        progress = { item ->
-            val key = SettingsStore.progressKey(item.chatId, item.messageId)
-            when {
-                key in watchedKeys -> com.tmplayer.data.VideoSorting.Progress.Watched
-                key in watchProgress -> com.tmplayer.data.VideoSorting.Progress.InProgress
-                else -> com.tmplayer.data.VideoSorting.Progress.Untouched
-            }
-        },
+        progress = progressOf,
     )
-    val posters = if (layout == CardLayout.Grid) SeriesShelf.posterKeys(led) else emptySet()
-    return Shelved(led, MediaMapper.repeatedCaptionLines(items), posters)
+    val shown = com.tmplayer.data.VideoFiltering.filter(led, filter, progressOf)
+    val posters = if (layout == CardLayout.Grid) SeriesShelf.posterKeys(shown) else emptySet()
+    return Shelved(shown, MediaMapper.repeatedCaptionLines(items), posters, total = led.size)
 }
 
 /**
@@ -2892,5 +2950,29 @@ internal fun HiddenBySizeNote(count: Int, onShowHidden: () -> Unit, modifier: Mo
             modifier = Modifier.weight(1f, fill = false),
         )
         com.tmplayer.ui.components.TmSecondaryButton(onClick = onShowHidden) { Text(s.commonShowHidden) }
+    }
+}
+
+/**
+ * The filter in force over a chat's listing, on the phone and the TV: "Showing Unwatched: 3 of 40"
+ * with Clear filter. When the filter hides everything loaded so far, it says that in its place
+ * ("Unwatched hides all 40 videos loaded so far."), so an empty grid is never taken for an empty
+ * chat; the pages go on loading under it, and each one is screened as it comes.
+ */
+@Composable
+internal fun FilterNote(label: String, shown: Int, total: Int, onClear: () -> Unit, modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
+    Row(
+        modifier.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            if (shown == 0 && total > 0) s.gridFilterHidesAll(total, label) else s.gridFilterShowing(label, shown, total),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Tone.muted,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        com.tmplayer.ui.components.TmSecondaryButton(onClick = onClear) { Text(s.gridFilterClear) }
     }
 }

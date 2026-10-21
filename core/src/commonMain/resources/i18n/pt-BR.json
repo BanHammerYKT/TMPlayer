@@ -846,6 +846,7 @@
     "select_videos_detail": "Baixe vários de uma vez",
     "selected": "Selecionado",
     "selected_count": "{count, plural, one {# selecionado} many {# de selecionados} other {# selecionados}}",
+    "self_destructing_hidden": "{count, plural, one {# vídeo autodestrutivo não é exibido: abra-o no Telegram.} many {# de vídeos autodestrutivos não são exibidos: abra-os no Telegram.} other {# vídeos autodestrutivos não são exibidos: abra-os no Telegram.}}",
     "share_failed": "Esse vídeo não pode ser enviado para outro app.",
     "share_not_here": "Esse vídeo ainda não está neste celular.",
     "some_fit": "{taken} de {needed} na fila. {room}",

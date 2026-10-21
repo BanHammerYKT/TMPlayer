@@ -846,6 +846,7 @@
     "select_videos_detail": "Скачать сразу несколько",
     "selected": "Выбрано",
     "selected_count": "{count, plural, one {Выбран #} few {Выбрано #} many {Выбрано #} other {Выбрано #}}",
+    "self_destructing_hidden": "{count, plural, one {# самоуничтожающееся видео не показано: откройте его в Telegram.} few {# самоуничтожающихся видео не показано: откройте их в Telegram.} many {# самоуничтожающихся видео не показано: откройте их в Telegram.} other {# самоуничтожающегося видео не показано: откройте его в Telegram.}}",
     "share_failed": "Это видео нельзя передать другому приложению.",
     "share_not_here": "Этого видео ещё нет на телефоне.",
     "some_fit": "В очереди {taken} из {needed}. {room}",

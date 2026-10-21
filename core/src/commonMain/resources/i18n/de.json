@@ -846,6 +846,7 @@
     "select_videos_detail": "Mehrere auf einmal herunterladen",
     "selected": "Ausgewählt",
     "selected_count": "{count, plural, one {# ausgewählt} other {# ausgewählt}}",
+    "self_destructing_hidden": "{count, plural, one {# selbstzerstörendes Video wird nicht angezeigt: Öffne es in Telegram.} other {# selbstzerstörende Videos werden nicht angezeigt: Öffne sie in Telegram.}}",
     "share_failed": "Dieses Video kann nicht an eine andere App übergeben werden.",
     "share_not_here": "Dieses Video ist noch nicht auf diesem Handy.",
     "some_fit": "{taken} von {needed} in die Warteschlange gestellt. {room}",
