@@ -175,7 +175,6 @@ private const val EXIT_WINDOW_MS = 2_000L
  * the player is up almost at once, passes in silence. Short enough that a slow one is explained
  * before the viewer has decided their press was missed.
  */
-private const val PREPARE_CHIP_AFTER_MS = 400L
 
 /** A small store for asks that happen once per install, and so are not settings or in backups. */
 private const val ONCE_PREFS = "once"
@@ -379,8 +378,16 @@ class MainActivity : ComponentActivity() {
      * A language picked on Android's own page for this app (Android 13 and later) while it was in
      * the background becomes the in-app choice. See [AppLocales].
      */
+    /** The player has the screen now; its own loader takes over from the press's spinner. */
+    override fun onStop() {
+        super.onStop()
+        com.tmplayer.ui.components.PlayPress.end()
+    }
+
     override fun onResume() {
         super.onResume()
+        // Back from the player (or never left): no press of Play is still on its way.
+        com.tmplayer.ui.components.PlayPress.end()
         lifecycleScope.launch {
             val store = SettingsStore(this@MainActivity)
             runCatching { AppLocales.adopt(this@MainActivity, store.language.first())?.let { store.setLanguage(it) } }
@@ -1029,6 +1036,7 @@ private fun Root() {
             // to it: it needs no connection, no room, and it is not the cache's to claim.
             if (LocalDownloads.fileFor(settings, item.chatId, item.messageId) != null) {
                 withContext(Dispatchers.Main) {
+                    com.tmplayer.ui.components.PlayPress.open()
                     context.startActivity(PlayerActivity.intent(context, item, chatTitle))
                 }
                 return@withContext
@@ -1081,6 +1089,7 @@ private fun Root() {
                 // The player claims the cache for itself the moment it opens, which is what keeps
                 // a series honest. This only has to leave the record alone for a kept download.
                 if (!kept) scope.launch { settings.rememberCachedVideo(item, chatTitle) }
+                com.tmplayer.ui.components.PlayPress.open()
                 context.startActivity(PlayerActivity.intent(context, item, chatTitle))
             }
 
@@ -1126,18 +1135,16 @@ private fun Root() {
         // and press again, so a second press while one is in flight is ignored.
         if (preparing && !confirmed) return
         preparing = true
+        // Answered at once: the page's Play pill spins and, past a beat, a "Starting" pill says
+        // which video is on its way (PlayPress, StartingStatus). It stays until the shell leaves
+        // the screen for the player, or goes at once when nothing is going to open.
+        val press = com.tmplayer.ui.components.PlayPress.begin(item.title)
         scope.launch {
-            // Only said out loud when it is actually slow. On the common path the player is up
-            // before this fires, and a chip that flashes on every press is worse than no chip.
-            val chip = launch {
-                delay(PREPARE_CHIP_AFTER_MS)
-                toast(L.mainStarting(title = item.title))
-            }
             try {
                 playNow(item, confirmed, chatTitle)
             } finally {
-                chip.cancel()
                 preparing = false
+                if (!com.tmplayer.ui.components.PlayPress.opened) com.tmplayer.ui.components.PlayPress.end(press)
             }
         }
     }
@@ -1219,11 +1226,15 @@ private fun Root() {
         // both got through and opened the player twice.
         if (openingStored || preparing) return
         openingStored = true
+        // The wait for Telegram's fresh copy is part of the press too.
+        val press = com.tmplayer.ui.components.PlayPress.begin(stored.title)
         scope.launch {
             try {
                 openStoredNow(stored, chatTitle)
             } finally {
                 openingStored = false
+                // play() took the press over with its own; this one only ends a lookup that failed.
+                com.tmplayer.ui.components.PlayPress.end(press)
             }
         }
     }
@@ -2181,6 +2192,14 @@ private fun Root() {
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 20.dp),
+        )
+        // Over the connection notice's place, a little higher when both are up.
+        com.tmplayer.ui.components.StartingStatus(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(2f)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = if (connectionNotice == ConnectionNotice.Hidden) 20.dp else 76.dp, start = 16.dp, end = 16.dp),
         )
         // The network is up and Telegram has not answered for a while: blocked, most likely,
         // which the offline pill above never says, since the device is not offline.
