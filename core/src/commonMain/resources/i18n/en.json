@@ -947,7 +947,6 @@
     "size_smaller": "Smaller"
   },
   "keep": {
-    "cannot_post": "You cannot post in that chat.",
     "export_failed": "Could not copy it: {reason}",
     "export_folder": "Copy to a folder",
     "export_folder_detail": "A copy of the download wherever you choose",
@@ -955,20 +954,7 @@
     "export_gallery_detail": "A copy in Movies/TMPlayer, for other apps",
     "exported_folder": "Copied to {folder}",
     "exported_gallery": "Saved to Movies/TMPlayer",
-    "exporting": "Copying {title}",
-    "failed": "Could not forward it: {reason}",
-    "forward_chat": "Forward to a chat",
-    "forward_chat_detail": "Shares the post, nothing is downloaded",
-    "forward_none": "No chat to forward it to.",
-    "forward_saved": "Forward to Saved Messages",
-    "forward_saved_detail": "Keeps it in your own Telegram, nothing is downloaded",
-    "forward_search": "Find a chat",
-    "forward_title": "Forward to",
-    "forwarded_saved": "Forwarded to Saved Messages",
-    "forwarded_to": "Forwarded to {chat}",
-    "forwarding": "Forwarding",
-    "not_forwardable": "Telegram does not allow this post to be forwarded.",
-    "protected": "This chat does not allow forwarding or saving its videos."
+    "exporting": "Copying {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

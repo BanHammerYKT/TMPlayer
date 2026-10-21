@@ -945,7 +945,6 @@
     "size_smaller": "أصغر"
   },
   "keep": {
-    "cannot_post": "لا يمكنك النشر في تلك المحادثة.",
     "export_failed": "تعذّر نسخه: {reason}",
     "export_folder": "نسخ إلى مجلد",
     "export_folder_detail": "نسخة من التنزيل في المكان الذي تختاره",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "نسخة في Movies/TMPlayer، للتطبيقات الأخرى",
     "exported_folder": "نُسخ إلى {folder}",
     "exported_gallery": "حُفظ في Movies/TMPlayer",
-    "exporting": "جارٍ نسخ {title}",
-    "failed": "تعذّرت إعادة توجيهه: {reason}",
-    "forward_chat": "إعادة توجيه إلى محادثة",
-    "forward_chat_detail": "يشارك المنشور، ولا يُنزَّل شيء",
-    "forward_none": "لا توجد محادثة لإعادة التوجيه إليها.",
-    "forward_saved": "إعادة توجيه إلى الرسائل المحفوظة",
-    "forward_saved_detail": "يحفظه في Telegram الخاص بك، ولا يُنزَّل شيء",
-    "forward_search": "البحث عن محادثة",
-    "forward_title": "إعادة توجيه إلى",
-    "forwarded_saved": "أُعيد توجيهه إلى الرسائل المحفوظة",
-    "forwarded_to": "أُعيد توجيهه إلى {chat}",
-    "forwarding": "جارٍ إعادة التوجيه",
-    "not_forwardable": "لا يسمح Telegram بإعادة توجيه هذا المنشور.",
-    "protected": "لا تسمح هذه المحادثة بإعادة توجيه فيديوهاتها أو حفظها."
+    "exporting": "جارٍ نسخ {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-، Ctrl+=",

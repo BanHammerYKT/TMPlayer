@@ -945,7 +945,6 @@
     "size_smaller": "Mniejszy"
   },
   "keep": {
-    "cannot_post": "Nie możesz publikować w tym czacie.",
     "export_failed": "Nie udało się skopiować: {reason}",
     "export_folder": "Kopiuj do folderu",
     "export_folder_detail": "Kopia pobranego pliku w wybranym miejscu",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Kopia w Movies/TMPlayer, dla innych aplikacji",
     "exported_folder": "Skopiowano do {folder}",
     "exported_gallery": "Zapisano w Movies/TMPlayer",
-    "exporting": "Kopiowanie: {title}",
-    "failed": "Nie udało się przekazać: {reason}",
-    "forward_chat": "Przekaż do czatu",
-    "forward_chat_detail": "Udostępnia post, nic nie jest pobierane",
-    "forward_none": "Brak czatu, do którego można przekazać.",
-    "forward_saved": "Przekaż do Zapisanych wiadomości",
-    "forward_saved_detail": "Zachowuje go w Twoim Telegramie, nic nie jest pobierane",
-    "forward_search": "Znajdź czat",
-    "forward_title": "Przekaż do",
-    "forwarded_saved": "Przekazano do Zapisanych wiadomości",
-    "forwarded_to": "Przekazano do {chat}",
-    "forwarding": "Przekazywanie",
-    "not_forwardable": "Telegram nie pozwala przekazać tego posta.",
-    "protected": "Ten czat nie pozwala przekazywać ani zapisywać swoich wideo."
+    "exporting": "Kopiowanie: {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

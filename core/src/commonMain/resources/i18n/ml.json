@@ -945,7 +945,6 @@
     "size_smaller": "ചെറുത്"
   },
   "keep": {
-    "cannot_post": "ആ ചാറ്റിൽ നിങ്ങൾക്ക് പോസ്റ്റ് ചെയ്യാനാകില്ല.",
     "export_failed": "പകർത്താനായില്ല: {reason}",
     "export_folder": "ഒരു ഫോൾഡറിലേക്ക് പകർത്തുക",
     "export_folder_detail": "ഡൗൺലോഡിന്റെ ഒരു പകർപ്പ്, നിങ്ങൾ തിരഞ്ഞെടുക്കുന്നിടത്ത്",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Movies/TMPlayer-ൽ ഒരു പകർപ്പ്, മറ്റ് ആപ്പുകൾക്കായി",
     "exported_folder": "{folder}-ലേക്ക് പകർത്തി",
     "exported_gallery": "Movies/TMPlayer-ൽ സേവ് ചെയ്തു",
-    "exporting": "{title} പകർത്തുന്നു",
-    "failed": "ഫോർവേഡ് ചെയ്യാനായില്ല: {reason}",
-    "forward_chat": "ഒരു ചാറ്റിലേക്ക് ഫോർവേഡ് ചെയ്യുക",
-    "forward_chat_detail": "പോസ്റ്റ് പങ്കിടുന്നു, ഒന്നും ഡൗൺലോഡ് ചെയ്യില്ല",
-    "forward_none": "ഫോർവേഡ് ചെയ്യാൻ ചാറ്റില്ല.",
-    "forward_saved": "സേവ് ചെയ്ത സന്ദേശങ്ങളിലേക്ക് ഫോർവേഡ് ചെയ്യുക",
-    "forward_saved_detail": "ഇത് നിങ്ങളുടെ സ്വന്തം Telegram-ൽ സൂക്ഷിക്കുന്നു, ഒന്നും ഡൗൺലോഡ് ചെയ്യില്ല",
-    "forward_search": "ഒരു ചാറ്റ് കണ്ടെത്തുക",
-    "forward_title": "ഇതിലേക്ക് ഫോർവേഡ് ചെയ്യുക",
-    "forwarded_saved": "സേവ് ചെയ്ത സന്ദേശങ്ങളിലേക്ക് ഫോർവേഡ് ചെയ്തു",
-    "forwarded_to": "{chat}-ലേക്ക് ഫോർവേഡ് ചെയ്തു",
-    "forwarding": "ഫോർവേഡ് ചെയ്യുന്നു",
-    "not_forwardable": "ഈ പോസ്റ്റ് ഫോർവേഡ് ചെയ്യാൻ Telegram അനുവദിക്കുന്നില്ല.",
-    "protected": "ഈ ചാറ്റ് അതിന്റെ വീഡിയോകൾ ഫോർവേഡ് ചെയ്യാനോ സേവ് ചെയ്യാനോ അനുവദിക്കുന്നില്ല."
+    "exporting": "{title} പകർത്തുന്നു"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

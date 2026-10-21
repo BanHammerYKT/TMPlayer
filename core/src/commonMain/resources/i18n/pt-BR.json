@@ -945,7 +945,6 @@
     "size_smaller": "Menor"
   },
   "keep": {
-    "cannot_post": "Você não pode publicar nesse chat.",
     "export_failed": "Não foi possível copiar: {reason}",
     "export_folder": "Copiar para uma pasta",
     "export_folder_detail": "Uma cópia do download onde você quiser",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Uma cópia em Movies/TMPlayer, para outros apps",
     "exported_folder": "Copiado para {folder}",
     "exported_gallery": "Salvo em Movies/TMPlayer",
-    "exporting": "Copiando {title}",
-    "failed": "Não foi possível encaminhar: {reason}",
-    "forward_chat": "Encaminhar para um chat",
-    "forward_chat_detail": "Compartilha a publicação, nada é baixado",
-    "forward_none": "Nenhum chat para encaminhar.",
-    "forward_saved": "Encaminhar para Mensagens salvas",
-    "forward_saved_detail": "Guarda no seu próprio Telegram, nada é baixado",
-    "forward_search": "Encontrar um chat",
-    "forward_title": "Encaminhar para",
-    "forwarded_saved": "Encaminhado para Mensagens salvas",
-    "forwarded_to": "Encaminhado para {chat}",
-    "forwarding": "Encaminhando",
-    "not_forwardable": "O Telegram não permite encaminhar esta publicação.",
-    "protected": "Este chat não permite encaminhar nem salvar os vídeos dele."
+    "exporting": "Copiando {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

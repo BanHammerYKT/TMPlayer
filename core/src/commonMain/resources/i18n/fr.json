@@ -945,7 +945,6 @@
     "size_smaller": "Plus petite"
   },
   "keep": {
-    "cannot_post": "Vous ne pouvez pas publier dans cette discussion.",
     "export_failed": "Copie impossible : {reason}",
     "export_folder": "Copier dans un dossier",
     "export_folder_detail": "Une copie du téléchargement où vous voulez",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Une copie dans Movies/TMPlayer, pour les autres apps",
     "exported_folder": "Copié dans {folder}",
     "exported_gallery": "Enregistré dans Movies/TMPlayer",
-    "exporting": "Copie de {title}",
-    "failed": "Transfert impossible : {reason}",
-    "forward_chat": "Transférer à une discussion",
-    "forward_chat_detail": "Partage la publication, rien n'est téléchargé",
-    "forward_none": "Aucune discussion où la transférer.",
-    "forward_saved": "Transférer aux Messages enregistrés",
-    "forward_saved_detail": "La garde dans votre propre Telegram, rien n'est téléchargé",
-    "forward_search": "Trouver une discussion",
-    "forward_title": "Transférer à",
-    "forwarded_saved": "Transféré aux Messages enregistrés",
-    "forwarded_to": "Transféré à {chat}",
-    "forwarding": "Transfert",
-    "not_forwardable": "Telegram n'autorise pas le transfert de cette publication.",
-    "protected": "Cette discussion n'autorise ni le transfert ni l'enregistrement de ses vidéos."
+    "exporting": "Copie de {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",
