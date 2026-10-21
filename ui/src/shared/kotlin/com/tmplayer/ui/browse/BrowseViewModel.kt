@@ -464,6 +464,8 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
         settings?.let { store ->
             Background.scope.launch { runCatching { store.clearColdStartSnapshots() } }
         }
+        // And Home's copy of its rows, for the same reason.
+        Background.scope.launch { runCatching { com.tmplayer.data.HomeCache.clear() } }
     }
 
     private companion object {

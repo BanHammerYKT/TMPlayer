@@ -121,6 +121,9 @@ class App : Application() {
         Thumbnails.sizeFor(memory)
         // Posters and overviews: the build's TMDB key, the switches in private files, the answers
         // and pictures under the app's cache. Off until the viewer turns it on in Settings.
+        // Home as it was last built, read now so its first frame finds it in memory (HomeCache).
+        com.tmplayer.data.HomeCache.file = java.io.File(filesDir, "home/home-cache.json")
+        backgroundScope.launch { runCatching { com.tmplayer.data.HomeCache.preload() } }
         OnlineMetadata.current = OnlineMetadata(
             buildKey = BuildConfig.TMDB_API_KEY,
             store = MetadataStore(java.io.File(filesDir, "online/metadata.properties")),

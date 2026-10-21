@@ -116,6 +116,9 @@ fun main(args: Array<String>) {
         // The viewer's corrections to names and groups, for every screen that arranges a chat.
         com.tmplayer.data.VideoCorrections.follow(settings)
         OnlineMetadata.current = desktopOnlineMetadata()
+        // Home as it was last built, read now so its first frame finds it in memory (HomeCache).
+        com.tmplayer.data.HomeCache.file = java.io.File(DesktopPaths.dataDir, "home-cache.json")
+        Background.scope.launch { runCatching { com.tmplayer.data.HomeCache.preload() } }
         // What an earlier run was in the middle of comes back paused, once there is an account to
         // ask TDLib about.
         // A storage move a crash or a kill cut short is finished first: it needs the settings store

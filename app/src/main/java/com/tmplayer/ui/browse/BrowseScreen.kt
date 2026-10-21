@@ -522,7 +522,8 @@ internal fun BrowseScreen(
                                     query = ""
                                 },
                                 onOpenChat = { id -> data.chats.firstOrNull { it.id == id }?.let(onOpenChat) },
-                                noFavourites = favorites.isEmpty(),
+                                // Only while Home found no chat with videos of its own to fill itself from.
+                                noFavourites = favorites.isEmpty() && homeRows.none { it is HomeRow.Chat || it is HomeRow.Across },
                                 onOpenSection = { onPickTab(it); query = "" },
                                 onOpenWatchLater = openLater,
                                 onLaterArtWanted = onHomeLaterArtWanted,

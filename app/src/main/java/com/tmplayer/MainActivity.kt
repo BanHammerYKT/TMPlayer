@@ -777,7 +777,7 @@ private fun Root() {
         factory = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }) as T
+                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }, cached = true) as T
         },
     )
     // Home keeps what it fetched, badges included, so its Cached badges are read off the disk again
@@ -787,6 +787,16 @@ private fun Root() {
     val shellInFront = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     LaunchedEffect(shellInFront, cacheRecord) {
         if (shellInFront) homeViewModel.refreshLocalAvailability()
+    }
+    // Home keeps itself up to date while the app is in front: on coming back, when its rows are
+    // a minute old, and every few minutes after, in place (the tiles stay up and keep the focus).
+    LaunchedEffect(shellInFront) {
+        if (!shellInFront) return@LaunchedEffect
+        homeViewModel.refreshIfStale()
+        while (true) {
+            delay(HomeViewModel.AUTO_REFRESH_MS)
+            homeViewModel.refreshInPlace()
+        }
     }
     val accountHeader by chatsViewModel.accountHeader.collectAsStateWithLifecycle()
     val chats = (chatsState as? UiState.Content)?.value?.chats.orEmpty()
@@ -841,7 +851,7 @@ private fun Root() {
                 wasOffline = false
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
-                    homeViewModel.refresh()
+                    homeViewModel.refreshInPlace()
                     updates.checkIfDue()
                     toast(L.mainBackOnline)
                 }
@@ -1762,14 +1772,14 @@ private fun Root() {
                         when (row) {
                             is HomeRow.Chat -> homeViewModel.request(row.chatId)
                             is HomeRow.Recent -> homeViewModel.requestRecent()
-                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
+                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
                         }
                     },
                     onHomeArtWanted = homeViewModel::requestArt,
                     onHomeLaterArtWanted = homeViewModel::requestArt,
                     onPlayMedia = { item, chatTitle -> play(item, chatTitle = chatTitle) },
                     onRefreshHome = {
-                        homeViewModel.refresh()
+                        homeViewModel.refreshInPlace()
                         chatsViewModel.refreshUnlessRateLimited()
                     },
                     onSetMediaWatched = { item, chatTitle, watched -> setWatched(item, chatTitle, watched) },

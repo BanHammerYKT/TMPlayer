@@ -83,6 +83,8 @@ import com.tmplayer.ui.browse.FirstVideoCard
 import com.tmplayer.ui.browse.HomeViewModel
 import com.tmplayer.ui.browse.NewBadge
 import com.tmplayer.ui.browse.rememberHomeRows
+import com.tmplayer.ui.browse.homeRowTitle
+import com.tmplayer.ui.browse.isLoaded
 import com.tmplayer.ui.components.ScrollToTop
 import com.tmplayer.ui.components.UiState
 import com.tmplayer.ui.components.WithinMargins
@@ -108,7 +110,16 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 @Composable
 fun HomePage(state: ShellState, chats: ChatListViewModel) {
     val model = rememberViewModel(Unit) {
-        HomeViewModel(sizeLimits = { state.settings.minSizeBytes.first() to state.settings.maxSizeBytes.first() })
+        HomeViewModel(sizeLimits = { state.settings.minSizeBytes.first() to state.settings.maxSizeBytes.first() }, cached = true)
+    }
+    // Up to date while Home is open: when its rows are a minute old, then every few minutes, in
+    // place, the cards staying where they are.
+    LaunchedEffect(model) {
+        model.refreshIfStale()
+        while (true) {
+            kotlinx.coroutines.delay(HomeViewModel.AUTO_REFRESH_MS)
+            model.refreshInPlace()
+        }
     }
     val chatState by chats.state.collectAsState()
     val list = (chatState as? UiState.Content)?.value?.chats.orEmpty()
@@ -122,7 +133,8 @@ fun HomePage(state: ShellState, chats: ChatListViewModel) {
     val rows = rememberHomeRows(model, list, favourites, history, later, watched.values, recentMinStarred = 1)
     // Asked for as soon as the starred chats are known, not once the chat list has loaded and the
     // row is drawn: the loader waits on the carousel, and the carousel on this row.
-    LaunchedEffect(favourites.isNotEmpty()) { if (favourites.isNotEmpty()) model.requestRecent() }
+    // Home fills itself from the search across chats, so it is asked for whether or not any are starred.
+    LaunchedEffect(Unit) { model.requestRecent() }
     // With nothing of its own to show yet, Home waits on the chat list, or says why it failed,
     // rather than greet somebody with starred chats as a first run. With starred chats it waits
     // for the list anyway: drawn from Continue watching alone, the carousel counted as empty.
@@ -140,12 +152,12 @@ fun HomePage(state: ShellState, chats: ChatListViewModel) {
             when (row) {
                 is HomeRow.Chat -> model.request(row.chatId)
                 is HomeRow.Recent -> model.requestRecent()
-                is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
+                is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
             }
         },
         onArtWanted = model::requestArt,
         onLaterArtWanted = model::requestArt,
-        onRefresh = model::refresh,
+        onRefresh = model::refreshInPlace,
     )
 }
 
@@ -319,6 +331,7 @@ internal fun HomeRowsView(
                                 }
                                 is HomeRow.Chat -> ShelfStrips(state, side, sizes, row.entries, { row.title }) { openSeries = it }
                                 is HomeRow.Recent -> ShelfStrips(state, side, sizes, row.entries, { titles[it].orEmpty() }) { openSeries = it }
+                                is HomeRow.Across -> ShelfStrips(state, side, sizes, row.entries, { titles[it].orEmpty() }) { openSeries = it }
                             }
                         }
                     }
@@ -393,6 +406,7 @@ private fun RowPage(
                     )
                     is HomeRow.Chat -> shelfSections(state, sizes, row.entries + SeriesShelf.arrange(row.more), { row.title }, onOpenSeries)
                     is HomeRow.Recent -> shelfSections(state, sizes, row.entries, { titles[it].orEmpty() }, onOpenSeries)
+                    is HomeRow.Across -> shelfSections(state, sizes, row.entries, { titles[it].orEmpty() }, onOpenSeries)
                 }
             }
             val list = rememberLazyListState()
@@ -563,18 +577,11 @@ private fun telegramFacts(chatTitle: String, item: MediaItem): String =
         item.sizeBytes.takeIf { it > 0 }?.let { MediaMapper.formatSize(it) },
     ).joinToString("  ·  ")
 
-private fun HomeRow.isLoaded(): Boolean = when (this) {
-    is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> true
-    is HomeRow.Chat -> loaded
-    is HomeRow.Recent -> loaded
-}
+private fun HomeRow.isLoaded(): Boolean = isLoaded
 
 private fun HomeRow.title(s: com.tmplayer.i18n.Messages, titles: Map<Long, String>): String = when (this) {
-    is HomeRow.Continue -> s.homeRowContinue
-    is HomeRow.WatchLater -> s.homeRowWatchLater
-    is HomeRow.Chat -> title.ifBlank { titles[chatId].orEmpty() }
-    is HomeRow.NewEpisodes -> s.homeRowNewEpisodes
-    is HomeRow.Recent -> s.homeRowRecent
+    is HomeRow.Chat -> homeRowTitle(if (title.isBlank()) copy(title = titles[chatId].orEmpty()) else this, s)
+    else -> homeRowTitle(this, s)
 }
 
 /** How many videos a row holds, as its "See all" says it; null when it cannot tell. */
@@ -583,6 +590,7 @@ private fun HomeRow.countLabel(s: com.tmplayer.i18n.Messages): String? {
         is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.Chat -> total
         is HomeRow.NewEpisodes -> episodes.size
         is HomeRow.Recent -> entries.size
+        is HomeRow.Across -> entries.size
     }
     if (count <= 0) return null
     return if (totalAtLeast) s.homeSeeAllCountAtLeast(count) else s.homeSeeAllCount(count)
