@@ -45,15 +45,17 @@ class StoryboardThumbnails(
     private var failed = false
 
     override fun request(positionMs: Long, onFrame: (Bitmap?) -> Unit) {
+        // The player answers only on its own thread, so its length is read here, before the worker.
+        val totalMs = durationMs()
         job?.cancel()
         job = scope.launch {
-            val frame = withContext(worker) { tileFor(positionMs) }
+            val frame = withContext(worker) { tileFor(positionMs, totalMs) }
             onFrame(frame)
         }
     }
 
-    private suspend fun tileFor(positionMs: Long): Bitmap? {
-        val (reader, tiles) = open() ?: return null
+    private suspend fun tileFor(positionMs: Long, totalMs: Long): Bitmap? {
+        val (reader, tiles) = open(totalMs) ?: return null
         val tile = tiles.tileAt(positionMs) ?: return null
         val index = tiles.tiles.indexOf(tile)
         cache.get(index)?.let { return it }
@@ -62,7 +64,7 @@ class StoryboardThumbnails(
         return runCatching { reader.decodeRegion(rect, null) }.getOrNull()?.also { cache.put(index, it) }
     }
 
-    private suspend fun open(): Pair<BitmapRegionDecoder, StoryboardMap>? = loading.withLock {
+    private suspend fun open(totalMs: Long): Pair<BitmapRegionDecoder, StoryboardMap>? = loading.withLock {
         val ready = decoder
         val tiles = map
         if (ready != null && tiles != null) return ready to tiles
@@ -85,7 +87,7 @@ class StoryboardThumbnails(
         }
         val size = runCatching { JpegSize.read(File(image).readBytes()) }.getOrNull() ?: (opened.width to opened.height)
         val text = mapPath?.let { runCatching { File(it).readText() }.getOrNull() }.orEmpty()
-        val parsed = StoryboardMaps.parse(text, files.tileWidth, files.tileHeight, size.first, size.second, durationMs())
+        val parsed = StoryboardMaps.parse(text, files.tileWidth, files.tileHeight, size.first, size.second, totalMs)
         if (parsed.isEmpty) {
             opened.recycle()
             failed = true
