@@ -100,13 +100,19 @@ fun main(args: Array<String>) {
     // no window that holds the single instance lock (see StartupFailure).
     StartupFailure.install()
     try {
-        // The crash reports switch first, so whatever fails from here on can be reported, and a
+        // TDLib first: it opens its database on its own threads, and the settings read below is
+        // the first of the process, about a tenth of a second of class loading and disk that the
+        // database no longer waits behind. A failure in it is caught and shown at sign in, and
+        // [DesktopCrashReports.watch] above already writes down anything uncaught.
+        Td.start(DesktopPaths, desktopDeviceInfo(), desktopCredentials())
+        // The crash reports switch next, so whatever fails from here on can be reported, and a
         // crash left from the last run is sent or asked about before anything else is built.
         DesktopCrashReports.launch(DesktopServices.settings)
         // `-Dtmplayer.crashAtStart=true`: a launch that fails before the window, for testing that.
         DesktopCrashReports.crashAtStartIfAsked()
-        NativeInventory.log()
-        Td.start(DesktopPaths, desktopDeviceInfo(), desktopCredentials())
+        // For the log only, and about 60 ms of resource lookups and JNA's loading on a cold start:
+        // off the thread that has the window to build.
+        Background.scope.launch { runCatching { NativeInventory.log() } }
         OnlineSubtitles.current = desktopOnlineSubtitles()
         val settings = DesktopServices.settings
         // The interface size for a viewer who never chose one, from the screen (see UiScale.forScreen).
