@@ -348,3 +348,16 @@
 @media (prefers-reduced-motion: reduce) {
   #tm-player * { transition: none !important; animation: none !important; }
 }
+#tm-player button.tm-seekbtn { position: relative; }
+#tm-player .tm-seekn {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -38%);
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: none;
+}
+#tm-player.tm-touch .tm-row { gap: 0; }
+#tm-player.tm-touch button.tm-btn { padding: 0 6px; }
+#tm-player.tm-touch .tm-time { padding: 0 4px; font-size: 13px; }

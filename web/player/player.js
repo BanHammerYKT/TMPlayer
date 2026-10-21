@@ -60,8 +60,7 @@
     back: 'M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z',
     play: 'M8 5v14l11-7z',
     pause: 'M6 19h4V5H6v14zm8-14v14h4V5h-4z',
-    replay10: 'M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8zm-1.1 11h-.85v-3.26l-1.01.31v-.69l1.77-.63h.09V16zm4.28-1.76c0 .32-.03.6-.1.82s-.17.42-.29.57-.28.26-.45.33-.37.1-.59.1-.41-.03-.59-.1-.33-.18-.46-.33-.23-.34-.3-.57-.11-.5-.11-.82v-.74c0-.32.03-.6.1-.82s.17-.42.29-.57.28-.26.45-.33.37-.1.59-.1.41.03.59.1.33.18.46.33.23.34.3.57.11.5.11.82v.74zm-.85-.86c0-.19-.01-.35-.04-.48s-.07-.23-.12-.31-.11-.14-.19-.17-.16-.05-.25-.05-.18.02-.25.05-.14.09-.19.17-.09.18-.12.31-.04.29-.04.48v.97c0 .19.01.35.04.48s.07.24.12.32.11.14.19.17.16.05.25.05.18-.02.25-.05.14-.09.19-.17.09-.19.11-.32.04-.29.04-.48v-.97z',
-    forward10: 'M18 13c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8h-2zm-7.46 2.22c-.06.05-.12.09-.2.12s-.17.04-.27.04c-.09 0-.17-.01-.25-.04s-.14-.06-.2-.11-.1-.1-.13-.17-.05-.14-.05-.22h-.85c0 .21.04.39.12.55s.19.28.33.38.29.18.46.23.35.07.53.07c.21 0 .41-.03.6-.08s.34-.14.48-.24.24-.24.32-.39.12-.33.12-.53c0-.23-.06-.44-.18-.61s-.3-.3-.54-.39c.1-.05.2-.1.28-.17s.15-.14.2-.22.1-.16.13-.25.04-.18.04-.27c0-.2-.04-.37-.11-.53s-.17-.28-.3-.38-.28-.18-.46-.23-.37-.08-.59-.08c-.19 0-.38.03-.54.08s-.32.13-.44.23-.23.21-.3.34-.11.29-.11.45h.85c0-.07.02-.14.05-.2s.07-.11.12-.15.11-.07.18-.1.14-.03.22-.03c.1 0 .18.01.25.04s.13.06.18.11.08.11.11.17.04.14.04.22c0 .18-.05.32-.16.43s-.26.16-.48.16h-.43v.66h.45c.11 0 .2.01.29.04s.16.06.22.11.11.12.14.2.05.18.05.29c0 .09-.01.17-.04.24s-.08.11-.13.17zm3.9-3.44c-.18-.07-.37-.1-.59-.1s-.41.03-.59.1-.33.18-.45.33-.23.34-.29.57-.1.5-.1.82v.74c0 .32.04.6.11.82s.17.42.3.57.28.26.46.33.37.1.59.1.41-.03.59-.1.33-.18.45-.33.22-.34.29-.57.1-.5.1-.82v-.74c0-.32-.04-.6-.11-.82s-.17-.42-.3-.57-.29-.26-.46-.33zm.01 2.57c0 .19-.01.35-.04.48s-.06.24-.11.32-.11.14-.19.17-.16.05-.25.05-.18-.02-.25-.05-.14-.09-.19-.17-.09-.19-.12-.32-.04-.29-.04-.48v-.97c0-.19.01-.35.04-.48s.06-.23.12-.31.11-.14.19-.17.16-.05.25-.05.18.02.25.05.14.09.19.17.09.18.12.31.04.29.04.48v.97z',
+    replay: 'M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z',
     next: 'M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z',
     prev: 'M6 6h2v12H6zm3.5 6l8.5 6V6z',
     volume: 'M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z',
@@ -78,6 +77,17 @@
 
   function icon(name) {
     return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICONS[name]}"/></svg>`;
+  }
+
+  /** A circular arrow with the seconds it jumps written in it; forward is the same arrow mirrored. */
+  function seekButton(forward, seconds, label, onClick) {
+    const b = button('replay', label, onClick, 'tm-seekbtn');
+    if (forward) b.querySelector('svg').style.transform = 'scaleX(-1)';
+    const n = document.createElement('span');
+    n.className = 'tm-seekn';
+    n.textContent = String(seconds);
+    b.append(n);
+    return b;
   }
 
   function button(name, label, onClick, extraClass) {
@@ -449,9 +459,9 @@
       top.append(this.pipBtn, this.castBtn, this.settingsBtn);
 
       const center = q('.tm-center');
-      this.backBtn = button('replay10', T('player.seek_seconds', { seconds: SEEK_MEDIUM }), () => this.seekBy(-SEEK_MEDIUM));
+      this.backBtn = seekButton(false, SEEK_MEDIUM, T('player.seek_seconds', { seconds: SEEK_MEDIUM }), () => this.seekBy(-SEEK_MEDIUM));
       this.bigPlay = button('play', T('player.play'), () => this.togglePlay());
-      this.fwdBtn = button('forward10', T('player.seek_seconds', { seconds: SEEK_MEDIUM }), () => this.seekBy(SEEK_MEDIUM));
+      this.fwdBtn = seekButton(true, SEEK_MEDIUM, T('player.seek_seconds', { seconds: SEEK_MEDIUM }), () => this.seekBy(SEEK_MEDIUM));
       center.append(this.backBtn, this.bigPlay, this.fwdBtn);
 
       const row = q('.tm-controls');
@@ -471,9 +481,12 @@
       this.volume.addEventListener('input', () => this.setVolume(Number(this.volume.value)));
       this.volume.addEventListener('click', (e) => e.stopPropagation());
       // A phone's volume is its own buttons'; a slider there only fights them.
+      // On a phone the row keeps what a thumb needs; previous and mute live in the menu and the
+      // phone's own buttons, so the row fits a 360 px wide screen.
       if (coarse()) {
         this.volume.hidden = true;
-        this.muteBtn.hidden = IOS;
+        this.muteBtn.hidden = true;
+        this.prevBtn.hidden = true;
       }
       this.timeEl = document.createElement('div');
       this.timeEl.className = 'tm-time';
