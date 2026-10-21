@@ -310,10 +310,16 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
             },
             skeleton = skeleton,
         ) { content ->
-            val back = gridReturn
-            val grid = rememberLazyGridState(back?.first ?: 0, back?.second ?: 0)
+            // Back from a show over the grid, or else where this listing was left on the last
+            // visit, so coming back to a chat finds the same pages at the same place.
+            val restored = remember(model) { model.restoredScroll }
+            val back = gridReturn ?: restored
+            val grid = rememberLazyGridState(back.first, back.second)
             LaunchedEffect(grid) { gridReturn = null }
             val rowsGrid = rememberLazyGridState()
+            DisposableEffect(model, grid) {
+                onDispose { model.rememberScroll(grid.firstVisibleItemIndex, grid.firstVisibleItemScrollOffset) }
+            }
             LoadMoreNearEnd(grid, enabled = !content.endReached && !content.loadingMore) { model.loadMore() }
             LoadMoreNearEnd(rowsGrid, enabled = !content.endReached && !content.loadingMore) { model.loadMore() }
             val ad = content.sponsored?.messages?.firstOrNull()

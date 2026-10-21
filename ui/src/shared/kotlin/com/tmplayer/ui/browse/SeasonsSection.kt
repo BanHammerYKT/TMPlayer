@@ -103,8 +103,13 @@ fun SeasonsSection(
     if (parsed.episode == null && !show) return
 
     val known by KnownMedia.version.collectAsState()
-    val series by produceState<Series?>(null, item.id, known) {
-        value = withContext(Dispatchers.Default) { EpisodeGuide.seriesOf(item, KnownMedia.all()) }
+    // The show as this page found it last time ([PageQueries]), so the seasons are drawn with the
+    // page rather than arriving under it; worked out again behind, from what is known now.
+    val seriesKey = com.tmplayer.data.QueryKey.SeriesOf(item.id)
+    val series by produceState(com.tmplayer.data.PageQueries.cache.data<Series>(seriesKey), item.id, known) {
+        val found = withContext(Dispatchers.Default) { EpisodeGuide.seriesOf(item, KnownMedia.all()) }
+        if (found != null) com.tmplayer.data.PageQueries.cache.put(seriesKey, found) else com.tmplayer.data.PageQueries.cache.remove { it == seriesKey }
+        value = found
     }
     val today = remember { LocalDate.now().toString() }
     val seasons = remember(series, extras, today) {

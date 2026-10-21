@@ -145,6 +145,9 @@ class App : Application() {
         // Home as it was last built, read now so its first frame finds it in memory (HomeCache).
         com.tmplayer.data.HomeCache.file = java.io.File(filesDir, "home/home-cache.json")
         backgroundScope.launch { runCatching { com.tmplayer.data.HomeCache.preload() } }
+        // And the chats opened most recently, so a cold start opens one of them at once (PageQueries).
+        com.tmplayer.data.PageQueries.store = com.tmplayer.data.ChatGridDisk(java.io.File(filesDir, "home/chat-grids.json"))
+        backgroundScope.launch { runCatching { com.tmplayer.data.PageQueries.preload() } }
         OnlineMetadata.current = OnlineMetadata(
             buildKey = BuildConfig.TMDB_API_KEY,
             store = MetadataStore(java.io.File(filesDir, "online/metadata.properties")),

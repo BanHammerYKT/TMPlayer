@@ -17,6 +17,9 @@ import com.tmplayer.data.Fuzzy
 import com.tmplayer.data.MediaCursors
 import com.tmplayer.data.MediaItem
 import com.tmplayer.data.MediaPage
+import com.tmplayer.data.ChatGrid
+import com.tmplayer.data.PageQueries
+import com.tmplayer.data.QueryKey
 import com.tmplayer.data.LocalFileAvailability
 import com.tmplayer.data.SettingsStore
 import com.tmplayer.data.SizeFilter
@@ -58,7 +61,14 @@ data class BrowseData(
  * @param settings where the cold-start snapshot lives. Null in the contexts that have no
  *   Application to hand, in which case the first frame waits on TDLib.
  */
-class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel() {
+class ChatListViewModel(
+    private val settings: SettingsStore? = null,
+    /**
+     * The page cache the list is kept in for this run ([PageQueries.cache]), so a view model made
+     * again draws it in its first frame. Null (the tests) keeps nothing between view models.
+     */
+    private val memory: com.tmplayer.data.QueryCache? = null,
+) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState<BrowseData>>(UiState.Loading(LOADING_CHATS))
     val state: StateFlow<UiState<BrowseData>> = _state.asStateFlow()
@@ -95,6 +105,17 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
      * dropped rather than painted over content that is newer than it is.
      */
     private fun paintFromSnapshot() {
+        // The list this run already had (a second window, an account screen made again) is in
+        // memory: drawn in this very frame, before the disk is asked. The folders are cut from it
+        // on the screen, so each folder's list is there at once as well.
+        memory?.data<List<ChatSummary>>(QueryKey.ChatList())?.takeIf { it.isNotEmpty() }?.let { kept ->
+            viewModelScope.launch {
+                ChatGate.awaitReady()
+                if (chats != null) return@launch
+                chats = kept
+                publish()
+            }
+        }
         val store = settings ?: return
         viewModelScope.launch {
             // The header first: it is one small read, and a rail that says "Your account" over a
@@ -490,6 +511,8 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
 
     private fun publish() {
         val everything = chats ?: return
+        // Kept whole, before the kids lock and the hidden chats, which are applied below on each read.
+        memory?.put(QueryKey.ChatList(), everything)
         val allowed = ChatGate.allowed.value
         val loaded = com.tmplayer.data.HiddenChats.filter(KidsLock.chats(everything, allowed)) { it.id }
         _state.value = when {
@@ -686,21 +709,66 @@ class MediaListViewModel(
     /** The chat held open in TDLib for as long as this listing lives; see [Td.watchChat]. */
     private var watching: AutoCloseable? = null
 
+    /** The answers kept from the last visit ([PageQueries]): this chat's pages, topics and extras. */
+    private val cache = PageQueries.cache
+
+    /** What this listing is kept under: the chat, the topic and the search. */
+    private fun gridKey() = QueryKey.ChatMedia(chatId, topicId, query)
+
     init {
         val memory = topicMemory
-        if (memory == null) {
-            load()
+        // Last visit's topics and extras first, so the row of chips and the entries over the
+        // listing are drawn with the first frame rather than arriving under the viewer's eyes.
+        val extrasFresh = restoreExtras()
+        val known = PageQueries.lastTopic(chatId)
+        if (memory == null || known != null) {
+            // A topic picked earlier in this run is already in memory: the kept listing is drawn
+            // at once, in this very frame.
+            topicId = known ?: 0
+            load(preserveContent = true, force = false)
         } else {
             // The remembered topic is read before the first page is asked for, so a group the viewer
             // left on "Movies" never flashes its whole listing first. It is one local read.
             viewModelScope.launch {
                 topicId = runCatching { memory.chosen(chatId) }.getOrDefault(0)
-                load()
+                PageQueries.noteTopic(chatId, topicId)
+                load(preserveContent = true, force = false)
             }
         }
         loadTopics()
         followChanges()
-        countAudio()
+        if (!extrasFresh) countAudio()
+    }
+
+    /** What sits over the listing besides the videos, as one answer for the [cache]. */
+    private data class Extras(val audio: Int = 0, val round: Int = 0, val pinned: com.tmplayer.data.PinnedPost? = null)
+
+    /** Draws the extras kept from the last visit; true when they are fresh enough not to count again. */
+    private fun restoreExtras(): Boolean {
+        val kept = cache.peek<Extras>(QueryKey.ChatExtras(chatId), PageQueries.CHAT_STALE_MS) ?: return false
+        _audioCount.value = kept.data.audio
+        _roundCount.value = kept.data.round
+        _pinned.value = kept.data.pinned
+        return !kept.stale
+    }
+
+    private fun keepExtras(change: (Extras) -> Extras) {
+        cache.update<Extras>(QueryKey.ChatExtras(chatId)) { change(it ?: Extras()) }
+    }
+
+    /**
+     * Where the grid stood when this listing was last left, for the screen to start there: the
+     * first item shown and how far past it. 0 and 0 for a listing not seen before.
+     */
+    val restoredScroll: Pair<Int, Int>
+        get() = cache.data<ChatGrid>(gridKey())?.let { it.scrollIndex to it.scrollOffset } ?: (0 to 0)
+
+    /** Remembers where the grid stands, as it is left, for [restoredScroll] on the next visit. */
+    fun rememberScroll(index: Int, offset: Int) {
+        cache.update<ChatGrid>(gridKey()) { grid ->
+            if (grid == null || (grid.scrollIndex == index && grid.scrollOffset == offset)) grid
+            else grid.copy(scrollIndex = index, scrollOffset = offset)
+        }
     }
 
     /**
@@ -711,23 +779,29 @@ class MediaListViewModel(
         viewModelScope.launch {
             val session = Td.awaitAuthorizedSession()
             val count = runCatching { com.tmplayer.data.ChatAudio.count(session.client, chatId) }.getOrDefault(0)
-            if (!session.isCurrent() || count <= 0) return@launch
+            if (!session.isCurrent()) return@launch
+            keepExtras { it.copy(audio = count) }
             _audioCount.value = count
+            if (count <= 0) return@launch
             showExtrasInsteadOfEmpty()
         }
         // The chat's round videos and its pinned post (CP81), beside the first page the same way.
         viewModelScope.launch {
             val session = Td.awaitAuthorizedSession()
             val count = runCatching { com.tmplayer.data.ChatVideoNotes.count(session.client, chatId) }.getOrDefault(0)
-            if (!session.isCurrent() || count <= 0) return@launch
+            if (!session.isCurrent()) return@launch
+            keepExtras { it.copy(round = count) }
             _roundCount.value = count
+            if (count <= 0) return@launch
             showExtrasInsteadOfEmpty()
         }
         viewModelScope.launch {
             val session = Td.awaitAuthorizedSession()
             val pinned = runCatching { com.tmplayer.data.PinnedPosts.of(session.client, chatId) }.getOrNull()
-            if (!session.isCurrent() || pinned == null) return@launch
+            if (!session.isCurrent()) return@launch
+            keepExtras { it.copy(pinned = pinned) }
             _pinned.value = pinned
+            if (pinned == null) return@launch
             showExtrasInsteadOfEmpty()
         }
     }
@@ -751,20 +825,33 @@ class MediaListViewModel(
      * that has since been deleted, or a group that has turned topics off, falls back to all.
      */
     private fun loadTopics() {
+        // The chips of the last visit, drawn now; asked again only once they have gone stale.
+        val kept = cache.peek<List<ForumTopicSummary>>(QueryKey.Topics(chatId), PageQueries.CHAT_STALE_MS)
+        if (kept != null) {
+            _topics.value = if (kept.data.isEmpty()) null else TopicBar(kept.data, topicId)
+            if (!kept.stale) return
+        }
         viewModelScope.launch {
             val session = Td.awaitAuthorizedSession()
             val repository = ChatRepository(session.client)
             // The tabs first, straight from the topic list, so the row is up at once; then again
             // once each topic's videos are counted, without the ones that turned out to have none.
+            // Not over chips kept from the last visit, which are counted already.
             val listed = runCatching { repository.forumTopics(chatId, countVideos = false) }
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull() ?: return@launch
-            if (!session.isCurrent() || listed.isEmpty()) return@launch
-            _topics.value = TopicBar(listed, topicId)
+            if (!session.isCurrent()) return@launch
+            if (listed.isEmpty()) {
+                cache.put(QueryKey.Topics(chatId), emptyList<ForumTopicSummary>())
+                _topics.value = null
+                return@launch
+            }
+            if (kept == null) _topics.value = TopicBar(listed, topicId)
             val found = runCatching { repository.forumTopics(chatId) }
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull() ?: return@launch
             if (!session.isCurrent()) return@launch
+            cache.put(QueryKey.Topics(chatId), found.filter { it.hasVideos })
             val offered = found.filter { it.hasVideos || it.id == topicId }
             if (topicId != 0 && offered.none { it.id == topicId }) {
                 _topics.value = if (offered.isEmpty()) null else TopicBar(offered, 0)
@@ -780,6 +867,7 @@ class MediaListViewModel(
         _topics.value?.let { bar -> if (bar.selected != id) _topics.value = bar.copy(selected = id) }
         if (id == topicId) return
         topicId = id
+        PageQueries.noteTopic(chatId, id)
         topicMemory?.let { memory -> viewModelScope.launch { runCatching { memory.remember(chatId, id) } } }
         recordJob?.cancel()
         load(preserveContent = false)
@@ -908,9 +996,25 @@ class MediaListViewModel(
         }
     }
 
-    fun load() = load(preserveContent = true)
+    /** Refresh and Try again: Telegram asked at once, past what is kept, the listing staying up meanwhile. */
+    fun load() = load(preserveContent = true, force = true)
 
-    private fun load(preserveContent: Boolean) {
+    /**
+     * Lists the chat from the first page. Unless [force]d, what the [cache] kept of this listing
+     * is drawn at once, through the size limits as they are now, and asked again behind it once
+     * it is older than [PageQueries.GRID_STALE_MS] (stale while revalidate): no skeleton, and the
+     * pages scrolled through last time are all there.
+     */
+    private fun load(preserveContent: Boolean, force: Boolean = false) {
+        _topics.value?.let { bar -> if (bar.selected != topicId) _topics.value = bar.copy(selected = topicId) }
+        val key = gridKey()
+        val kept = if (force) null else cache.peek<ChatGrid>(key, PageQueries.GRID_STALE_MS)
+        if (kept != null) {
+            pageJob?.cancel()
+            loadSponsored()
+            showKept(key, kept.data, revalidate = kept.stale)
+            return
+        }
         val previous = if (preserveContent) (_state.value as? UiState.Content)?.value else null
         val previousCursors = cursors
         cursors = MediaCursors()
@@ -931,7 +1035,10 @@ class MediaListViewModel(
                 .onSuccess { rawPage ->
                     if (!session.isCurrent()) return@onSuccess
                     _selfDestructing.value += rawPage.hiddenSelfDestructing
-                    val page = rawPage.copy(items = marked(keep(rawPage.items)))
+                    val seen = rawPage.copy(items = marked(rawPage.items))
+                    // Kept before the size limits, which are applied again on every read.
+                    cache.put(key, ChatGrid.of(seen, serverQuery))
+                    val page = seen.copy(items = keep(seen.items))
                     cursors = page.cursors
                     archives = com.tmplayer.data.Archives.merge(archives, page.archives)
                     // A first page can come back empty while older pages still hold videos: a chat
@@ -946,7 +1053,7 @@ class MediaListViewModel(
                     // be a blank body for the whole walk, with nothing to point the remote at, and
                     // that reads as a chat with no videos rather than one still being searched.
                     if (page.items.isEmpty() && !page.endReached) {
-                        pageMore(session, repository, emptyList(), page.endReached)
+                        pageMore(session, repository, emptyList(), page.endReached, key)
                         return@onSuccess
                     }
                     if (page.items.isNotEmpty()) recordSearch(query)
@@ -975,6 +1082,78 @@ class MediaListViewModel(
                     }
                 }
         }
+    }
+
+    /**
+     * Draws [grid], the listing kept under [key], through the size limits and the search ranking
+     * as they are now, and when it has gone stale asks its first page again behind it, laying the
+     * answer over the pages kept ([ChatGrid.refreshed]). A kept listing the size limits empty
+     * entirely walks on from its cursors, as a first page would.
+     */
+    private fun showKept(key: QueryKey.ChatMedia, grid: ChatGrid, revalidate: Boolean) {
+        val walking = show(grid)
+        if (walking) {
+            pageJob = viewModelScope.launch {
+                val session = Td.awaitAuthorizedSession()
+                pageMore(session, ChatRepository(session.client), emptyList(), endReached = false, key = key)
+            }
+            return
+        }
+        if (!revalidate) {
+            refreshLocalAvailability()
+            return
+        }
+        pageJob = viewModelScope.launch {
+            val fresh = runCatching {
+                cache.fetch(key) {
+                    if (key.query.isEmpty()) {
+                        PageQueries.refreshGrid(key)
+                    } else {
+                        val session = Td.awaitAuthorizedSession()
+                        serverQuery = query
+                        val page = firstPage(ChatRepository(session.client)).let { it.copy(items = marked(it.items)) }
+                        if (!session.isCurrent()) throw CancellationException("signed out")
+                        ChatGrid.of(page, serverQuery)
+                    }
+                }
+            }.onFailure { if (it is CancellationException && key == gridKey()) throw it }
+                // A refresh that failed keeps the kept listing up: it is still the best answer.
+                .getOrNull() ?: return@launch
+            if (key != gridKey()) return@launch
+            val seen = fresh.copy(items = marked(fresh.items))
+            if (seen.items != fresh.items) cache.update<ChatGrid>(key) { if (it === fresh) seen else it }
+            if (show(seen)) {
+                val session = Td.awaitAuthorizedSession()
+                pageMore(session, ChatRepository(session.client), emptyList(), endReached = false, key = key)
+                return@launch
+            }
+            refreshLocalAvailability()
+        }
+    }
+
+    /**
+     * Publishes [grid] as the listing. True when the size limits left nothing of it while the
+     * chat goes on, so the caller walks on (the skeleton stays up meanwhile, as on a first load).
+     */
+    private fun show(grid: ChatGrid): Boolean {
+        cursors = grid.cursors
+        serverQuery = grid.serverQuery.ifEmpty { query }
+        archives = grid.archives
+        _selfDestructing.value = grid.selfDestructing
+        hiddenBySize = 0
+        val items = keep(grid.items)
+        if (items.isEmpty() && !grid.endReached) {
+            _state.value = UiState.Loading(if (query.isNotBlank()) L.browseSearching else L.browseFindingVideos)
+            return true
+        }
+        _state.value = if (items.isEmpty() && sponsored == null && archives.isEmpty()) {
+            nothingFound(grid.endReached)
+        } else {
+            UiState.Content(
+                MediaListState(items = items, sponsored = sponsored, endReached = grid.endReached, archives = archives),
+            )
+        }
+        return false
     }
 
     /**
@@ -1230,6 +1409,8 @@ class MediaListViewModel(
         repository: ChatRepository,
         startingFrom: List<MediaItem>,
         endReached: Boolean,
+        /** The listing the pages are kept under, appended to as they arrive. */
+        key: QueryKey.ChatMedia = gridKey(),
     ) {
         var items = startingFrom
         var reachedEnd = endReached
@@ -1248,7 +1429,11 @@ class MediaListViewModel(
             runCatching { repository.mediaPage(chatId, cursors, serverQuery, topicId = topicId) }
                 .onSuccess { rawPage ->
                     _selfDestructing.value += rawPage.hiddenSelfDestructing
-                    val page = rawPage.copy(items = marked(keep(rawPage.items)))
+                    val seen = rawPage.copy(items = marked(rawPage.items))
+                    // Appended to the kept listing only while it is still there: a page added to
+                    // nothing would be kept as a listing missing every page before it.
+                    if (session.isCurrent()) cache.update<ChatGrid>(key) { it?.plus(seen) }
+                    val page = seen.copy(items = keep(seen.items))
                     cursors = page.cursors
                     archives = com.tmplayer.data.Archives.merge(archives, page.archives)
                     items = (items + page.items).distinctBy { it.messageId }

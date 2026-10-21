@@ -251,7 +251,7 @@ private fun Browse(state: ShellState, player: PlayerContent) {
     val s = LocalStrings.current
     // One chat list for the session, the same view model the phone uses. Its store is cleared when
     // the account goes, which cancels everything it was loading.
-    val chats = rememberViewModel(Unit) { ChatListViewModel(state.settings) }
+    val chats = rememberViewModel(Unit) { ChatListViewModel(state.settings, com.tmplayer.data.PageQueries.cache) }
     DisposableEffect(chats) { onDispose { chats.reset() } }
     LaunchedEffect(Unit) { chats.refreshIfStale() }
     LaunchedEffect(state) { state.settings.detailFirst.collect { state.detailFirst = it } }

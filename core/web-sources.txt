@@ -44,3 +44,4 @@ com/tmplayer/data/Backup.kt
 com/tmplayer/data/BackupService.kt
 com/tmplayer/data/Feedback.kt
 com/tmplayer/data/LogExport.kt
+com/tmplayer/data/PageQueries.kt

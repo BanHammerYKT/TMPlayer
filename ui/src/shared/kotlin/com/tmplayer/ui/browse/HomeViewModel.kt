@@ -218,6 +218,9 @@ class HomeViewModel(
      * `init`, whose collector of [Td.connected] can call [retryFailed] before the constructor ends.
      */
     private val failedChats = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    /** The chats whose grid Home has prefetched this run, at most [PREFETCH_CHATS] of them. */
+    private val prefetched = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
     @Volatile private var recentFailed = false
 
     private val _refreshing = MutableStateFlow(false)
@@ -391,6 +394,11 @@ class HomeViewModel(
         // Unchanged rows are not written again, so nothing recomposes for an answer that is the same.
         _loaded.update { if (it[chatId] == kept) it else it + (chatId to kept) }
         noteFresh()
+        // A chat shown on Home is one likely opened next: the first few have their grid's first
+        // page fetched behind, at low priority, so opening one draws it at once.
+        if (source === TdHomeSource && items.isNotEmpty() && prefetched.size < PREFETCH_CHATS && prefetched.add(chatId)) {
+            com.tmplayer.data.PageQueries.prefetchChat(chatId)
+        }
     }
 
     private fun noteFresh() {
@@ -550,6 +558,9 @@ class HomeViewModel(
     companion object {
         /** Rows fetched at once: enough to fill a screen quickly, few enough to stay polite to Telegram. */
         const val PARALLEL = 3
+
+        /** How many of Home's chats have their grid prefetched in a run: the first rows, not all of them. */
+        const val PREFETCH_CHATS = 6
 
         /** How often Home brings itself up to date while it is open (user, 2026-10-21: "short auto refresh"). */
         const val AUTO_REFRESH_MS = 3 * 60 * 1000L

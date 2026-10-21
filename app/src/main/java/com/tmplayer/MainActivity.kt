@@ -774,7 +774,7 @@ private fun Root() {
         factory = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                ChatListViewModel(settings) as T
+                ChatListViewModel(settings, com.tmplayer.data.PageQueries.cache) as T
         },
     )
     val chatsState by chatsViewModel.state.collectAsStateWithLifecycle()
