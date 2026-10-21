@@ -1,5 +1,6 @@
 package com.tmplayer.desktop.ui
 
+import com.tmplayer.ui.browse.continueCardTitle
 import com.tmplayer.ui.browse.HistoryTab
 import com.tmplayer.ui.browse.BrowseTab
 import androidx.compose.runtime.produceState
@@ -763,7 +764,8 @@ private fun ContinueTile(
         chatTitle = record.chatTitle,
         progress = record.fraction,
         art = { OnHome { ContinueArt(item) } },
-        titleBelow = false,
+        // The name under the art, as on every other card, and none on the picture.
+        titleText = remember(item, s) { continueCardTitle(item, s) },
         subtitle = s.continueLeft(record.chatTitle, MediaMapper.formatDuration((record.remainingMs / 1000).toInt())),
         extraMenu = { close ->
             // Marking also forgets the position, so the card leaves this page with it.
@@ -777,43 +779,16 @@ private fun ContinueTile(
     )
 }
 
-/** A continue card's art: the picture or the cover, and the episode and the title written on it. */
+/**
+ * A continue card's art: the picture, or the cover with no name on it. The name is written under
+ * the card ([continueCardTitle]), so it is not on the picture as well.
+ */
 @Composable
 private fun ContinueArt(item: MediaItem) {
-    val s = LocalStrings.current
     val cover = rememberCover(item)
-    val parsed = remember(item) { MediaName.parse(item.nameForParsing, item.caption) }
-    val title = remember(item) { SeriesShelf.tileTitle(item) }
-    // An episode is named by its show, with the episode above it; anything else by its own name.
-    val episode = parsed.episode?.let { number -> parsed.season?.let { s.seriesEpisodeShort(it, number) } ?: s.seriesEpisode(number) }
-    val name = if (episode != null) parsed.title.ifBlank { title } else title
-    Box(Modifier.fillMaxSize()) {
-        OnlineArt(item, Modifier.fillMaxSize()) {
-            MediaArt(item.miniThumbnail, item.thumbnailFileId, Modifier.fillMaxSize()) {
-                GeneratedCover(cover, Modifier.fillMaxSize(), showTitle = false)
-            }
-        }
-        Box(Modifier.fillMaxSize().background(Scrims.tileFoot))
-        Column(
-            Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 12.dp, end = 12.dp, bottom = 12.dp + ProgressLineInset),
-        ) {
-            if (episode != null) {
-                Text(
-                    episode,
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = Tone.onArt,
-                    maxLines = 1,
-                )
-            }
-            Text(
-                name,
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = Tone.onArt,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+    OnlineArt(item, Modifier.fillMaxSize()) {
+        MediaArt(item.miniThumbnail, item.thumbnailFileId, Modifier.fillMaxSize()) {
+            GeneratedCover(cover, Modifier.fillMaxSize(), showTitle = false)
         }
     }
 }
@@ -935,6 +910,8 @@ internal fun Poster(
     finished: Boolean = false,
     /** False for a card that writes its title on the art itself, and keeps only [subtitle] under it. */
     titleBelow: Boolean = true,
+    /** The name under the art in place of the file's own, for a card that knows better (Continue watching's "S1 E3  ·  Show"). */
+    titleText: String? = null,
     badge: (@Composable () -> Unit)? = null,
     /** A film's 2:3 poster card rather than a video's 16:9 one, named without its year. */
     poster: Boolean = false,
@@ -1205,7 +1182,7 @@ internal fun Poster(
         // The name cleaned of its release tags, a film of several copies by the film's own name
         // (see SeriesShelf.tileTitle); the detail pane keeps the whole file name.
         if (titleBelow) {
-            val title = remember(item, poster) { if (poster) SeriesShelf.posterTitle(item) else SeriesShelf.tileTitle(item) }
+            val title = remember(item, poster, titleText) { titleText ?: if (poster) SeriesShelf.posterTitle(item) else SeriesShelf.tileTitle(item) }
             if (poster) {
                 Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis)
             } else {
