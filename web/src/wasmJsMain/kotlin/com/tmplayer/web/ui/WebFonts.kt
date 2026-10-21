@@ -13,8 +13,14 @@ import kotlin.io.encoding.ExperimentalEncodingApi
  * Fonts for a canvas that has none of the system's: Skia in the browser draws only what it is
  * given. Noto Sans (Latin, Cyrillic, Greek, Vietnamese) comes first and is waited for; the emoji
  * and the CJK, Indic and Arabic subsets the desktop ships come after the first paint, as
- * fallbacks, so the first screen is not held up by megabytes most viewers never need.
+ * fallbacks, and the large ones only once their script is on the page ([due]), so the first
+ * screen is not held up, and no visit pays for, megabytes most viewers never need.
  */
+@JsFun("() => Object.keys(window.TmScripts || {}).join(',')")
+private external fun jsSeenScripts(): String
+
+private fun seenScripts(): Set<String> = jsSeenScripts().split(',').filter { it.isNotEmpty() }.toSet()
+
 object WebFonts {
     private val WEIGHTS = listOf(FontWeight.Normal, FontWeight.Medium, FontWeight.SemiBold, FontWeight.Bold)
 
@@ -47,6 +53,25 @@ object WebFonts {
         "NotoSansMalayalam-Subset", "NotoSansJP-Subset", "NotoSansSC-Subset", "NotoSansTC-Subset",
         "NotoSansKR-Subset",
     )
+
+    /**
+     * The fallbacks worth loading now: the small ones (emoji once one has been seen, the Arabic
+     * and Indic subsets at a few hundred kilobytes) always, the East Asian ones once td-bridge.js
+     * has seen text in their script come from Telegram, or the UI language is theirs.
+     */
+    fun due(language: String): List<String> {
+        val seen = seenScripts()
+        val out = ArrayList<String>()
+        if ("emoji" in seen) out += "NotoColorEmoji"
+        out += listOf("NotoSansArabicUI-Subset", "NotoSansDevanagari-Subset", "NotoSansBengali-Subset", "NotoSansMalayalam-Subset")
+        if ("kana" in seen) out += "NotoSansJP-Subset"
+        if ("hangul" in seen) out += "NotoSansKR-Subset"
+        if ("han" in seen) {
+            val traditional = language.contains("TW", ignoreCase = true) || language.contains("Hant")
+            out += if (traditional) "NotoSansTC-Subset" else "NotoSansSC-Subset"
+        }
+        return out + firstFor(language)
+    }
 
     /** Which subsets a language needs at once rather than in the background. */
     fun firstFor(language: String): List<String> = when (language.substringBefore('-')) {

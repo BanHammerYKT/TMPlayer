@@ -41,7 +41,7 @@ import com.tmplayer.i18n.Translator
 import com.tmplayer.platform.Background
 import com.tmplayer.platform.Credentials
 import com.tmplayer.platform.DeviceInfo
-import com.tmplayer.ui.components.LocalBrandBadge
+import com.tmplayer.ui.components.LocalBlankLoader
 import com.tmplayer.ui.theme.TmMaterialTheme
 import com.tmplayer.ui.theme.UiScaled
 import com.tmplayer.ui.theme.rememberUiScale
@@ -53,6 +53,8 @@ import com.tmplayer.web.js.text
 import com.tmplayer.web.ui.WebFonts
 import kotlinx.browser.document
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -74,22 +76,25 @@ fun main() {
         val system = listOf(TmHost.language())
         val saved = runCatching { settings.language.first() }.getOrDefault("")
         val tag = Languages.resolve(saved, system)
-        Translator.provide(Languages.ENGLISH, TmHost.fetchText("i18n/en.json").text())
-        if (tag != Languages.ENGLISH) {
-            TmHost.fetchText("i18n/$tag.json").text().takeIf { it.isNotBlank() }?.let { Translator.provide(tag, it) }
-        }
-        Translator.select(saved, system)
-        val family = WebFonts.main()
-        val firstFallbacks = WebFonts.firstFor(tag).mapNotNull { name ->
-            WebFonts.bytes("fonts/$name.ttf")?.let { WebFonts.family(name, it) }
-        }
-        com.tmplayer.web.player.WebPlayer.installStrings()
-
+        // TDLib first: its wasm loads and its database opens while the strings and the font come,
+        // rather than after them.
         Td.start(
             DesktopPaths,
             DeviceInfo(model = deviceModel(), systemVersion = "", appVersion = BuildInfo.VERSION),
             Credentials(BuildInfo.TG_API_ID, BuildInfo.TG_API_HASH),
         )
+        val english = async { TmHost.fetchText("i18n/en.json").text() }
+        val chosen = async { if (tag != Languages.ENGLISH) TmHost.fetchText("i18n/$tag.json").text() else "" }
+        val text = async { WebFonts.main() }
+        val firstNames = WebFonts.firstFor(tag)
+        val first = firstNames.map { name -> async { WebFonts.bytes("fonts/$name.ttf")?.let { WebFonts.family(name, it) } } }
+        Translator.provide(Languages.ENGLISH, english.await())
+        chosen.await().takeIf { it.isNotBlank() }?.let { Translator.provide(tag, it) }
+        Translator.select(saved, system)
+        val family = text.await()
+        val firstFallbacks = first.mapNotNull { it.await() }
+        com.tmplayer.web.player.WebPlayer.installStrings()
+
         ChatGate.follow(settings)
         HiddenChats.follow(settings)
         VideoCorrections.follow(settings)
@@ -116,18 +121,24 @@ fun main() {
             WebTheme(settings, family) {
                 val resolver = LocalFontFamilyResolver.current
                 LaunchedEffect(Unit) {
-                    // The script the UI language needs first, then the emoji and every other
-                    // script, as fallbacks Skia reaches for a character Noto Sans does not have.
+                    // The script the UI language needs first, then the others as fallbacks Skia
+                    // reaches for a character Noto Sans does not have, each only once text in
+                    // its script has come from Telegram (WebFonts.due): the East Asian ones are
+                    // megabytes each, which most viewers never need.
                     for (f in firstFallbacks) runCatching { resolver.preload(f) }
-                    for (name in WebFonts.FALLBACKS) {
-                        val bytes = WebFonts.bytes("fonts/$name.ttf") ?: continue
-                        runCatching { resolver.preload(WebFonts.family(name, bytes)) }
+                    val loaded = HashSet(firstNames)
+                    while (loaded.size < WebFonts.FALLBACKS.size) {
+                        for (name in WebFonts.due(tag)) {
+                            if (!loaded.add(name)) continue
+                            val bytes = WebFonts.bytes("fonts/$name.ttf") ?: continue
+                            runCatching { resolver.preload(WebFonts.family(name, bytes)) }
+                        }
+                        delay(2_000)
                     }
                 }
-                CompositionLocalProvider(
-                    LocalVideoBehindPage provides true,
-                    LocalBrandBadge provides Translator.messages.text("web.beta"),
-                ) {
+                // The wait for Telegram is a blank ground, as the page's own splash is: words only
+                // if it runs long (user, 2026-10-21).
+                CompositionLocalProvider(LocalVideoBehindPage provides true, LocalBlankLoader provides true) {
                     Box(Modifier.fillMaxSize().trackFocusVisibility()) {
                         DesktopShell(shell) { request, close ->
                             WebPlayerScreen(

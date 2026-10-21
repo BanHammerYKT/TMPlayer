@@ -26,8 +26,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -67,6 +69,13 @@ import kotlinx.coroutines.delay
 import kotlin.math.tan
 
 /**
+ * True where the wait should be a plain ground rather than the mark (the browser, user
+ * 2026-10-21: "just use a blank screen until if needed"): nothing is drawn but the theme's colour,
+ * and the words and any help come only once the wait has gone on for [BLANK_MS].
+ */
+val LocalBlankLoader = staticCompositionLocalOf { false }
+
+/**
  * The first thing anybody sees after the system's splash, and for a few seconds the only thing.
  *
  * Opening TMPlayer means waiting on TDLib to open its database, find a socket and say hello to
@@ -104,6 +113,15 @@ fun BrandLoader(
         }
     }
 
+    val blank = LocalBlankLoader.current
+    var reveal by remember { mutableStateOf(!blank) }
+    if (blank) {
+        LaunchedEffect(Unit) {
+            delay(BLANK_MS)
+            reveal = true
+        }
+    }
+
     Box(
         modifier
             .fillMaxSize()
@@ -111,10 +129,14 @@ fun BrandLoader(
             .padding(horizontal = size.side),
         contentAlignment = Alignment.Center,
     ) {
+        if (!reveal) return@Box
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // The app's mark, standing still (user, 2026-10-19: the moving playhead went).
-            LogoMark(size = size.logo, progress = { sweepAt?.takeIf { it >= 0f } ?: RESTING })
-            Spacer(Modifier.height(size.gap))
+            // The app's mark, standing still (user, 2026-10-19: the moving playhead went); a blank
+            // loader that has waited long enough to speak shows only its words.
+            if (!blank) {
+                LogoMark(size = size.logo, progress = { sweepAt?.takeIf { it >= 0f } ?: RESTING })
+                Spacer(Modifier.height(size.gap))
+            }
             Crossfade(label, animationSpec = tween(LINE_FADE_MS, easing = Motion.Standard), label = "loaderLabel") {
                 Text(
                     it,
@@ -224,3 +246,6 @@ private const val EXIT_MS = 420
 /** Long enough that a connection that lands immediately shows the first line and nothing else. */
 private const val FIRST_STEP_MS = 1_200L
 private const val STEP_MS = 5_000L
+
+/** How long a blank loader stays blank: a warm start is over well before it. */
+private const val BLANK_MS = 4_000L

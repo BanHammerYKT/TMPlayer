@@ -57,25 +57,21 @@ body {
   opacity: 0;
   pointer-events: none;
 }
-#splash .name {
-  margin: 12px 0 0;
-  font-size: 20px;
-  font-weight: 600;
-}
+/* A blank ground while the app loads (user, 2026-10-21): the line shows only if the wait runs
+   past four seconds, when saying something beats a screen that looks stuck. */
 #splash .note {
   margin: 0;
   font-size: 14px;
   color: var(--muted);
+  opacity: 0;
+  animation: tm-late 300ms ease-out 4s forwards;
 }
-#splash img {
-  animation: tm-breathe 1.6s ease-in-out infinite;
+#splash noscript .note {
+  opacity: 1;
+  animation: none;
 }
-@keyframes tm-breathe {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(0.94); opacity: 0.8; }
-}
-@media (prefers-reduced-motion: reduce) {
-  #splash img { animation: none; }
+@keyframes tm-late {
+  to { opacity: 1; }
 }
 
 /* The player stand in, until web/player's own layer is wired in. */
