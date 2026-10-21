@@ -617,13 +617,17 @@ private fun PromoChatsScreen(
         continueWatching = homeData?.continueWatching.orEmpty(),
         homeRows = homeData?.let {
             remember(it) {
+                // Home as the app builds it: filled from the chats with videos, starred first.
                 HomeRows.build(
                     it.continueWatching,
-                    HomeRows.favouriteChats(chats, it.favourites),
+                    HomeRows.homeChats(chats, it.favourites, it.recent),
                     it.loaded,
                     it.recent,
                     watchLater = it.watchLater,
                     fresh = it.fresh,
+                    recentMinStarred = 1,
+                    starred = it.favourites,
+                    autoFill = true,
                 )
             }
         }.orEmpty(),
@@ -714,7 +718,8 @@ private fun promoHome(variant: String?): PromoHome? {
     return PromoHome(
         favourites = library.favourites,
         continueWatching = library.continueWatching,
-        loaded = if (loading) starred.filterKeys { it == PromoCatalog.CINEMA } else starred,
+        // Every chat answered, as Home fills itself from the ones with videos, not only the starred.
+        loaded = if (loading) starred.filterKeys { it == PromoCatalog.CINEMA } else library.byChat,
         recent = if (loading) null else library.all,
         art = library.art,
         watchLater = library.watchLater,
