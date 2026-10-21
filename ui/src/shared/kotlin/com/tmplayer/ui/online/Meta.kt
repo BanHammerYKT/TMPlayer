@@ -313,14 +313,21 @@ fun TitleArt(
         logo = Thumbnails.online(url, LOGO_PIXELS, alpha = true) { online.image(url) }
     }
     val shown = logo
+    // Logos are drawn for dark grounds, white or near white as a rule, and a white one on a light
+    // theme's page would vanish. Such a logo is set in the page's ink there instead, its shape
+    // kept; a coloured one (gold, red) reads on either ground and is drawn as it is. This replaced
+    // a dark glow behind every logo, which read as a smudge on the light page.
+    val bright by produceState<Boolean?>(null, shown) {
+        value = shown?.let { picture -> withContext(Dispatchers.Default) { runCatching { isBrightLogo(picture) }.getOrNull() } }
+    }
+    val ink = Tone.text
+    val light = Tone.background.luminance() > 0.5f
+    val tint = if (light && bright == true) androidx.compose.ui.graphics.ColorFilter.tint(ink) else null
     androidx.compose.animation.Crossfade(targetState = shown, animationSpec = com.tmplayer.ui.theme.Motion.standard(), modifier = modifier, label = "titleArt") { picture ->
         if (picture == null) {
             text()
         } else {
             val ratio = picture.width.toFloat() / picture.height.coerceAtLeast(1)
-            // Logos are drawn for dark grounds, white or bright as a rule: over a light theme's
-            // page they get a soft dark glow behind them, or a white one would vanish.
-            val light = Tone.background.luminance() > 0.5f
             Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
             Box(Modifier.sizeIn(maxWidth = maxWidth, maxHeight = maxHeight), contentAlignment = alignment) {
                 Image(
@@ -329,25 +336,45 @@ fun TitleArt(
                     contentScale = ContentScale.Fit,
                     alignment = alignment,
                     filterQuality = Thumbnails.drawFilter,
-                    modifier = Modifier
-                        .aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio)
-                        .then(
-                            if (!light) Modifier else Modifier.drawBehind {
-                                drawRect(
-                                    androidx.compose.ui.graphics.Brush.radialGradient(
-                                        listOf(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f), androidx.compose.ui.graphics.Color.Transparent),
-                                        center = center,
-                                        radius = size.maxDimension * 0.6f,
-                                    ),
-                                )
-                            },
-                        ),
+                    colorFilter = tint,
+                    modifier = Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio),
                 )
             }
             }
         }
     }
 }
+
+/**
+ * Whether a title logo is white or near white: the mean luminance of its solid pixels, sampled,
+ * above [BRIGHT_LOGO]. A logo with no solid pixels at all is not.
+ */
+private fun isBrightLogo(picture: ImageBitmap): Boolean {
+    val pixels = IntArray(picture.width * picture.height)
+    picture.readPixels(pixels)
+    var sum = 0.0
+    var weight = 0.0
+    var i = 0
+    while (i < pixels.size) {
+        val c = pixels[i]
+        val a = (c ushr 24 and 0xFF) / 255.0
+        if (a > 0.5) {
+            val r = (c shr 16 and 0xFF) / 255.0
+            val g = (c shr 8 and 0xFF) / 255.0
+            val b = (c and 0xFF) / 255.0
+            sum += (0.2126 * r + 0.7152 * g + 0.0722 * b) * a
+            weight += a
+        }
+        i += LOGO_SAMPLE_STEP
+    }
+    return weight > 0.0 && sum / weight > BRIGHT_LOGO
+}
+
+/** Above this mean luminance a logo is white or near it, and vanishes on a light page. */
+private const val BRIGHT_LOGO = 0.72
+
+/** Every this many pixels is read: plenty for an average, and a few milliseconds at most. */
+private const val LOGO_SAMPLE_STEP = 7
 
 /** The width a title logo is decoded at: about 300 dp at a television's density. */
 private const val LOGO_PIXELS = 500

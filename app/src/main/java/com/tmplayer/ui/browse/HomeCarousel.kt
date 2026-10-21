@@ -93,8 +93,9 @@ import kotlinx.coroutines.launch
  * The phone's featured carousel at the top of Home: the newest five different films, shows and
  * videos in the starred chats ([HomeFeatured]), one full-bleed page each, swiped through. Only the
  * picture and the name move with a swipe: Play and Details stay put at the foot, acting on the page
- * up, and the pages move on by themselves every [ADVANCE_MS]. The hero is the name and the two
- * buttons, nothing more; the facts are read out by TalkBack.
+ * up, and the pages move on by themselves every [ADVANCE_MS]. Over the buttons the name (its
+ * logo where TMDB has one), a line of facts and two lines of the overview ([FeaturedInfo]); under
+ * them the dots ([CarouselDots]) say which page is up.
  *
  * It is [height] tall from its first frame, whatever has arrived: while [picks] is null (the
  * starred chats are still being asked) the same frame holds a shimmering stand-in, so nothing on
@@ -193,16 +194,23 @@ internal fun FeaturedCarousel(
                     .fillMaxWidth()
                     .padding(start = start, end = end, bottom = 4.dp),
             ) {
-                latest.getOrNull(pager.currentPage)?.let { pick ->
-                    FeaturedControls(pick, watch, chatTitle, onPlay, onDetails)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    latest.getOrNull(pager.currentPage)?.let { pick ->
+                        FeaturedControls(pick, watch, chatTitle, onPlay, onDetails)
+                    }
+                    // Which page is up, under Play: a swipe turns the pages, so the dots are a mark only.
+                    CarouselDots(count = count, current = pager.currentPage)
                 }
             }
         }
     }
 }
 
+/** The row of dots under Play: a 6 dp mark with room above and below. Before [CONTROLS_ROOM], which reads it. */
+private val DOTS_ROOM: Dp = 22.dp
+
 /** What the controls at the carousel's foot take, which a page keeps its name clear of. */
-private val CONTROLS_ROOM: Dp = 4.dp + HERO_PILL_HEIGHT
+private val CONTROLS_ROOM: Dp = 4.dp + HERO_PILL_HEIGHT + DOTS_ROOM
 
 /** One page: the picture under its fades and the name, clear of the controls ([footRoom]). */
 @Composable
@@ -241,27 +249,33 @@ private fun FeaturedPage(
                 .height(under + TOP_SCRIM)
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))),
         )
-        // The name alone, close over the buttons; the facts are only in the page's description.
-        // The title's logo where TMDB has one, the name in type until then and otherwise.
-        com.tmplayer.ui.online.TitleArt(
-            meta,
-            maxWidth = LOGO_MAX_WIDTH,
-            maxHeight = LOGO_MAX_HEIGHT,
-            alignment = Alignment.BottomCenter,
-            modifier = Modifier
+        // Close over the buttons: the title's logo where TMDB has one (the name in type until then
+        // and otherwise), the facts line and two lines of the overview, centred.
+        Column(
+            Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(start = start, end = end, bottom = footRoom + TEXT_GAP),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = Tone.text,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            com.tmplayer.ui.online.TitleArt(
+                meta,
+                maxWidth = LOGO_MAX_WIDTH,
+                maxHeight = LOGO_MAX_HEIGHT,
+                alignment = Alignment.BottomCenter,
+            ) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = Tone.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            FeaturedInfo(pick, meta, Modifier.fillMaxWidth(), overviewLines = 2, textAlign = TextAlign.Center)
         }
     }
 }

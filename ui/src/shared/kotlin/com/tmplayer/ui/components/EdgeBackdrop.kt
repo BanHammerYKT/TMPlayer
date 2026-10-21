@@ -183,10 +183,10 @@ const val EDGE_SHARE = 0.68f
 private const val WIDE_RATIO = 1.4f
 
 /** The share of the picture's width that fades into the page at its start. */
-private const val START_FADE = 0.38f
+private const val START_FADE = 0.46f
 
 /** The share of the picture's height that fades into the page at its foot. */
-private const val FOOT_FADE = 0.36f
+private const val FOOT_FADE = 0.42f
 
 /**
  * How much wider than tall the [cornerShade] glow reaches: the whole cluster of a television's

@@ -218,6 +218,16 @@ internal fun TvFeaturedCarousel(
                 },
             )
         }
+        // Which page is up, at the foot of the end, level with Play. Only a mark: Left on Play
+        // and Right on Details already turn the pages, and a stop for the dots would come
+        // between Details and its Right.
+        CarouselDots(
+            count = count,
+            current = index,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = end, bottom = PAGE_PAD + (HERO_PILL_HEIGHT - TV_DOTS_HEIGHT) / 2),
+        )
     }
 }
 
@@ -250,24 +260,25 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
             topFade = with(LocalDensity.current) { (headerFade * BAR_FADE_REACH).toDp() },
             onPictured = HomeFirstPaint::markReady,
         )
-        // The name alone over Play and Details; the facts are only in the page's description.
-        // The title's logo where TMDB has one, the name in type until then and otherwise.
-        com.tmplayer.ui.online.TitleArt(
-            meta,
-            maxWidth = TV_LOGO_MAX_WIDTH,
-            maxHeight = TV_LOGO_MAX_HEIGHT,
-            modifier = Modifier
+        // Over Play and Details: the title's logo where TMDB has one (the name in type until then
+        // and otherwise), the facts line and two lines of the overview, as the desktop's page.
+        Column(
+            Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth(TEXT_SHARE)
                 .padding(start = start, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-                color = Tone.text,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            com.tmplayer.ui.online.TitleArt(meta, maxWidth = TV_LOGO_MAX_WIDTH, maxHeight = TV_LOGO_MAX_HEIGHT) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = Tone.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            FeaturedInfo(pick, meta, overviewLines = 2)
         }
     }
 }
@@ -338,7 +349,7 @@ private fun TvFeaturedSkeleton(start: Dp, modifier: Modifier = Modifier) {
 }
 
 /** How tall the carousel is on a television under its heading: room below for the first row's titles. */
-internal val TV_FEATURED_HEIGHT = 224.dp
+internal val TV_FEATURED_HEIGHT = 260.dp
 
 /** How long a page is up before the carousel moves on. */
 private const val ADVANCE_MS = 7_000
@@ -357,4 +368,7 @@ private const val BAR_FADE_REACH = 1.7f
 
 /** The most a title logo takes over the television's carousel. */
 private val TV_LOGO_MAX_WIDTH = 340.dp
-private val TV_LOGO_MAX_HEIGHT = 110.dp
+private val TV_LOGO_MAX_HEIGHT = 80.dp
+
+/** The row of dots' own height: a 6 dp mark with room above and below. */
+private val TV_DOTS_HEIGHT = 22.dp
