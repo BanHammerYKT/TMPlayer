@@ -611,9 +611,13 @@ private fun FilterRow(state: GlobalSearchState, onFilters: (SearchFilters) -> Un
             )
         }
         items(SearchChatType.entries, key = { it.name }) { type ->
+            val chipTick = com.tmplayer.ui.components.rememberToggleTick()
             FilterChip(
                 selected = state.filters.chatType == type,
-                onClick = { onFilters(state.filters.copy(chatType = type)) },
+                onClick = {
+                    if (state.filters.chatType != type) chipTick(true)
+                    onFilters(state.filters.copy(chatType = type))
+                },
                 label = { Text(type.label) },
             )
         }
@@ -648,8 +652,9 @@ private fun ChoiceLine(label: String, chosen: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun SwitchLine(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
+    val tick = com.tmplayer.ui.components.rememberToggleTick()
     Row(
-        Modifier.fillMaxWidth().clickable(role = Role.Switch) { onChange(!on) }.padding(horizontal = 16.dp).height(56.dp),
+        Modifier.fillMaxWidth().clickable(role = Role.Switch) { tick(!on); onChange(!on) }.padding(horizontal = 16.dp).height(56.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.bodyLarge, color = Tone.text, modifier = Modifier.weight(1f))

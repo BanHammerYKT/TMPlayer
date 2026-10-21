@@ -142,13 +142,13 @@ object Thumbnails {
      * A poster from the online metadata providers: [fetch] puts it on the disk (or finds it there),
      * and it is decoded here at [maxWidth] and kept beside the thumbnails, under the same budget.
      */
-    suspend fun online(url: String, wanted: Int, fetch: suspend () -> java.io.File?): ImageBitmap? {
+    suspend fun online(url: String, wanted: Int, alpha: Boolean = false, fetch: suspend () -> java.io.File?): ImageBitmap? {
         val maxWidth = lighter(wanted)
         val key = onlineKey(url, maxWidth)
         cache.get(key)?.let { return it }
         return withContext(Dispatchers.IO) {
             val file = runCatching { fetch() }.getOrNull() ?: return@withContext null
-            runCatching { decodeImageFile(file.path, maxWidth) }.getOrNull()?.also { cache.put(key, it) }
+            runCatching { decodeImageFile(file.path, maxWidth, alpha) }.getOrNull()?.also { cache.put(key, it) }
         }
     }
 

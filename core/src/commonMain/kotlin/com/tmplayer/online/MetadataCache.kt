@@ -35,6 +35,31 @@ class MetadataCache(
     private val extras get() = File(dir, "extras")
     private val seasons get() = File(dir, "seasons")
     private val skips get() = File(dir, "skips")
+    private val logos get() = File(dir, "logos")
+
+    /** The pictures' bytes on the disk, counted once and then kept up to date, or -1 before the count. */
+    private var imageTotal = -1L
+
+    /** A title's logo as learnt within [foundTtlMs] (or [missTtlMs] for a title with none), or null to ask. */
+    @Synchronized
+    override fun logo(key: String): LogoAnswer? {
+        val file = File(logos, name(key) + ".json")
+        if (!file.isFile) return null
+        val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return null
+        val url = json.optString("url").ifBlank { null }
+        if (now() - json.optLong("saved") > if (url != null) foundTtlMs else missTtlMs) {
+            file.delete()
+            return null
+        }
+        return LogoAnswer(url)
+    }
+
+    @Synchronized
+    override fun putLogo(key: String, answer: LogoAnswer) {
+        logos.mkdirs()
+        val json = JSONObject().put("key", key).put("saved", now()).put("url", answer.url.orEmpty())
+        write(File(logos, name(key) + ".json"), json.toString().toByteArray())
+    }
 
     /**
      * An episode's skip times learnt within [SKIP_FOUND_TTL_MS], or an empty list for one nobody
@@ -178,8 +203,15 @@ class MetadataCache(
      * that no storage figure in the app accounted for (user, 2026-10-18).
      */
     private fun trimImages(keep: File) {
+        // The folder is listed once, then the running total kept: listing and measuring a few
+        // hundred files on every poster written held every other poster's read behind it.
+        if (imageTotal >= 0) {
+            imageTotal += keep.length()
+            if (imageTotal <= imageCapBytes) return
+        }
         val all = images.listFiles()?.filter { it.isFile } ?: return
         var total = all.sumOf { it.length() }
+        imageTotal = total
         if (total <= imageCapBytes) return
         for (f in all.sortedBy { it.lastModified() }) {
             if (total <= imageCapBytes) break
@@ -187,6 +219,7 @@ class MetadataCache(
             val size = f.length()
             if (f.delete()) total -= size
         }
+        imageTotal = total
     }
 
     /** Every entry past its TTL, deleted. Run once at start, off the main thread. */
@@ -223,12 +256,14 @@ class MetadataCache(
      */
     @Synchronized
     override fun purgeImages() {
+        imageTotal = -1
         images.deleteRecursively()
     }
 
     /** Everything, answers and pictures. */
     @Synchronized
     override fun purge() {
+        imageTotal = -1
         dir.deleteRecursively()
     }
 

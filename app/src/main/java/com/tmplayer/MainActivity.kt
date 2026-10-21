@@ -101,8 +101,6 @@ import com.tmplayer.ui.browse.onChatsPage
 import com.tmplayer.ui.browse.TouchNav
 import com.tmplayer.ui.browse.TouchNavHost
 import com.tmplayer.ui.browse.TouchPage
-import com.tmplayer.ui.browse.TouchDestination
-import com.tmplayer.ui.browse.TouchPageSpec
 import com.tmplayer.ui.browse.TouchRoutes
 import com.tmplayer.ui.browse.LocalTouchPageKey
 import androidx.compose.animation.AnimatedContent
@@ -111,6 +109,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.CompositionLocalProvider
@@ -250,22 +249,32 @@ private object TouchScreens {
 
     /**
      * Where a screen stands along the bar, left to right, for which way the next one slides in:
-     * Home, Chats, Search, Settings, then the picture's pages. Null for a chat and About, which
-     * are not on the bar and change without a slide.
+     * Home, Chats, Search, then the picture's pages. Null for a chat, Settings and About, which
+     * are not places on the bar: a chat and About change without a slide, and Settings is pushed
+     * over whatever opened it ([isPushed]).
      */
     fun order(screen: Screen, tab: BrowseSection?): Int? = when (screen) {
         is Screen.Chats -> when {
             tab == null || tab.isHome -> 0
             tab.onChatsPage -> 1
-            else -> 4
+            else -> 3
         }
-        is Screen.Settings -> 3
-        is Screen.Downloads -> 4
-        is Screen.Media, is Screen.About -> null
+        is Screen.Downloads -> 3
+        is Screen.Settings, is Screen.Media, is Screen.About -> null
     }
+
+    /**
+     * Settings, which the picture's popover opens as a screen of its own rather than a tab: it
+     * comes in from the end and goes back out towards it, the way a pushed screen does, and no
+     * swipe leads into it.
+     */
+    fun isPushed(screen: Screen): Boolean = screen is Screen.Settings
 
     /** How far a screen slides in as it fades: a twelfth of the width, as the browser's pages do. */
     const val SLIDE_PART = 12
+
+    /** How far a pushed screen slides as it comes in, and the one under it as it goes: Material's shared axis. */
+    const val PUSH_PART = 10
 }
 
 /**
@@ -775,7 +784,7 @@ private fun Root() {
         factory = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }) as T
+                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }, cached = true) as T
         },
     )
     // Home keeps what it fetched, badges included, so its Cached badges are read off the disk again
@@ -785,6 +794,16 @@ private fun Root() {
     val shellInFront = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     LaunchedEffect(shellInFront, cacheRecord) {
         if (shellInFront) homeViewModel.refreshLocalAvailability()
+    }
+    // Home keeps itself up to date while the app is in front: on coming back, when its rows are
+    // a minute old, and every few minutes after, in place (the tiles stay up and keep the focus).
+    LaunchedEffect(shellInFront) {
+        if (!shellInFront) return@LaunchedEffect
+        homeViewModel.refreshIfStale()
+        while (true) {
+            delay(HomeViewModel.AUTO_REFRESH_MS)
+            homeViewModel.refreshInPlace()
+        }
     }
     val accountHeader by chatsViewModel.accountHeader.collectAsStateWithLifecycle()
     val chats = (chatsState as? UiState.Content)?.value?.chats.orEmpty()
@@ -841,7 +860,7 @@ private fun Root() {
                 wasDisconnected = false
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
-                    homeViewModel.refresh()
+                    homeViewModel.refreshInPlace()
                     updates.checkIfDue()
                     toast(L.mainBackOnline)
                 }
@@ -1043,6 +1062,9 @@ private fun Root() {
             }
             val local = runCatching { Td.localFileAvailability(item.fileId) }
                 .getOrDefault(LocalFileAvailability.Missing)
+            // A stream: its head and index start coming now, while the room is measured and the
+            // player is built ([com.tmplayer.player.StreamWarmup]).
+            if (local != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
             val canReachTelegram = telegramConnected || networkStatus != NetworkStatus.Offline
             if (!canReachTelegram && local != LocalFileAvailability.Complete) {
                 toast(
@@ -1587,10 +1609,10 @@ private fun Root() {
             HomeLaunch.show.compareAndSet(ask, null)
         }
 
-        // Settings and Downloads, from the phone's bar, its popover, the chat list's menus and the
-        // notification. Back from either goes to the page they were opened from; moving between the
-        // two by the bar is a step sideways, so Back skips the other one rather than bouncing
-        // between them (TouchRoutes).
+        // Settings and Downloads, from the picture's popover (the television's account menu), the
+        // chat list's menus and the notification. Back from either goes to the page they were opened
+        // from; moving between the two by the popover is a step sideways, so Back skips the other
+        // one rather than bouncing between them (TouchRoutes).
         val openSettings: () -> Unit = {
             if (screen !is Screen.Settings) {
                 settingsCameFrom = TouchRoutes.backTarget(
@@ -1632,6 +1654,8 @@ private fun Root() {
         val touchNav = TouchNav(
             account = accountHeader,
             favoriteCount = favorites.size,
+            watchingCount = continueWatching.size,
+            watchedCount = watchedVideos.size,
             downloadCount = activeDownloads.size,
             updateVersion = offeredUpdate,
             onHome = { browseTo(BrowseSection.of(BrowseTab.Home)) },
@@ -1653,26 +1677,14 @@ private fun Root() {
             onUpdate = { showUpdate = true },
         )
 
-        // The television's top bar over Settings' own list and Downloads,
-        // as it is over the browser's pages; a Settings page, the PIN pad and About have none.
+        // The television's top bar over Downloads, as it is over the browser's pages. Settings has
+        // none: it opens from the account's menu as a screen of its own, as About and the PIN pad do.
         val tvBar = FormFactor.isTv(context)
-        val tvBarShown = tvBar && (
-            screen is Screen.Downloads ||
-                (screen is Screen.Settings && settingsPage == null && appLock?.let { !it.pinSet || settingsUnlocked } == true)
-            )
+        val tvBarShown = tvBar && screen is Screen.Downloads
         val tvBarFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-        // Settings opened from a top bar's tab keeps the remote on the bar, as every tab does.
+        // Back from Settings to Downloads puts the remote back on the bar's picture, which opened it.
         var tvBarHold by remember { mutableStateOf(0) }
         var tvBarFocused by remember { mutableStateOf(false) }
-        // Back on such a page: to the bar first, then from the bar to Home, the remote kept on the bar.
-        val tvBarBack: () -> Unit = {
-            if (tvBarFocused) {
-                railReturn = com.tmplayer.ui.browse.RailReturn.Settings
-                browseTo(BrowseSection.of(BrowseTab.Home))
-            } else {
-                runCatching { tvBarFocus.requestFocus() }
-            }
-        }
         val screens: @Composable (Screen) -> Unit = screens@{ current ->
         when (current) {
             is Screen.Chats -> {
@@ -1698,10 +1710,7 @@ private fun Root() {
                     },
                     onOpenChat = { openChat(it) },
                     onResumeMedia = { resumeMedia(it) },
-                    onOpenSettings = {
-                        openSettings()
-                        if (tvBar) tvBarHold++
-                    },
+                    onOpenSettings = openSettings,
                     onOpenDownloads = openDownloads,
                     returnToRail = railReturn,
                     tvNav = if (tvBar) touchNav else null,
@@ -1819,14 +1828,15 @@ private fun Root() {
                         when (row) {
                             is HomeRow.Chat -> homeViewModel.request(row.chatId)
                             is HomeRow.Recent -> homeViewModel.requestRecent()
-                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
+                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
                         }
                     },
                     onHomeArtWanted = homeViewModel::requestArt,
                     onHomeLaterArtWanted = homeViewModel::requestArt,
                     onPlayMedia = { item, chatTitle -> play(item, chatTitle = chatTitle) },
+                    homeRefreshing = homeViewModel.refreshing.collectAsStateWithLifecycle().value,
                     onRefreshHome = {
-                        homeViewModel.refresh()
+                        homeViewModel.refreshInPlace()
                         chatsViewModel.refreshUnlessRateLimited()
                     },
                     onSetMediaWatched = { item, chatTitle, watched -> setWatched(item, chatTitle, watched) },
@@ -1880,7 +1890,19 @@ private fun Root() {
                     if (downloadsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Downloads
                     screen = downloadsCameFrom
                 }
-                BackHandler(onBack = { if (tvBarShown) tvBarBack() else leaveDownloads() })
+                // On a television one Back leaves too, the remote landing on the account's picture
+                // whose menu opened Downloads, as Back from Settings does: going by way of the bar
+                // took two presses (2026-10-21).
+                BackHandler(
+                    onBack = {
+                        if (tvBarShown) {
+                            if (downloadsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Profile
+                            screen = downloadsCameFrom
+                        } else {
+                            leaveDownloads()
+                        }
+                    },
+                )
                 // Keyed on the ask, so a second "Not enough space" while the page is up opens the
                 // sheet again rather than finding it already spent.
                 key(downloadsFreeUp) {
@@ -1904,23 +1926,20 @@ private fun Root() {
                     // so a full re-sync on the way out would be work nothing asked for.
                     chatsViewModel.refreshIfStale()
                     settingsPage = null
-                    if (settingsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Settings
+                    // On a television the remote goes back to the account's picture, whose menu
+                    // opened Settings.
+                    if (settingsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Profile
+                    if (tvBar && settingsCameFrom is Screen.Downloads) tvBarHold++
                     screen = settingsCameFrom
                 }
-                BackHandler(onBack = { if (tvBarShown) tvBarBack() else leaveSettings() })
+                BackHandler(onBack = leaveSettings)
                 val lock = appLock
                 // With no PIN there is nothing to ask, and a PIN set from inside Settings must not
                 // lock the viewer out of the page they set it on.
                 LaunchedEffect(lock?.pinSet) { if (lock?.pinSet == false) settingsUnlocked = true }
-                // The bar is on Settings' own list, with its Settings button lit; a page under it,
-                // or the PIN pad in front of it, has a back arrow instead.
-                TouchPage(
-                    if (lock != null && (!lock.pinSet || settingsUnlocked) && settingsPage == null) {
-                        TouchPageSpec(current = TouchDestination.Settings)
-                    } else {
-                        null
-                    },
-                )
+                // No floating bar: Settings is a screen pushed from the picture's popover, with
+                // its own back arrow, as a chat is.
+                TouchPage(null)
                 if (lock == null) return@screens
                 if (lock.pinSet && !settingsUnlocked) {
                     PinPad(
@@ -1972,12 +1991,11 @@ private fun Root() {
                     val stayOnBar = { railReturn = com.tmplayer.ui.browse.RailReturn.Settings }
                     com.tmplayer.ui.browse.TvTopBar(
                         nav = touchNav,
-                        current = if (screen is Screen.Settings) com.tmplayer.ui.browse.TvBarTab.Settings else null,
+                        current = null,
                         inProfile = screen is Screen.Downloads,
                         searchOpen = false,
                         onHome = { stayOnBar(); touchNav.onHome() },
                         onChats = { stayOnBar(); touchNav.onChats() },
-                        onSettings = openSettings,
                         onSearch = {
                             com.tmplayer.ui.browse.TvBarSignals.searchAsked.value = true
                             screen = Screen.Chats
@@ -1995,6 +2013,8 @@ private fun Root() {
             // The phone: one floating bar over every page it belongs to, and the pages changing
             // under it the way Home and Chats do (see PhoneBrowse), each keeping its scroll.
             val holder = rememberSaveableStateHolder()
+            // The end a pushed screen comes in from: the right, or the left in a right to left language.
+            val endSign = if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) -1 else 1
             TouchNavHost(nav = touchNav, chrome = touchChrome, pageKey = TouchScreens.key(screen)) {
                 AnimatedContent(
                     targetState = screen,
@@ -2002,7 +2022,22 @@ private fun Root() {
                     transitionSpec = {
                         val from = TouchScreens.order(initialState, pickedTab)
                         val to = TouchScreens.order(targetState, pickedTab)
+                        val push = TouchScreens.isPushed(targetState) && initialState !is Screen.About
+                        val pop = TouchScreens.isPushed(initialState) && targetState !is Screen.About
                         when {
+                            // Settings, pushed over the page that opened it and popped back off:
+                            // in from the end and out towards it, the way a pushed screen moves.
+                            (push || pop) && reducedMotion -> fadeIn(Motion.standard(Motion.Fast)) togetherWith fadeOut(Motion.standard(Motion.Fast))
+                            push || pop -> {
+                                val sign = if (push) endSign else -endSign
+                                (
+                                    fadeIn(Motion.standard(Motion.Normal)) +
+                                        slideInHorizontally(Motion.standard(Motion.Normal)) { width -> sign * width / TouchScreens.PUSH_PART }
+                                    ) togetherWith (
+                                    fadeOut(Motion.standard(Motion.Fast)) +
+                                        slideOutHorizontally(Motion.standard(Motion.Normal)) { width -> -sign * width / TouchScreens.PUSH_PART }
+                                    )
+                            }
                             // A chat and About open as they always have, at once.
                             from == null || to == null -> EnterTransition.None togetherWith ExitTransition.None
                             reducedMotion -> fadeIn(Motion.standard(Motion.Fast)) togetherWith fadeOut(Motion.standard(Motion.Fast))

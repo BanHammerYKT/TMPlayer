@@ -22,6 +22,9 @@ interface MetaCacheStore {
     fun putAnswer(key: String, result: MetaResult)
     fun extras(key: String): MetaExtras?
     fun putExtras(key: String, value: MetaExtras)
+    /** A title's logo answer, the title having none included, or null to ask. */
+    fun logo(key: String): LogoAnswer?
+    fun putLogo(key: String, answer: LogoAnswer)
     fun season(key: String): List<MetaEpisode>?
     fun putSeason(key: String, episodes: List<MetaEpisode>)
     fun image(url: String): CachedImage?

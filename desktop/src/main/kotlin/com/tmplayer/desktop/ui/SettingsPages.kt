@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.unit.dp
 import com.tmplayer.data.AppLockSession
@@ -67,12 +68,26 @@ internal fun AppearanceRows(state: ShellState) {
     val theme by settings.themeChoice.collectAsState(initial = ThemeChoice.Default)
     val pureBlack by settings.pureBlack.collectAsState(initial = false)
     val accent by settings.accent.collectAsState(initial = com.tmplayer.data.Accent.Default)
+    val customAccent by settings.customAccent.collectAsState(initial = null)
+    val typeface by settings.typeface.collectAsState(initial = com.tmplayer.data.AppTypeface.Default)
+    val highContrast by settings.highContrast.collectAsState(initial = false)
+    var undo by remember { mutableStateOf<com.tmplayer.data.AppearanceSnapshot?>(null) }
+    androidx.compose.runtime.LaunchedEffect(undo) {
+        if (undo != null) {
+            kotlinx.coroutines.delay(10_000L)
+            undo = null
+        }
+    }
     val language by settings.language.collectAsState(initial = "")
     val uiScale by rememberUiScale(settings)
     val compactNav by settings.compactNav.collectAsState(initial = false)
     val desktop by state.extras.prefs.state.collectAsState()
     var pickingLanguage by remember { mutableStateOf(false) }
 
+    // The choices below, live: a card in the theme, colour, typeface and contrast as they stand.
+    Setting(s.settingsAppearancePreview, "") {
+        com.tmplayer.ui.components.AppearancePreview(Modifier.widthIn(max = 420.dp))
+    }
     Setting(
         s.settingsTheme,
         if (theme == ThemeChoice.System) s.themeSystemDesktopDetail else theme.description,
@@ -89,7 +104,19 @@ internal fun AppearanceRows(state: ShellState) {
     }
     // The accent colour as swatches, each named by its tooltip and to a screen reader.
     Setting(s.settingsAccent, s.settingsAccentDetail, icon = TmIcons.Accent) {
-        com.tmplayer.ui.components.AccentSwatches(accent, { picked -> scope.launch { settings.setAccent(picked) } }, size = 26.dp)
+        com.tmplayer.ui.components.AccentSwatches(
+            accent,
+            { picked -> scope.launch { settings.setAccent(picked) } },
+            size = 26.dp,
+            custom = customAccent,
+            onCustom = { argb -> scope.launch { settings.setCustomAccent(argb) } },
+        )
+    }
+    Setting(s.settingsTypeface, s.settingsTypefaceDetail, icon = TmIcons.TextSize) {
+        Segments(com.tmplayer.data.AppTypeface.entries, typeface, { it.label }) { scope.launch { settings.setTypeface(it) } }
+    }
+    Toggle(s.settingsHighContrast, s.settingsHighContrastDetail, highContrast, icon = TmIcons.Theme) { on ->
+        scope.launch { settings.setHighContrast(on) }
     }
     Action(s.settingsLanguage, s.languageRowDetail(language), TmIcons.Language) { pickingLanguage = true }
     Setting(s.interfaceSize, s.interfaceSizeDetail, icon = TmIcons.TextSize) {
@@ -110,6 +137,22 @@ internal fun AppearanceRows(state: ShellState) {
             desktop.systemTitleBar,
             icon = TmIcons.WindowMaximize,
         ) { on -> state.extras.prefs.update { it.copy(systemTitleBar = on) } }
+    }
+
+    // Back to the defaults, with Undo in its place for a few seconds after: one row, so the
+    // keyboard stays on it through both presses.
+    val taken = undo
+    Action(
+        if (taken == null) s.settingsAppearanceDefaults else s.settingsAppearanceUndo,
+        if (taken == null) s.settingsAppearanceDefaultsDetail else s.settingsAppearanceDefaultsDone,
+        TmIcons.Refresh,
+    ) {
+        if (taken == null) {
+            scope.launch { undo = settings.resetAppearance() }
+        } else {
+            undo = null
+            scope.launch { settings.restoreAppearance(taken) }
+        }
     }
 
     if (pickingLanguage) LanguagePopup(settings, onClose = { pickingLanguage = false })
@@ -156,6 +199,10 @@ internal fun PlaybackRows(state: ShellState, jumps: Map<SetupStep, JumpTarget>) 
     ) { on -> scope.launch { settings.setLowStorageMode(on) } }
     Toggle(s.settingsDownmix, if (desktop.downmix) s.settingsDownmixOn else s.settingsDownmixOff, desktop.downmix, icon = TmIcons.VolumeUp) { on ->
         state.extras.prefs.update { it.copy(downmix = on) }
+    }
+    val evenVolume by settings.evenVolume.collectAsState(initial = true)
+    Toggle(s.playerEvenVolume, if (evenVolume) s.settingsEvenVolumeOn else s.settingsEvenVolumeOff, evenVolume, icon = TmIcons.VolumeUp) { on ->
+        scope.launch { settings.setEvenVolume(on) }
     }
     AudioLanguageSetting(settings, trackPrefs, scope)
     Toggle(

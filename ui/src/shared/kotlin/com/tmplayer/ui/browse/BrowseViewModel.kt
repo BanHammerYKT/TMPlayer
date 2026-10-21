@@ -464,6 +464,8 @@ class ChatListViewModel(private val settings: SettingsStore? = null) : ViewModel
         settings?.let { store ->
             Background.scope.launch { runCatching { store.clearColdStartSnapshots() } }
         }
+        // And Home's copy of its rows, for the same reason.
+        Background.scope.launch { runCatching { com.tmplayer.data.HomeCache.clear() } }
     }
 
     private companion object {
@@ -598,13 +600,38 @@ class MediaListViewModel(
      * Set by [showHidden]: the viewer asked to see what the size limits hid, for this chat and for
      * as long as it stays open. The limits in Settings are not touched.
      */
-    private var showAllSizes = false
+    private var showAllSizes: Boolean
+        get() = _allSizes.value
+        set(value) {
+            _allSizes.value = value
+        }
+
+    private val _allSizes = MutableStateFlow(false)
+
+    /**
+     * Whether this chat is listed past the size limits for now ([showHidden]), for the Size limits
+     * group of the Sort and filter menu.
+     */
+    val allSizes: StateFlow<Boolean> = _allSizes.asStateFlow()
 
     /** What the viewer typed. Kept whole, because it is what results are ranked against. */
     private var query = ""
 
     /** Videos [keep] has turned away since the listing last started over. */
-    private var hiddenBySize = 0
+    private var hiddenBySize: Int
+        get() = _sizeHidden.value
+        set(value) {
+            _sizeHidden.value = value
+        }
+
+    private val _sizeHidden = MutableStateFlow(0)
+
+    /**
+     * How many videos the size limits have kept out of the pages read so far: the line over the
+     * listing that says so, with Show hidden videos, and the count in the Sort and filter menu.
+     * Always 0 during a search, which ignores the limits.
+     */
+    val sizeHidden: StateFlow<Int> = _sizeHidden.asStateFlow()
 
     private val _audioCount = MutableStateFlow(0)
 
@@ -815,10 +842,17 @@ class MediaListViewModel(
         load(preserveContent = false)
     }
 
-    /** The "Show them" beside "N videos hidden by the size limits". */
+    /** The "Show hidden videos" beside "N videos hidden by the size limits", and All sizes in the menu. */
     fun showHidden() {
         if (showAllSizes) return
         showAllSizes = true
+        load(preserveContent = true)
+    }
+
+    /** Within the size limits in the menu: the chat listed by the limits in Settings again. */
+    fun keepSizeLimits() {
+        if (!showAllSizes) return
+        showAllSizes = false
         load(preserveContent = true)
     }
 

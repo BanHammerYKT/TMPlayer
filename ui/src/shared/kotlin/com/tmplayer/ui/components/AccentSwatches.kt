@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,25 +59,51 @@ fun AccentSwatches(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     size: Dp = 32.dp,
+    /** The viewer's own colour as ARGB, or null before one was picked. */
+    custom: Int? = null,
+    /** Where a colour picked in the picker goes; null leaves the last swatch, Your own colour, out. */
+    onCustom: ((Int) -> Unit)? = null,
 ) {
+    // A colour taken is one tick, as a choice in a list is.
+    val tick = rememberStepTick()
+    var picking by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     FlowRow(
         modifier.alpha(if (enabled) 1f else DISABLED_ALPHA),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Accent.entries.forEach { accent ->
+        Accent.entries.filter { it != Accent.Custom || onCustom != null }.forEach { accent ->
             val swatch: @Composable () -> Unit = {
-                Swatch(accent, accent == selected, enabled, size) { onPick(accent) }
+                Swatch(accent, accent == selected, enabled, size, custom) {
+                    if (accent == Accent.Custom) {
+                        // Always the picker: the swatch is the way to change the colour, not only to take it.
+                        picking = true
+                    } else {
+                        if (accent != selected) tick()
+                        onPick(accent)
+                    }
+                }
             }
             if (deviceForm() == DeviceForm.Desktop) IconTip(accent.label, content = swatch) else swatch()
         }
     }
+    if (picking && onCustom != null) {
+        CustomAccentPicker(
+            initial = custom,
+            onPick = { argb -> picking = false; tick(); onCustom(argb) },
+            onDismiss = { picking = false },
+        )
+    }
 }
 
 @Composable
-private fun Swatch(accent: Accent, chosen: Boolean, enabled: Boolean, size: Dp, onClick: () -> Unit) {
+private fun Swatch(accent: Accent, chosen: Boolean, enabled: Boolean, size: Dp, custom: Int?, onClick: () -> Unit) {
     val dark = LocalDarkTheme.current
-    val colour = TmAccents.swatch(accent, dark)
+    val colour = if (accent == Accent.Custom && custom != null) {
+        com.tmplayer.ui.theme.TmCustomAccent.roles(Color(custom), dark).primary
+    } else {
+        TmAccents.swatch(accent, dark)
+    }
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusVisibleAsState()
     val hovered by interactions.collectIsHoveredAsState()
@@ -118,7 +145,15 @@ private fun Swatch(accent: Accent, chosen: Boolean, enabled: Boolean, size: Dp, 
     ) {
         val edge = Tone.outline
         Canvas(Modifier.size(size)) {
-            if (accent == Accent.Monochrome) {
+            if (accent == Accent.Custom && custom == null) {
+                // Not picked yet: the colour wheel, every hue round the disc.
+                drawCircle(
+                    androidx.compose.ui.graphics.Brush.sweepGradient(
+                        listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red),
+                    ),
+                )
+                drawCircle(edge, style = Stroke(1.dp.toPx()))
+            } else if (accent == Accent.Monochrome) {
                 // Half black, half white, so it reads as "no colour" on either ground.
                 drawArc(Color(0xFF111111), 90f, 180f, useCenter = true)
                 drawArc(Color(0xFFF2F2F2), 270f, 180f, useCenter = true)

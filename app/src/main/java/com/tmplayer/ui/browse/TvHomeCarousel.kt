@@ -77,6 +77,7 @@ import com.tmplayer.ui.components.rememberShimmer
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.rememberMeta
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.Tone
@@ -194,7 +195,7 @@ internal fun TvFeaturedCarousel(
             HeroPill(
                 label = playLabel,
                 onClick = { onPlay(playItem, chatTitle(playItem.chatId)) },
-                modifier = Modifier.then(if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier).onPreviewKeyEvent { event ->
+                modifier = Modifier.then(if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier).warmUpOnIntent(playItem).onPreviewKeyEvent { event ->
                     // Back a page; from the first page Left carries on to the rail as usual.
                     if (event.type == KeyEventType.KeyDown && event.key == back && count > 1 && index > 0) {
                         go(index - 1)
@@ -250,17 +251,24 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
             onPictured = HomeFirstPaint::markReady,
         )
         // The name alone over Play and Details; the facts are only in the page's description.
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = Tone.text,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
+        // The title's logo where TMDB has one, the name in type until then and otherwise.
+        com.tmplayer.ui.online.TitleArt(
+            meta,
+            maxWidth = TV_LOGO_MAX_WIDTH,
+            maxHeight = TV_LOGO_MAX_HEIGHT,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth(TEXT_SHARE)
                 .padding(start = start, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP),
-        )
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = Tone.text,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -347,3 +355,6 @@ private val TITLE_GAP = 14.dp
 /** How far down the picture fades in from the top under the TV top bar, as a share of the bar's height. */
 private const val BAR_FADE_REACH = 1.7f
 
+/** The most a title logo takes over the television's carousel. */
+private val TV_LOGO_MAX_WIDTH = 340.dp
+private val TV_LOGO_MAX_HEIGHT = 110.dp

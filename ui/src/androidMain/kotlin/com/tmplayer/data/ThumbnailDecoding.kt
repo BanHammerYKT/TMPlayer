@@ -12,7 +12,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 internal fun decodeImage(data: ByteArray): ImageBitmap? =
     runCatching { BitmapFactory.decodeByteArray(data, 0, data.size) }.getOrNull()?.asImageBitmap()
 
-internal fun decodeImageFile(path: String, maxWidth: Int): ImageBitmap? {
+/** [alpha] keeps a clear ground (a title logo); everything else is opaque and decoded at half the memory. */
+internal fun decodeImageFile(path: String, maxWidth: Int, alpha: Boolean = false): ImageBitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(path, bounds)
     var sample = 1
@@ -20,7 +21,7 @@ internal fun decodeImageFile(path: String, maxWidth: Int): ImageBitmap? {
     val sampled = bounds.outWidth / sample
     val options = BitmapFactory.Options().apply {
         inSampleSize = sample
-        inPreferredConfig = Bitmap.Config.RGB_565
+        inPreferredConfig = if (alpha) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
         // Sampling only halves, so a picture up to twice [maxWidth] would keep its full size: an
         // original still 1920 wide is 4 MB. Scaled to [maxWidth] as it is decoded instead.
         if (sampled > maxWidth && maxWidth > 0) {

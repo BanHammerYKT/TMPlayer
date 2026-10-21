@@ -310,6 +310,7 @@ fun SettingsScreen(
     val tvChannelsSupported = remember { TvChannelsPublisher.supported(context) }
     val touchPrefs by settings.touchPrefs.collectAsStateWithLifecycle(initialValue = TouchPrefs())
     val downmixChoice by settings.downmixChoice.collectAsStateWithLifecycle(initialValue = null)
+    val evenVolume by settings.evenVolume.collectAsStateWithLifecycle(initialValue = true)
     val backgroundAudio by settings.backgroundAudio.collectAsStateWithLifecycle(initialValue = false)
     val subtitleStyle by settings.subtitleStyle.collectAsStateWithLifecycle(initialValue = SubtitleStyle())
     val trackPrefs by settings.trackPreferences.collectAsStateWithLifecycle(initialValue = TrackPreferences())
@@ -337,6 +338,17 @@ fun SettingsScreen(
     val dynamicColour by settings.dynamicColour.collectAsStateWithLifecycle(initialValue = false)
     val pureBlack by settings.pureBlack.collectAsStateWithLifecycle(initialValue = false)
     val accent by settings.accent.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.Accent.Default)
+    val customAccent by settings.customAccent.collectAsStateWithLifecycle(initialValue = null)
+    val typeface by settings.typeface.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.AppTypeface.Default)
+    val highContrast by settings.highContrast.collectAsStateWithLifecycle(initialValue = false)
+    // What Back to the defaults took away, while its Undo is offered.
+    var appearanceUndo by remember { mutableStateOf<com.tmplayer.data.AppearanceSnapshot?>(null) }
+    LaunchedEffect(appearanceUndo) {
+        if (appearanceUndo != null) {
+            kotlinx.coroutines.delay(APPEARANCE_UNDO_MS)
+            appearanceUndo = null
+        }
+    }
     val uiScale by rememberUiScale(settings)
     val lighterPictures by settings.lighterPictures.collectAsStateWithLifecycle(initialValue = false)
     val reduceMotion by settings.reduceMotion.collectAsStateWithLifecycle(initialValue = false)
@@ -569,8 +581,8 @@ fun SettingsScreen(
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             // The app bar already clears the status bar on a phone, so the list only owes the
             // gesture bar at the bottom.
-            // Under the TV top bar the list starts right below it.
-            top = if (touch || page == null) 4.dp else Tv.SafeV,
+            // A television's Settings opens from the account menu without the top bar over it.
+            top = if (touch) 4.dp else Tv.SafeV,
             bottom = if (touch) maxOf(insets.calculateBottomPadding(), LocalBottomChrome.current) + 32.dp else 40.dp,
         ),
         // The gap between two rows of a phone's preference list is a divider's worth of nothing,
@@ -579,12 +591,12 @@ fun SettingsScreen(
     ) {
         // TV only: the phone's app bar already says where the viewer is and offers the way out.
         if (!touch) {
-            // Under the TV top bar, whose Settings tab names the list: a page alone keeps a
-            // compact title, one line, since the bar does not say which page it is.
-            page?.let { shown ->
+            // No top bar over Settings on a television: the list and each page say where the
+            // remote is, in one compact line.
+            (page?.let { titleOf(it) } ?: s.settingsTitle).let { heading ->
                 item {
                     Text(
-                        titleOf(shown),
+                        heading,
                         style = MaterialTheme.typography.titleLarge,
                         color = Tone.text,
                         maxLines = 1,
@@ -659,6 +671,12 @@ fun SettingsScreen(
             }
 
             SettingsPage.Appearance -> {
+                // The choices below, live: a card drawn in the theme, colour, typeface and contrast as they stand.
+                item(key = "appearance_preview") {
+                    com.tmplayer.ui.components.AppearancePreview(
+                        Modifier.padding(horizontal = if (touch) 16.dp else 0.dp, vertical = 8.dp),
+                    )
+                }
                 // First, on both devices: a stick often lives on a screen in a bright room, so the theme
                 // is worth offering there too.
                 item {
@@ -707,6 +725,34 @@ fun SettingsScreen(
                         selected = accent,
                         wallpaper = touch && dynamicColour && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
                         onPick = { scope.launch { settings.setAccent(it) } },
+                        custom = customAccent,
+                        onCustom = { argb -> scope.launch { settings.setCustomAccent(argb) } },
+                    )
+                }
+
+                // The letters, the same stepper on both devices: three faces the system already has.
+                item(key = "typeface") {
+                    StepperRow(
+                        title = s.settingsTypeface,
+                        subtitle = s.settingsTypefaceDetail,
+                        value = typeface.label,
+                        icon = TmIcons.TextSize,
+                        canDecrease = typeface.ordinal > 0,
+                        canIncrease = typeface.ordinal < com.tmplayer.data.AppTypeface.entries.lastIndex,
+                        onStep = { direction ->
+                            com.tmplayer.data.AppTypeface.entries.getOrNull(typeface.ordinal + direction)?.let { next ->
+                                scope.launch { settings.setTypeface(next) }
+                            }
+                        },
+                    )
+                }
+                item(key = "high_contrast") {
+                    ToggleRow(
+                        title = s.settingsHighContrast,
+                        subtitle = s.settingsHighContrastDetail,
+                        icon = TmIcons.Theme,
+                        checked = highContrast,
+                        onToggle = { scope.launch { settings.setHighContrast(!highContrast) } },
                     )
                 }
 
@@ -755,6 +801,24 @@ fun SettingsScreen(
                         icon = TmIcons.Frames,
                         checked = reduceMotion,
                         onToggle = { scope.launch { settings.setReduceMotion(!reduceMotion) } },
+                    )
+                }
+                // Back to the defaults, with Undo in its place for a few seconds after.
+                item(key = "appearance_defaults") {
+                    // One row whose words change, so the remote stays on it through both presses.
+                    val taken = appearanceUndo
+                    ActionRow(
+                        title = if (taken == null) s.settingsAppearanceDefaults else s.settingsAppearanceUndo,
+                        subtitle = if (taken == null) s.settingsAppearanceDefaultsDetail else s.settingsAppearanceDefaultsDone,
+                        icon = TmIcons.Refresh,
+                        onClick = {
+                            if (taken == null) {
+                                scope.launch { appearanceUndo = settings.resetAppearance() }
+                            } else {
+                                appearanceUndo = null
+                                scope.launch { settings.restoreAppearance(taken) }
+                            }
+                        },
                     )
                 }
 
@@ -847,6 +911,16 @@ fun SettingsScreen(
                         icon = ImageVector.vectorResource(R.drawable.ic_audio_language),
                         checked = downmix,
                         onToggle = { scope.launch { settings.setDownmix(!downmix) } },
+                    )
+                }
+                // On by default; the player's menu has the same line for the video playing now.
+                item {
+                    ToggleRow(
+                        title = s.playerEvenVolume,
+                        subtitle = if (evenVolume) s.settingsEvenVolumeOn else s.settingsEvenVolumeOff,
+                        icon = ImageVector.vectorResource(R.drawable.ic_volume),
+                        checked = evenVolume,
+                        onToggle = { scope.launch { settings.setEvenVolume(!evenVolume) } },
                     )
                 }
                 // The phone only: a television has no screen to turn off and nothing else to switch to.
@@ -977,6 +1051,17 @@ fun SettingsScreen(
                     fun update(change: (TouchPrefs) -> TouchPrefs) {
                         scope.launch { settings.updateTouchPrefs(change) }
                     }
+                    // First on the page, ahead of the player's own gestures: it governs every
+                    // tick in the app, the switches, choices, PIN pad and sign in as well.
+                    item {
+                        ToggleRow(
+                            title = s.settingsHaptics,
+                            subtitle = s.settingsHapticsDetail,
+                            icon = TmIcons.Vibration,
+                            checked = touchPrefs.haptics,
+                            onToggle = { update { it.copy(haptics = !it.haptics) } },
+                        )
+                    }
                     item {
                         ToggleRow(
                             title = s.settingsTapPlays,
@@ -1043,15 +1128,6 @@ fun SettingsScreen(
                             icon = ImageVector.vectorResource(R.drawable.ic_volume),
                             checked = touchPrefs.volumeGesture,
                             onToggle = { update { it.copy(volumeGesture = !it.volumeGesture) } },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            title = s.settingsHaptics,
-                            subtitle = s.settingsHapticsDetail,
-                            icon = TmIcons.Vibration,
-                            checked = touchPrefs.haptics,
-                            onToggle = { update { it.copy(haptics = !it.haptics) } },
                         )
                     }
                 }
@@ -1923,10 +1999,17 @@ fun SettingsScreen(
             FloatingBackButton(TmIcons.ArrowBack, s.aboutBackToSettings, { closePage() }, Modifier.align(Alignment.TopStart))
         }
     } else if (touch) {
-        // The list: its name along the top in the same bar Home and Chats have, and no arrow, since
-        // the floating bar is the way to everywhere else.
-        Scaffold(topBar = { TopAppBar(title = { M3Text(s.settingsTitle) }) }) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) { list() }
+        // The list: opened from the profile picture's menu as a page of its own, so it has the
+        // pages' floating title and round Back, which goes back where it was opened from.
+        val listScroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
+        Box(Modifier.fillMaxSize()) {
+            Scaffold(
+                modifier = Modifier.nestedScroll(listScroll.nestedScrollConnection),
+                topBar = { FloatingPageTitle({ M3Text(s.settingsTitle) }, listScroll) },
+            ) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding)) { list() }
+            }
+            FloatingBackButton(TmIcons.ArrowBack, s.commonBack, onBack, Modifier.align(Alignment.TopStart))
         }
     } else {
         list()
@@ -2384,6 +2467,8 @@ private fun TouchRangeRow(
     }
     val low = SizeFilter.snap(SizeFilter.bytesAt(range.start))
     val high = SizeFilter.snap(SizeFilter.bytesAt(range.endInclusive))
+    // A light tick at each snapped size the thumb passes, nothing between (HAPTICS-PLAN row 4).
+    val haptic = com.tmplayer.ui.components.rememberHaptics()
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -2402,7 +2487,12 @@ private fun TouchRangeRow(
         // accessibility, with TalkBack announcing each thumb's value and moving it.
         RangeSlider(
             value = range,
-            onValueChange = { range = it },
+            onValueChange = { next ->
+                val nextLow = SizeFilter.snap(SizeFilter.bytesAt(next.start))
+                val nextHigh = SizeFilter.snap(SizeFilter.bytesAt(next.endInclusive))
+                if (nextLow != low || nextHigh != high) haptic(com.tmplayer.ui.components.Haptic.FrequentTick)
+                range = next
+            },
             onValueChangeFinished = {
                 onSetRange(
                     SizeFilter.snap(SizeFilter.bytesAt(range.start)),
@@ -2656,7 +2746,13 @@ private fun ThemePicker(current: ThemeChoice, onPick: (ThemeChoice) -> Unit) {
  * With the wallpaper's colours in use ([wallpaper]) the swatches are faded and take nothing.
  */
 @Composable
-private fun AccentRow(selected: com.tmplayer.data.Accent, wallpaper: Boolean, onPick: (com.tmplayer.data.Accent) -> Unit) {
+private fun AccentRow(
+    selected: com.tmplayer.data.Accent,
+    wallpaper: Boolean,
+    onPick: (com.tmplayer.data.Accent) -> Unit,
+    custom: Int? = null,
+    onCustom: ((Int) -> Unit)? = null,
+) {
     val s = LocalStrings.current
     val touch = isTouch()
     Column(
@@ -2695,6 +2791,8 @@ private fun AccentRow(selected: com.tmplayer.data.Accent, wallpaper: Boolean, on
             enabled = !wallpaper,
             size = if (touch) 30.dp else 34.dp,
             modifier = Modifier.padding(start = 46.dp, top = 8.dp),
+            custom = custom,
+            onCustom = onCustom,
         )
     }
 }
@@ -2750,6 +2848,7 @@ private fun StorageCard(
  */
 @Composable
 internal fun TickRow(label: String, checked: Boolean, onToggle: () -> Unit) {
+    val tick = com.tmplayer.ui.components.rememberToggleTick()
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
     Row(
@@ -2762,7 +2861,7 @@ internal fun TickRow(label: String, checked: Boolean, onToggle: () -> Unit) {
                 interactionSource = interactions,
                 indication = LocalIndication.current,
                 role = Role.Checkbox,
-                onValueChange = { onToggle() },
+                onValueChange = { tick(!checked); onToggle() },
             )
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2793,6 +2892,7 @@ private fun StepperRow(
 ) {
     val s = LocalStrings.current
     val touch = isTouch()
+    val step = com.tmplayer.ui.components.rememberStepTick()
 
     if (touch) {
         ListItem(
@@ -2804,12 +2904,12 @@ private fun StepperRow(
             trailingContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     com.tmplayer.ui.components.IconTip(s.settingsStepDown) {
-                        IconButton(onClick = { onStep(-1) }, enabled = canDecrease) {
+                        IconButton(onClick = { step(); onStep(-1) }, enabled = canDecrease) {
                             M3Icon(TmIcons.ChevronDown, contentDescription = s.settingsStepDown)
                         }
                     }
                     com.tmplayer.ui.components.IconTip(s.settingsStepUp) {
-                        IconButton(onClick = { onStep(1) }, enabled = canIncrease) {
+                        IconButton(onClick = { step(); onStep(1) }, enabled = canIncrease) {
                             M3Icon(TmIcons.ChevronUp, contentDescription = s.settingsStepUp)
                         }
                     }
@@ -3048,15 +3148,18 @@ internal fun ToggleRow(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Every switch in Settings answers the thumb (a phone only; nothing on a television).
+    val tick = com.tmplayer.ui.components.rememberToggleTick()
+    val toggle = { tick(!checked); onToggle() }
     FocusRow(
         modifier = modifier,
-        onClick = onToggle,
+        onClick = toggle,
         headline = { M3Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supporting = { M3Text(subtitle, maxLines = SUPPORTING_LINES, overflow = TextOverflow.Ellipsis) },
         leading = { SettingIconChip(icon) },
         // A real switch on a phone, not the drawn pill below: it can be dragged as well as
         // tapped, and TalkBack announces it as "switch, on" without being told.
-        trailing = { M3Switch(checked = checked, onCheckedChange = { onToggle() }) },
+        trailing = { M3Switch(checked = checked, onCheckedChange = { toggle() }) },
     ) { focused ->
         // A chip for the same reason ActionRow has one: the two kinds of row are stacked in one
         // column, and without it their titles would start at two different x positions.
@@ -3339,3 +3442,6 @@ private fun NoticeToggleRow(
         },
     )
 }
+
+/** How long Undo stands in for Back to the defaults. */
+private const val APPEARANCE_UNDO_MS = 10_000L

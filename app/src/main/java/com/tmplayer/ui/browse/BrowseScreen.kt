@@ -223,8 +223,9 @@ internal fun BrowseScreen(
      */
     onOpenDownloads: () -> Unit = {},
     /**
-     * Back from Settings or Downloads, or a tab picked on their bar: the remote is held on the
-     * television's top bar while the page comes up. Null the rest of the time.
+     * Back from Settings (opened from the account picture's menu, to the picture) or Downloads,
+     * or a tab picked on Downloads' bar: the remote is held on the television's top bar while the
+     * page comes up. Null the rest of the time.
      */
     returnToRail: RailReturn? = null,
     /** Told once [returnToRail] has been honoured, so it is not honoured again. */
@@ -292,6 +293,8 @@ internal fun BrowseScreen(
     /** Plays a video from one of Home's rows; the second argument is its chat's name. */
     onPlayMedia: (MediaItem, String) -> Unit = { _, _ -> },
     onRefreshHome: () -> Unit = {},
+    /** True while Home's rows are being fetched again in place: the phone's pull spinner stays up. */
+    homeRefreshing: Boolean = false,
     /** "Mark as watched" (true) or back (false) from a detail panel opened here; the third is the chat's name. */
     onSetMediaWatched: (MediaItem, String, Boolean) -> Unit = { _, _, _ -> },
     /** One line for the viewer, such as what a Download from a detail panel did. */
@@ -522,7 +525,8 @@ internal fun BrowseScreen(
                                     query = ""
                                 },
                                 onOpenChat = { id -> data.chats.firstOrNull { it.id == id }?.let(onOpenChat) },
-                                noFavourites = favorites.isEmpty(),
+                                // Only while Home found no chat with videos of its own to fill itself from.
+                                noFavourites = favorites.isEmpty() && homeRows.none { it is HomeRow.Chat || it is HomeRow.Across },
                                 onOpenSection = { onPickTab(it); query = "" },
                                 onOpenWatchLater = openLater,
                                 onLaterArtWanted = onHomeLaterArtWanted,
@@ -762,6 +766,7 @@ internal fun BrowseScreen(
                     else -> null
                 }
             },
+            refreshingOf = { page -> page.isHome && homeRefreshing },
             tab = tab,
             account = (state as? UiState.Content)?.value?.account ?: account,
             pane = pane,
@@ -842,6 +847,8 @@ internal fun BrowseScreen(
         var tvSearchOpen by rememberSaveable { mutableStateOf(false) }
         val barFocus = remember { FocusRequester() }
         val pageFocus = remember { FocusRequester() }
+        // The account's picture, which Back from Settings returns the remote to.
+        val profileFocus = remember { FocusRequester() }
         var barRefocus by remember { mutableIntStateOf(0) }
         LaunchedEffect(barRefocus) {
             if (barRefocus == 0) return@LaunchedEffect
@@ -869,22 +876,24 @@ internal fun BrowseScreen(
             search.submit(text)
             tvSearchOpen = true
         }
-        // Search picked on the bar over Settings or Downloads.
+        // Search picked on the bar over Downloads.
         val barAsked by TvBarSignals.searchAsked.collectAsState()
         LaunchedEffect(barAsked) {
             if (!barAsked) return@LaunchedEffect
             tvSearchOpen = true
             TvBarSignals.searchAsked.value = false
         }
-        // Back from Settings or Downloads, or a tab picked on their bar: the remote stays on the
-        // bar, held there against the page taking focus as it loads, until a key is pressed.
+        // Back from Settings (to the account picture, whose menu opened it) or Downloads, or a tab
+        // picked on Downloads' bar: the remote stays on the bar, held there against the page
+        // taking focus as it loads, until a key is pressed.
         val pressedSinceArrival = remember { booleanArrayOf(false) }
         LaunchedEffect(returnToRail) {
             if (returnToRail == null) return@LaunchedEffect
+            val landing = if (returnToRail == RailReturn.Profile) profileFocus else barFocus
             repeat(RETURN_HOLD_FRAMES) {
                 if (pressedSinceArrival[0]) return@repeat
                 withFrameNanos { }
-                if (!pressedSinceArrival[0]) runCatching { barFocus.requestFocus() }
+                if (!pressedSinceArrival[0]) runCatching { landing.requestFocus() }
             }
             onReturnedToRail()
         }
@@ -952,7 +961,6 @@ internal fun BrowseScreen(
                     query = ""
                     tvNav.onChats()
                 },
-                onSettings = onOpenSettings,
                 onSearch = { tvSearchOpen = true },
                 beforeProfile = {
                     tvSearchOpen = false
@@ -970,6 +978,7 @@ internal fun BrowseScreen(
                 modifier = Modifier.onFocusChanged { tvBarHasFocus = it.hasFocus },
                 solid = { barGround },
                 onDown = { homeShown && runCatching { tvPlayFocus.requestFocus(FocusDirection.Enter) }.getOrDefault(false) },
+                profileFocus = profileFocus,
             )
         }
     }
@@ -1558,8 +1567,11 @@ private fun ContinueArt(text: VideoCardText, modifier: Modifier = Modifier, badg
 
 // ---- the television's top bar ----------------------------------------------------------------
 
-/** Back from Settings or Downloads, or a tab picked on their top bar: the remote goes to the browser's bar. */
-enum class RailReturn { Downloads, Settings }
+/**
+ * Back from Downloads, or a tab picked on its top bar: the remote goes to the browser's bar, on the
+ * page's own item. Back from Settings ([Profile]): onto the account's picture, whose menu opened it.
+ */
+enum class RailReturn { Downloads, Settings, Profile }
 
 /** How many frames, about a second and a half at 60 Hz, the top bar holds focus on its item. */
 private const val RETURN_HOLD_FRAMES = 90
@@ -1893,9 +1905,11 @@ internal fun TouchFilterChip(
         Motion.standard(Motion.Fast),
         label = "chipIcon",
     )
+    val toggleTick = com.tmplayer.ui.components.rememberToggleTick()
     androidx.compose.material3.FilterChip(
         selected = selected,
-        onClick = onClick,
+        // A chip taken is felt; pressing the one already chosen is not news.
+        onClick = { if (!selected) toggleTick(true); onClick() },
         label = { M3Text(label, maxLines = 1) },
         // A pill, like the television's chips and every other chip in the app.
         shape = CircleShape,

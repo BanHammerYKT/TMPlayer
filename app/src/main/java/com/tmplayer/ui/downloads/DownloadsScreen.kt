@@ -1321,6 +1321,7 @@ private fun RemoveAfterWatchingRow(checked: Boolean, onChange: (Boolean) -> Unit
     }
     val interactions = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(Corner.Medium)
+    val tick = com.tmplayer.ui.components.rememberToggleTick()
     Row(
         Modifier
             .fillMaxWidth()
@@ -1332,7 +1333,7 @@ private fun RemoveAfterWatchingRow(checked: Boolean, onChange: (Boolean) -> Unit
                 interactionSource = interactions,
                 indication = LocalIndication.current,
                 role = Role.Switch,
-                onValueChange = onChange,
+                onValueChange = { on -> tick(on); onChange(on) },
             )
             .padding(horizontal = CARD_PAD, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1789,14 +1790,15 @@ private fun DownloadCard(
         if (row.missing) s.downloadsFileMissing else null,
     ).joinToString(DOT)
 
+    val pickTick = com.tmplayer.ui.components.rememberToggleTick()
     RowCard(
         accent = if (checked) MaterialTheme.colorScheme.primary else null,
-        onClick = if (picking) onToggle else null,
+        onClick = if (picking) ({ pickTick(!checked); onToggle() }) else null,
         onHold = onHold,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (picking) {
-                Checkbox(checked = checked, onCheckedChange = { onToggle() })
+                Checkbox(checked = checked, onCheckedChange = { pickTick(!checked); onToggle() })
                 Spacer(Modifier.width(8.dp))
             }
             run {

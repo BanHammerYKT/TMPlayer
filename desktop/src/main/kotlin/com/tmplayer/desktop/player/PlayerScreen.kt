@@ -90,6 +90,7 @@ import com.tmplayer.player.TrackPreferences
 import com.tmplayer.player.TrackRules
 import com.tmplayer.player.VideoScale
 import com.tmplayer.platform.Logger
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -464,6 +465,16 @@ fun PlayerScreen(
         nextUpDismissed = false
         nextUpShown = false
         resumedFrom = null
+        // The head and the index on their way while the settings below are read, for a stream
+        // reached any way (the next episode, a reopen) ([com.tmplayer.player.StreamWarmup]).
+        val openStartedAt = System.currentTimeMillis()
+        if (current.fromTelegram && !item.isJoined && item.fileId > 0) {
+            launch {
+                if (com.tmplayer.desktop.DownloadIndex.fileFor(settings, item.chatId, item.messageId) == null) {
+                    com.tmplayer.player.StreamWarmup.warm(item)
+                }
+            }
+        }
         launch {
             // What the file says of itself straight away, for the title; the chat's answer, then
             // the providers' episode names where lookups are on.
@@ -549,6 +560,14 @@ fun PlayerScreen(
             preparing.cancel()
         }
         phase = Phase.Loading(if (start > 0) s.playerResumingFrom(SeekMath.clock(start)) else s.playerOpeningVideo)
+        Logger.i("PlayerStart", "open to media ready ${System.currentTimeMillis() - openStartedAt} ms (file ${item.fileId}, resume $start ms)")
+        launch {
+            // The first moment mpv is playing rather than buffering: the desktop's "first frame".
+            val playing = kotlinx.coroutines.withTimeoutOrNull(120_000) {
+                engine.state.first { it.opened && !it.buffering && it.error == null }
+            }
+            if (playing != null) Logger.i("PlayerStart", "open to playing ${System.currentTimeMillis() - openStartedAt} ms (file ${item.fileId})")
+        }
         engine.open(data, start, prefs)
         val error = engine.state.value.error
         // On a TV the casting panel says what went wrong, with Play here beside it.
@@ -1079,6 +1098,21 @@ fun PlayerScreen(
     }
 
     /** One step later ([direction] 1) or earlier (-1); 0 puts the subtitles back in step. */
+    /**
+     * Subtitles a size bigger or smaller from the keyboard: the one subtitle look every video
+     * shares, so it is written to the setting, which the video playing takes up at once.
+     */
+    fun stepSubtitleSize(direction: Int) {
+        val sizes = com.tmplayer.player.SubtitleSize.entries
+        val now = engine.state.value.subtitleStyle
+        val next = sizes[(now.size.ordinal + direction).coerceIn(0, sizes.size - 1)]
+        showFlash(Flash.Kind.Text, L.commonWithDetail(L.settingsSubtitleSize, next.label))
+        if (next == now.size) return
+        val style = now.copy(size = next)
+        engine.setSubtitleStyle(style)
+        scope.launch { runCatching { settings.setSubtitleStyle(style) } }
+    }
+
     fun stepSubtitleDelay(direction: Int) {
         val ms = if (direction == 0) 0L else SyncDelays.step(engine.state.value.subtitleDelayMs, direction)
         engine.setSubtitleDelay(ms)
@@ -1291,6 +1325,7 @@ fun PlayerScreen(
             PlayerAction.AudioNext -> cycleTrack(TrackType.Audio, true)
             PlayerAction.AudioPrevious -> cycleTrack(TrackType.Audio, false)
             is PlayerAction.SubtitleDelay -> stepSubtitleDelay(action.direction)
+            is PlayerAction.SubtitleSize -> stepSubtitleSize(action.direction)
             is PlayerAction.AudioDelay -> stepAudioDelay(action.direction)
             PlayerAction.SpeedUp -> setSpeed(SeekMath.fineSpeed(status.speed, up = true))
             PlayerAction.SpeedDown -> setSpeed(SeekMath.fineSpeed(status.speed, up = false))

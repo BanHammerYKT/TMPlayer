@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.flow.first
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.withFrameNanos
@@ -91,6 +92,8 @@ internal fun PhoneBrowse(
      * nothing to fetch again. A pull, not a button: a lone floating Refresh reads like a mistake.
      */
     refreshOf: (BrowseSection) -> (() -> Unit)? = { null },
+    /** Whether that refresh is still fetching, so the spinner stays until it is done. */
+    refreshingOf: (BrowseSection) -> Boolean = { false },
     countOf: (BrowseSection) -> Int,
     actions: (@Composable RowScope.() -> Unit)?,
     sections: List<BrowseSection>,
@@ -282,6 +285,7 @@ internal fun PhoneBrowse(
                     section = section,
                     count = if (section.onChatsPage) 0 else countOf(section),
                     refresh = refreshOf(section),
+                    refreshing = refreshingOf(section),
                     pane = pane,
                 )
             }
@@ -290,7 +294,6 @@ internal fun PhoneBrowse(
                     tab = tab,
                     chats = chatsSection,
                     onSettle = { section -> if (section != tab) onPickTab(section) },
-                    onSettings = onOpenSettings,
                     onState = { pagerRef.value = it },
                     page = frame,
                 )
@@ -347,12 +350,11 @@ internal fun chatsPageOf(lastChats: String, sections: List<BrowseSection>): Brow
     BrowseSection.decode(lastChats)?.takeIf { it.isChats || (it.onChatsPage && it in sections) } ?: BrowseSection.of(BrowseTab.Chats)
 
 /**
- * Home and Chats side by side, and Settings after Chats: a swipe from Home towards the end goes to
- * Chats, one more to Settings, and back the other way. Settings is a screen of its own (it may ask
- * for the PIN first), so the pager's last page is only its title, and settling there opens the
- * real one ([onSettings]). A row that scrolls sideways inside a page (a
- * Home shelf, the chips) takes the swipe first; the page turns only once it can go no further, or
- * when the swipe starts outside it. Both pages stay composed, so each keeps its scroll.
+ * Home and Chats side by side: a swipe from Home towards the end goes to Chats, and back the other
+ * way. Settings is not a page of it: it opens from the picture's popover as a screen of its own,
+ * so no swipe leads into it or out of it. A row that scrolls sideways inside a page (a Home shelf,
+ * the chips) takes the swipe first; the page turns only once it can go no further, or when the
+ * swipe starts outside it. Both pages stay composed, so each keeps its scroll.
  *
  * The bar's buttons turn the pager too ([tab] changing); a swipe that settles on the other page
  * makes it the browser's tab ([onSettle]). [onState] hands the pager up for the bar's highlight
@@ -363,7 +365,6 @@ private fun HomeChatsPager(
     tab: BrowseSection,
     chats: BrowseSection,
     onSettle: (BrowseSection) -> Unit,
-    onSettings: () -> Unit,
     onState: (PagerState?) -> Unit,
     page: @Composable (BrowseSection) -> Unit,
 ) {
@@ -382,8 +383,8 @@ private fun HomeChatsPager(
         if (reduced) pager.scrollToPage(target) else pager.animateScrollToPage(target, animationSpec = Motion.standard(Motion.Normal))
     }
     // The page beside the one on screen is composed a frame later, not in the same frame: coming
-    // back from Settings or a chat, the browser is built again, and building Home, Chats and the
-    // Settings peek all at once was most of the wait between the press and the first frame.
+    // back from Settings or a chat, the browser is built again, and building Home and Chats at
+    // once was most of the wait between the press and the first frame.
     var beside by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         withFrameNanos { }
@@ -391,13 +392,9 @@ private fun HomeChatsPager(
     }
     val currentChats by rememberUpdatedState(chats)
     val settle by rememberUpdatedState(onSettle)
-    val settings by rememberUpdatedState(onSettings)
     LaunchedEffect(pager) {
-        // Not the page it starts on: coming back from Settings, the pager's saved page may still be
-        // Settings' while it turns back to the tab.
-        snapshotFlow { pager.settledPage }.drop(1).collect { settled ->
-            if (settled == SETTINGS_PAGE) settings() else settle(swipeSection(settled, currentChats))
-        }
+        // Not the page it starts on, which is the tab already.
+        snapshotFlow { pager.settledPage }.drop(1).collect { settled -> settle(swipeSection(settled, currentChats)) }
     }
     HorizontalPager(
         state = pager,
@@ -409,16 +406,9 @@ private fun HomeChatsPager(
         // bringing its chosen chip into view would turn the pager to it on launch.
         val onScreen by remember(index) { derivedStateOf { pager.settledPage == index } }
         CompositionLocalProvider(LocalPageOnScreen provides onScreen) {
-            if (index == SETTINGS_PAGE) SettingsPeek() else page(swipeSection(index, chats))
+            page(swipeSection(index, chats))
         }
     }
-}
-
-/** What a swipe past Chats shows on its way to Settings: Settings' title, where Settings puts it. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SettingsPeek() {
-    Scaffold(topBar = { TopAppBar(title = { Text(LocalStrings.current.settingsTitle) }) }) { }
 }
 
 /**
@@ -440,6 +430,8 @@ private fun PhonePageFrame(
     section: BrowseSection,
     count: Int,
     refresh: (() -> Unit)?,
+    /** Whether [refresh] is still fetching. */
+    refreshing: Boolean = false,
     pane: @Composable (BrowseSection) -> Unit,
 ) {
     val s = LocalStrings.current
@@ -492,9 +484,15 @@ private fun PhonePageFrame(
                 // TDLib answers through the list's own flow, so the spinner is a short
                 // acknowledgement rather than a wait on the fetch itself.
                 var pulling by remember { mutableStateOf(false) }
+                // Home says when its rows are back ([refreshingOf]): the spinner stays until then,
+                // or for the short acknowledgement at least, and at most [PULL_HOLD_MS].
+                val busy by androidx.compose.runtime.rememberUpdatedState(refreshing)
                 LaunchedEffect(pulling) {
                     if (pulling) {
                         kotlinx.coroutines.delay(PULL_ACK_MS)
+                        kotlinx.coroutines.withTimeoutOrNull(PULL_HOLD_MS) {
+                            androidx.compose.runtime.snapshotFlow { busy }.first { done -> !done }
+                        }
                         pulling = false
                     }
                 }
@@ -527,8 +525,7 @@ internal val LocalUnderStatusBar = androidx.compose.runtime.compositionLocalOf {
 
 private const val HOME_PAGE = 0
 private const val CHATS_PAGE = 1
-private const val SETTINGS_PAGE = 2
-private const val SWIPE_PAGE_COUNT = 3
+private const val SWIPE_PAGE_COUNT = 2
 
 /** The content key of the Home and Chats pager, which a swipe between them does not change. */
 private const val SWIPE_PAGES = "home-chats"
@@ -538,3 +535,6 @@ private const val SLIDE_PART = 12
 
 /** How long the pull's spinner stays after a pull, as the acknowledgement of it. */
 private const val PULL_ACK_MS = 900L
+
+/** The longest the spinner waits on a refresh that says it is still fetching. */
+private const val PULL_HOLD_MS = 8_000L

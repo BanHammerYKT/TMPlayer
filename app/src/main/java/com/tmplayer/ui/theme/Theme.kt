@@ -27,6 +27,10 @@ import com.tmplayer.data.SettingsStore
 import com.tmplayer.data.Accent
 import com.tmplayer.data.ThemeChoice
 import com.tmplayer.data.pureBlackGround
+import com.tmplayer.ui.theme.family
+import com.tmplayer.ui.theme.highContrast
+import com.tmplayer.ui.theme.withCustomAccent
+import com.tmplayer.ui.theme.withFamily
 
 /*
  * The Android entry point to the theme. The palette, the shapes, the touch type scale and [Tone]
@@ -212,9 +216,16 @@ fun TMPlayerTheme(content: @Composable () -> Unit) {
     val pureBlack by settings.pureBlack.collectAsState(initial = false)
     val black = pureBlackGround(choice, pureBlack, systemDark = systemDark || !touch)
     val accent by settings.accent.collectAsState(initial = Accent.Default)
+    // The viewer's own colour, the typeface and high contrast (Appearance, REELBOX-PARITY).
+    val customAccent by settings.customAccent.collectAsState(initial = null)
+    val typeface by settings.typeface.collectAsState(initial = com.tmplayer.data.AppTypeface.Default)
+    val highContrast by settings.highContrast.collectAsState(initial = false)
+    val family = typeface.family()
     // A picked accent washes in over a moment rather than snapping (animateAccentRoles).
     val scheme = animateAccentRoles(
-        if (touch) phoneScheme(dark, dynamic, black, accent) else TmSchemes.of(dark, black, accent),
+        (if (touch) phoneScheme(dark, dynamic, black, accent) else TmSchemes.of(dark, black, accent))
+            .let { if (touch && dynamic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) it else it.withCustomAccent(accent, customAccent, dark) }
+            .highContrast(highContrast),
     )
 
     // Both themes, always, and the form factor decides only the type scale. Two theme systems are
@@ -232,11 +243,11 @@ fun TMPlayerTheme(content: @Composable () -> Unit) {
             TmTouchTypography
         } else {
             M3MaterialTheme.typography.copy(displaySmall = tvDisplaySmall())
-        },
+        }.withFamily(family),
     ) {
         MaterialTheme(
             colorScheme = tvColors(scheme, dark),
-            typography = if (touch) phoneTypography else typography,
+            typography = (if (touch) phoneTypography else typography).withTvFamily(family),
         ) {
             CompositionLocalProvider(
                 // Without this the root content colour is undefined and every unstyled Text
@@ -249,4 +260,17 @@ fun TMPlayerTheme(content: @Composable () -> Unit) {
             }
         }
     }
+}
+
+/** The television's and the phone's tv-material type scale set in [family]; itself when null. */
+private fun Typography.withTvFamily(family: androidx.compose.ui.text.font.FontFamily?): Typography {
+    if (family == null) return this
+    fun TextStyle.f() = copy(fontFamily = family)
+    return copy(
+        displayLarge = displayLarge.f(), displayMedium = displayMedium.f(), displaySmall = displaySmall.f(),
+        headlineLarge = headlineLarge.f(), headlineMedium = headlineMedium.f(), headlineSmall = headlineSmall.f(),
+        titleLarge = titleLarge.f(), titleMedium = titleMedium.f(), titleSmall = titleSmall.f(),
+        bodyLarge = bodyLarge.f(), bodyMedium = bodyMedium.f(), bodySmall = bodySmall.f(),
+        labelLarge = labelLarge.f(), labelMedium = labelMedium.f(), labelSmall = labelSmall.f(),
+    )
 }

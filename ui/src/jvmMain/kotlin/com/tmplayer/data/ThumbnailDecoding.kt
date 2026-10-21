@@ -15,7 +15,7 @@ internal fun decodeImage(data: ByteArray): ImageBitmap? =
  * the memory a television does not, so there is nothing to sample down.
  */
 @Suppress("UNUSED_PARAMETER")
-internal fun decodeImageFile(path: String, maxWidth: Int): ImageBitmap? =
+internal fun decodeImageFile(path: String, maxWidth: Int, alpha: Boolean = false): ImageBitmap? =
     decodeImage(File(path).readBytes())
 
 internal fun ImageBitmap.byteCount(): Int = width * height * 4

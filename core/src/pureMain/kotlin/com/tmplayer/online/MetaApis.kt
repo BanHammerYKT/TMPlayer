@@ -115,6 +115,27 @@ class TmdbApi(
             candidate to posters
         }
 
+    /** A film's or show's title logos in [imageLanguages] (ISO 639-1, `null` for none), for [MetaRules.logo]. */
+    suspend fun logos(key: String, film: Boolean, id: String, imageLanguages: List<String>): MetaReply<List<MetaPoster>> =
+        get(key, if (film) "movie/$id/images" else "tv/$id/images", "include_image_language=${imageLanguages.joinToString(",")}") { json ->
+            objects(json.optJSONArray("logos")).mapNotNull { p ->
+                val path = p.optString("file_path").takeIf { it.startsWith("/") } ?: return@mapNotNull null
+                val width = p.optInt("width")
+                val height = p.optInt("height")
+                MetaPoster(
+                    path = path,
+                    language = if (p.isNull("iso_639_1")) null else p.optString("iso_639_1").ifBlank { null },
+                    aspect = p.optDouble("aspect_ratio", 0.0).takeIf { it > 0 } ?: if (height > 0) width.toDouble() / height else 0.0,
+                    width = width,
+                    voteAverage = p.optDouble("vote_average", 0.0),
+                    voteCount = p.optInt("vote_count"),
+                )
+            }
+        }
+
+    /** [logo]'s address at the size the carousel draws it. */
+    fun logoUrl(logo: MetaPoster): String = "$IMAGES/$LOGO_SIZE${logo.path}"
+
     /** [poster]'s address at the size a tile draws. */
     fun posterUrl(poster: MetaPoster): String = "$IMAGES/$POSTER_SIZE${poster.path}"
 
@@ -287,14 +308,21 @@ class TmdbApi(
         const val BASE = "https://api.themoviedb.org/3"
         const val IMAGES = "https://image.tmdb.org/t/p"
 
-        /** About 40 requests a second per address is TMDB's ceiling; a tenth of that is plenty. */
-        const val GAP_MS = 100L
+        /**
+         * About 40 requests a second per address is TMDB's ceiling. A screenful of titles is a
+         * search and a details call apiece, so half the ceiling: a tenth of it made a Home row's
+         * posters wait their turn for two seconds and more.
+         */
+        const val GAP_MS = 50L
         const val DEFAULT_WAIT_MS = 10_000L
 
         // Sizes that fit what draws them: a poster at most ~240 dp wide, a 16:9 tile ~400 px.
         const val POSTER_SIZE = "w342"
         const val BACKDROP_SIZE = "w780"
         const val STILL_SIZE = "w300"
+
+        /** A title logo, set at most about 300 dp wide in the carousel. */
+        const val LOGO_SIZE = "w500"
 
         /** A face in the cast row, drawn at most ~96 dp wide. */
         const val PROFILE_SIZE = "w185"

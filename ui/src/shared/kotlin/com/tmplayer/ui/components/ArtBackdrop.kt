@@ -18,6 +18,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.unit.dp
+import com.tmplayer.data.PerfLog
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -89,7 +93,7 @@ fun ArtBackdrop(
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         filterQuality = FilterQuality.Low,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().then(if (step.blurred) Modifier.blur(STAND_IN_BLUR) else Modifier),
                     )
                     step.picture?.let { SmallPicture(it, Modifier.align(Alignment.TopEnd)) }
                 }
@@ -146,12 +150,37 @@ internal fun rememberBackdropArt(source: BackdropSource, drawn: Int): BackdropAr
     LaunchedEffect(source, widest) {
         // Not until the frame has been measured, so the first fetch is the size that is drawn.
         if (decodesFullSize && drawn == 0) return@LaunchedEffect
+        val started = System.nanoTime()
         val wide = source.wideUrl?.let { url ->
             Thumbnails.peekSharp(url, widest, ONLINE_WIDTH, MetaImageSize::atLeast)
                 ?.takeIf { it.width >= widest || MetaImageSize.atLeast(url, widest) == url }
-                ?: online?.let { provider -> Thumbnails.sharp(url, widest, ONLINE_WIDTH, MetaImageSize::atLeast) { provider.image(it) } }
+                ?: online?.let { provider ->
+                    kotlinx.coroutines.coroutineScope {
+                        // While the sharp copy comes, something of the same picture: the inline
+                        // preview at once, then TMDB's small copy blurred (a few kilobytes, one
+                        // round trip), which the sharp one fades in over. Not when the sharp copy
+                        // is on the disk already: it is decoded before the small one could land.
+                        val early = launch {
+                            if (art == null) {
+                                withContext(Dispatchers.Default) { Thumbnails.mini(source.miniThumbnail) }?.let { if (art == null) art = BackdropArt(field = it) }
+                            }
+                            val tiny = MetaImageSize.tiny(url) ?: return@launch
+                            val onDisk = withContext(Dispatchers.IO) {
+                                provider.hasImage(url) || provider.hasImage(MetaImageSize.atLeast(url, Thumbnails.lighter(widest)))
+                            }
+                            if (onDisk) return@launch
+                            Thumbnails.online(tiny, TINY_WIDTH) { provider.image(tiny) }?.let {
+                                art = BackdropArt(field = it, blurred = true)
+                                PerfLog.mark("backdrop small", started)
+                            }
+                        }
+                        Thumbnails.sharp(url, widest, ONLINE_WIDTH, MetaImageSize::atLeast) { provider.image(it) }
+                            .also { early.cancel() }
+                    }
+                }
         }
         if (wide != null && wide.width >= SHARP_MIN_WIDTH) {
+            if (art != null) PerfLog.mark("backdrop sharp", started)
             art = BackdropArt(picture = wide)
             return@LaunchedEffect
         }
@@ -173,7 +202,18 @@ internal fun rememberBackdropArt(source: BackdropSource, drawn: Int): BackdropAr
 }
 
 /** What the backdrop draws at one step of the chain. Neither set means the generated cover. */
-internal class BackdropArt(val picture: ImageBitmap? = null, val field: ImageBitmap? = null)
+internal class BackdropArt(
+    val picture: ImageBitmap? = null,
+    val field: ImageBitmap? = null,
+    /** True for the provider's small copy standing in for the sharp one: drawn blurred, so it reads as the picture coming into focus. */
+    val blurred: Boolean = false,
+)
+
+/** The blur on a small stand-in; Android draws it from API 31, and earlier the stretched copy is soft enough. */
+internal val STAND_IN_BLUR = 18.dp
+
+/** The width TMDB's small stand-in copies are decoded at: `w92` posters whole, `w300` backdrops halved. */
+internal const val TINY_WIDTH = 160
 
 /** What is already decoded for [source], so a backdrop seen before is there on the first frame. */
 private fun peek(source: BackdropSource, pixels: Int): BackdropArt? {

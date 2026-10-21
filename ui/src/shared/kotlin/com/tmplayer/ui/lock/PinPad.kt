@@ -119,6 +119,8 @@ fun PinPad(
     var waitUntil by remember { mutableLongStateOf(0L) }
     var now by remember { mutableLongStateOf(PinClock.now()) }
     val waiting = waitUntil > now
+    // A keypad's taps, and the verdict felt before it is read (HAPTICS-PLAN rows 10 to 12).
+    val haptic = com.tmplayer.ui.components.rememberHaptics()
 
     // A wait earned before this pad opened is still a wait.
     LaunchedEffect(purpose) {
@@ -147,8 +149,12 @@ fun PinPad(
                         first = pin
                         message = null
                     }
-                    chosen == pin -> onDone(pin)
+                    chosen == pin -> {
+                        haptic(com.tmplayer.ui.components.Haptic.Confirm)
+                        onDone(pin)
+                    }
                     else -> {
+                        haptic(com.tmplayer.ui.components.Haptic.Reject)
                         first = null
                         message = s.lockPinsDiffer
                     }
@@ -162,8 +168,12 @@ fun PinPad(
                     busy = false
                     entered = ""
                     when (verdict) {
-                        PinCheck.Right, PinCheck.NoPin -> onDone(pin)
+                        PinCheck.Right, PinCheck.NoPin -> {
+                            haptic(com.tmplayer.ui.components.Haptic.Confirm)
+                            onDone(pin)
+                        }
                         is PinCheck.Wrong -> {
+                            haptic(com.tmplayer.ui.components.Haptic.Reject)
                             val wait = verdict.attempts.waitMs(PinClock.now())
                             if (wait > 0) {
                                 waitUntil = verdict.attempts.waitUntil
@@ -173,6 +183,7 @@ fun PinPad(
                             }
                         }
                         is PinCheck.Waiting -> {
+                            haptic(com.tmplayer.ui.components.Haptic.Reject)
                             waitUntil = PinClock.now() + verdict.waitMs
                             message = null
                         }
@@ -184,12 +195,14 @@ fun PinPad(
 
     fun press(digit: Char) {
         if (busy || waiting || entered.length >= PinHash.LENGTH) return
+        haptic(com.tmplayer.ui.components.Haptic.KeyTap)
         entered += digit
         if (entered.length == PinHash.LENGTH) submit(entered)
     }
 
     fun delete() {
         if (busy || waiting) return
+        if (entered.isNotEmpty()) haptic(com.tmplayer.ui.components.Haptic.KeyTap)
         entered = entered.dropLast(1)
     }
 

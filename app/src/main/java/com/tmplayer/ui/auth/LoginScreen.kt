@@ -129,6 +129,11 @@ fun LoginScreen(
     var changingNumber by rememberSaveable(state::class) { mutableStateOf(false) }
 
     val touch = isTouch()
+    // The two moments sign in is about, felt as well as read: a wrong code or number, and in.
+    val haptic = com.tmplayer.ui.components.rememberHaptics()
+    LaunchedEffect(submitError) { if (submitError != null) haptic(com.tmplayer.ui.components.Haptic.Reject) }
+    val signedIn = state is AuthState.Ready
+    LaunchedEffect(signedIn) { if (signedIn) haptic(com.tmplayer.ui.components.Haptic.Confirm) }
 
     when (state) {
         // Under the host's loader (see [loaderLabel]).

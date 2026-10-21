@@ -47,8 +47,12 @@ sealed interface HomeRow {
         val more: List<MediaItem> = emptyList(),
         val complete: Boolean = true,
         val fetched: Int = 0,
+        /** Where Home fills itself: whether the row holds the chat's single videos or its shows, which never share a row. */
+        val kind: Across.Kind? = null,
+        /** The chat's second row (its shows, after its videos), keyed apart from the first. */
+        val second: Boolean = false,
     ) : HomeRow {
-        override val key: String get() = "chat-$chatId"
+        override val key: String get() = if (second) "chat-$chatId-more" else "chat-$chatId"
         override val total: Int get() = fetched
         override val totalAtLeast: Boolean get() = !complete
         override val hasMore: Boolean get() = loaded && (more.isNotEmpty() || !complete)
@@ -77,9 +81,26 @@ sealed interface HomeRow {
         override val key: String get() = "new-episodes"
     }
 
-    /** The starred chats' newest videos in one line, newest first, whichever chat they came from. */
-    data class Recent(val entries: List<ShelfEntry>, val loaded: Boolean) : HomeRow {
+    /**
+     * Home's chats' newest videos in one line, newest first, whichever chat they came from.
+     *
+     * @param starredOnly true when every chat it draws from is starred, which is what its heading
+     *   says; false once Home fills itself from the chats with videos ([HomeRows.homeChats]).
+     */
+    data class Recent(val entries: List<ShelfEntry>, val loaded: Boolean, val starredOnly: Boolean = true) : HomeRow {
         override val key: String get() = "recent"
+    }
+
+    /**
+     * The shows, or the films and other videos, across all of Home's chats in one row, newest
+     * first: Home's "Shows" and "Videos" (user, 2026-10-21: "carousel, movies and shows"). Like
+     * Recently added it repeats what the chat rows under it hold, merged; it leaves out only what
+     * Continue watching and Watch later already have.
+     */
+    data class Across(val kind: Kind, val entries: List<ShelfEntry>) : HomeRow {
+        enum class Kind { Shows, Videos }
+
+        override val key: String get() = "across-${kind.name.lowercase()}"
     }
 }
 
@@ -90,9 +111,12 @@ sealed interface HomeRow {
  * - Continue watching first, then "Recently added in starred chats", so what just arrived in a
  *   favourite is near the top, then Watch later, then New episodes when there are any, then one
  *   row per starred chat in the chat list's own order.
- * - Recently added draws only from the starred chats. Somebody's other chats are family groups,
- *   work and news as often as films, so what is new there is not what Home is for. It needs two
- *   starred chats at least: with one, it would repeat that chat's own row.
+ * - Recently added draws from Home's chats: the starred ones, and where Home fills itself
+ *   ([homeChats], the app's default since 2026-10-21) the chats the search across chats found the
+ *   most videos in, which leaves out family groups and news that only ever post a clip. Starred
+ *   chats alone need two at least: with one, it would repeat that chat's own row.
+ * - Filling itself, Home puts Movies and Shows across its chats straight under Continue watching,
+ *   and gives each chat a row of its movies and a row of its shows: the two never share a row.
  * - Every row holds at most [LIMIT] tiles. A show folded into one tile counts once.
  * - Continue watching holds one record per film or episode: copies of it (a 1080p and a 720p)
  *   fold into the one watched last ([foldCopies]).
@@ -115,6 +139,40 @@ object HomeRows {
     fun favouriteChats(chats: List<ChatSummary>, favourites: Set<Long>): List<ChatSummary> =
         if (favourites.isEmpty()) emptyList() else chats.filter { it.id in favourites }
 
+    /** Chats Home picks for itself, besides the starred ones: a screen's worth of rows. */
+    const val AUTO_CHATS = 6
+
+    /**
+     * The chats Home draws from: the starred ones first, in the chat list's order, each with a
+     * row of its own, then up to [limit] more that the search across every chat ([recent]) found
+     * videos in, the most videos first, then the newest. So Home is full on the first open with
+     * nothing starred (user, 2026-10-21); starring a chat only puts it first. An archived chat is
+     * never picked, nor one missing from [chats] (the kids lock's, or one this account left).
+     * Before [recent] arrives only the starred chats are known.
+     */
+    fun homeChats(
+        chats: List<ChatSummary>,
+        favourites: Set<Long>,
+        recent: List<MediaItem>?,
+        limit: Int = AUTO_CHATS,
+    ): List<ChatSummary> {
+        val starred = favouriteChats(chats, favourites)
+        if (recent.isNullOrEmpty() || limit <= 0) return starred
+        val listed = chats.filterNot { it.isArchived || it.id in favourites }.associateBy { it.id }
+        val picked = recent
+            .filter { it.chatId in listed }
+            .groupBy { it.chatId }
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<Long, List<MediaItem>>> { it.value.size }
+                    .thenByDescending { entry -> entry.value.maxOf { it.date } }
+                    .thenBy { it.key },
+            )
+            .take(limit)
+            .mapNotNull { listed[it.key] }
+        return starred + picked
+    }
+
     /**
      * @param favourites the starred chats, already in display order (see [favouriteChats]).
      * @param loaded each starred chat's newest videos, by chat id; a chat missing here is still loading.
@@ -126,6 +184,11 @@ object HomeRows {
      * @param recentMinStarred the starred chats it takes for Recently added: [RECENT_MIN_STARRED],
      *   or one on a phone, where the row is the featured carousel ([HomeFeatured]) rather than a
      *   repeat of the one chat's own row.
+     * @param starred which of [favourites] the viewer starred, when [favourites] is [homeChats]'
+     *   answer; null when they all are. Only says what Recently added's heading may claim.
+     * @param autoFill true where Home fills itself ([homeChats]): with nothing starred and the
+     *   search across chats still running, Recently added holds its place as loading rather than
+     *   Home opening on the first-run card, and Shows and Videos are built across the chats.
      */
     fun build(
         continueWatching: List<ResumeRecord>,
@@ -136,7 +199,9 @@ object HomeRows {
         watchLater: List<WatchLaterRecord> = emptyList(),
         fresh: List<NewEpisode> = emptyList(),
         recentMinStarred: Int = RECENT_MIN_STARRED,
-    ): List<HomeRow> = buildList {
+        starred: Set<Long>? = null,
+        autoFill: Boolean = false,
+    ): List<HomeRow> = buildList<HomeRow> {
         val seen = HashSet<String>()
 
         val distinct = continueWatching.distinctBy { keyOf(it.chatId, it.messageId) }
@@ -149,11 +214,13 @@ object HomeRows {
         if (resume.isNotEmpty()) add(HomeRow.Continue(resume, everyResume.drop(LIMIT)))
         val inContinue = HashSet(seen)
 
-        val starred = favourites.distinctBy { it.id }
-        if (starred.size >= recentMinStarred.coerceAtLeast(1)) {
-            val starredIds = starred.mapTo(HashSet()) { it.id }
+        val homeChats = favourites.distinctBy { it.id }
+        val homeIds = homeChats.mapTo(HashSet()) { it.id }
+        val starredOnly = starred == null || homeIds.all { it in starred }
+        if (homeChats.size >= recentMinStarred.coerceAtLeast(1) || (autoFill && recent == null)) {
+            val starredIds = homeIds
             if (recent == null) {
-                add(HomeRow.Recent(emptyList(), loaded = false))
+                add(HomeRow.Recent(emptyList(), loaded = false, starredOnly = starredOnly))
             } else {
                 // The search across chats reaches a starred chat further back than its own row's
                 // fetch, and a starred chat's fetch fills in whatever the search did not reach.
@@ -161,12 +228,12 @@ object HomeRows {
                 // A copy, so the rows below still show these videos in their own chats.
                 val entries = row(pool, HashSet(inContinue), shownCopies, inContinue)
                 if (entries.isNotEmpty()) {
-                    add(HomeRow.Recent(entries, loaded = true))
+                    add(HomeRow.Recent(entries, loaded = true, starredOnly = starredOnly))
                 } else if (starredIds.any { it !in loaded }) {
                     // Nothing yet, but a starred chat's own videos are still on their way: the row
                     // stays as loading, so the carousel holds its place rather than vanishing and
                     // coming back once they land (seen on a cold start on the TV stick).
-                    add(HomeRow.Recent(emptyList(), loaded = false))
+                    add(HomeRow.Recent(emptyList(), loaded = false, starredOnly = starredOnly))
                 }
             }
         }
@@ -179,10 +246,53 @@ object HomeRows {
         val newEpisodes = fresh.filterNot { keyOf(it.item.chatId, it.item.messageId) in seen }.take(LIMIT)
         if (newEpisodes.isNotEmpty()) add(HomeRow.NewEpisodes(newEpisodes))
 
-        starred.forEach { chat ->
+        // Shows, then films and other videos, across the chats: only where Home fills itself, and
+        // from two chats at least, or they would be one chat's row twice over.
+        if (autoFill && homeChats.size >= 2) {
+            val pool = recent.orEmpty().filter { it.chatId in homeIds } + homeIds.flatMap { loaded[it].orEmpty() }
+            // A copy of what is seen: the chat rows below still show these in their own chats.
+            val across = arranged(pool, HashSet(seen), shownCopies, inContinue)
+            // Films first among the videos, then the other videos, each newest first as they came.
+            val videos = across.filter { kindOf(it) == HomeRow.Across.Kind.Videos }
+                .sortedBy { if (it is ShelfEntry.File && SeriesShelf.isFilm(it.item)) 0 else 1 }
+                .take(LIMIT)
+            val shows = across.filter { kindOf(it) == HomeRow.Across.Kind.Shows }.take(LIMIT)
+            if (videos.isNotEmpty()) add(HomeRow.Across(HomeRow.Across.Kind.Videos, videos))
+            if (shows.isNotEmpty()) add(HomeRow.Across(HomeRow.Across.Kind.Shows, shows))
+        }
+
+        homeChats.forEach { chat ->
             val items = loaded[chat.id]
             if (items == null) {
                 add(HomeRow.Chat(chat.id, chat.title, emptyList(), loaded = false))
+                return@forEach
+            }
+            if (autoFill) {
+                // Videos and shows never share a row (user, 2026-10-21): a chat's videos, then
+                // its shows, each a row of its own when it has any.
+                val all = items.distinctBy { it.id }
+                val arranged = arranged(all, seen, shownCopies, inContinue)
+                var first = true
+                for (kind in listOf(HomeRow.Across.Kind.Videos, HomeRow.Across.Kind.Shows)) {
+                    val entries = arranged.filter { kindOf(it) == kind }.take(LIMIT)
+                    if (entries.isEmpty()) continue
+                    markSeen(entries, seen)
+                    val ofKind = all.filter { kindOf(it) == kind }
+                    add(
+                        HomeRow.Chat(
+                            chat.id,
+                            chat.title,
+                            entries,
+                            loaded = true,
+                            more = beyond(ofKind, entries),
+                            complete = chat.id !in partial,
+                            fetched = ofKind.size,
+                            kind = kind,
+                            second = !first,
+                        ),
+                    )
+                    first = false
+                }
                 return@forEach
             }
             val entries = row(items, seen, shownCopies, inContinue)
@@ -202,6 +312,19 @@ object HomeRows {
             }
         }
 
+    }.let { rows -> if (autoFill) moviesAndShowsFirst(rows) else rows }
+
+    /**
+     * Movies and Shows straight under Continue watching (and the carousel), ahead of Watch later
+     * and New episodes: the order the viewer asked for (user, 2026-10-21). They are built after
+     * those rows, which they leave out, and moved up here.
+     */
+    private fun moviesAndShowsFirst(rows: List<HomeRow>): List<HomeRow> {
+        val across = rows.filterIsInstance<HomeRow.Across>()
+        if (across.isEmpty()) return rows
+        val rest = rows.filterNot { it is HomeRow.Across }
+        val at = rest.indexOfLast { it is HomeRow.Continue || it is HomeRow.Recent } + 1
+        return rest.take(at) + across + rest.drop(at)
     }
 
     /**
@@ -220,6 +343,41 @@ object HomeRows {
         continuing: Set<String> = emptySet(),
         inProgress: Set<String> = emptySet(),
     ): List<ShelfEntry> {
+        val entries = arranged(items, seen, continuing, inProgress).take(LIMIT)
+        markSeen(entries, seen)
+        return entries
+    }
+
+    private fun markSeen(entries: List<ShelfEntry>, seen: MutableSet<String>) {
+        entries.forEach { entry ->
+            when (entry) {
+                is ShelfEntry.File -> seen += keyOf(entry.item.chatId, entry.item.messageId)
+                is ShelfEntry.Show -> entry.series.episodes.flatMap { it.copies }.forEach { seen += keyOf(it.chatId, it.messageId) }
+            }
+        }
+    }
+
+    /**
+     * Whether a tile is a show's or a single video's (user, 2026-10-21): a show is a folded
+     * series, or a lone file whose name or caption gives a season or an episode; everything else,
+     * a film, a clip, a lecture, is a video.
+     */
+    fun kindOf(entry: ShelfEntry): HomeRow.Across.Kind = when (entry) {
+        is ShelfEntry.Show -> HomeRow.Across.Kind.Shows
+        is ShelfEntry.File -> kindOf(entry.item)
+    }
+
+    /** [kindOf] for one file. */
+    fun kindOf(item: MediaItem): HomeRow.Across.Kind =
+        if (SeriesShelf.episodeOf(item).isEpisode) HomeRow.Across.Kind.Shows else HomeRow.Across.Kind.Videos
+
+    /** [row]'s tiles before the cut to [LIMIT], with nothing added to [seen]. */
+    private fun arranged(
+        items: List<MediaItem>,
+        seen: Set<String>,
+        continuing: Set<String> = emptySet(),
+        inProgress: Set<String> = emptySet(),
+    ): List<ShelfEntry> {
         fun copyOfContinuing(item: MediaItem): Boolean =
             continuing.isNotEmpty() && VideoCopies.keyOf(item)?.let { it in continuing } == true
         fun episode(item: MediaItem): Boolean = SeriesShelf.episodeOf(item).episode != null
@@ -231,18 +389,10 @@ object HomeRows {
             }
             .distinctBy { it.id }
             .sortedWith(compareByDescending<MediaItem> { it.date }.thenByDescending { it.messageId })
-        val entries = SeriesShelf.arrange(fresh)
+        return SeriesShelf.arrange(fresh)
             .filterNot { entry ->
                 entry is ShelfEntry.File && entry.item.let { keyOf(it.chatId, it.messageId) in inProgress || copyOfContinuing(it) }
             }
-            .take(LIMIT)
-        entries.forEach { entry ->
-            when (entry) {
-                is ShelfEntry.File -> seen += keyOf(entry.item.chatId, entry.item.messageId)
-                is ShelfEntry.Show -> entry.series.episodes.flatMap { it.copies }.forEach { seen += keyOf(it.chatId, it.messageId) }
-            }
-        }
-        return entries
     }
 
     /** A chat's videos that none of the row's tiles stands for, newest first: what See all adds. */
@@ -336,6 +486,7 @@ object HomeRows {
             is HomeRow.NewEpisodes -> row.copy(episodes = row.episodes.filter { HomeFeatured.hasArt(it.item) })
             is HomeRow.Chat -> if (!row.loaded) return row else row.copy(entries = row.entries.filter(HomeFeatured::hasArt))
             is HomeRow.Recent -> if (!row.loaded) return row else row.copy(entries = row.entries.filter(HomeFeatured::hasArt))
+            is HomeRow.Across -> row.copy(entries = row.entries.filter(HomeFeatured::hasArt))
         }
         val empty = when (kept) {
             is HomeRow.Continue -> kept.records.isEmpty()
@@ -343,6 +494,7 @@ object HomeRows {
             is HomeRow.NewEpisodes -> kept.episodes.isEmpty()
             is HomeRow.Chat -> kept.entries.isEmpty()
             is HomeRow.Recent -> kept.entries.isEmpty()
+            is HomeRow.Across -> kept.entries.isEmpty()
         }
         return if (empty) null else kept
     }

@@ -104,6 +104,7 @@ import com.tmplayer.ui.components.rememberShimmer
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.rememberMeta
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.theme.FloatingTone
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.Tone
@@ -373,19 +374,22 @@ private fun FeaturedPage(
                 .widthIn(max = WORDS_WIDTH),
             verticalArrangement = Arrangement.spacedBy(WORDS_GAP),
         ) {
-            Text(
-                title,
-                style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
-                color = Tone.text,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // The title's logo where TMDB has one, the name in type until then and otherwise.
+            com.tmplayer.ui.online.TitleArt(meta, maxWidth = DESKTOP_LOGO_MAX_WIDTH, maxHeight = DESKTOP_LOGO_MAX_HEIGHT) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = Tone.text,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                HeroPill(label = playLabel, onClick = { onPlay(playItem) })
+                HeroPill(label = playLabel, onClick = { onPlay(playItem) }, modifier = Modifier.warmUpOnIntent(playItem))
                 RoundButton(TmIcons.Info, s.detailOpenDetails, size = com.tmplayer.ui.browse.HERO_PILL_HEIGHT) { onDetails(pick) }
             }
         }
@@ -521,3 +525,7 @@ private val WORDS_GAP = 8.dp
 
 /** How long the carousel waits for its ranked order before showing the picks without it. */
 private const val RANK_WAIT_MS = 1_200L
+
+/** The most a title logo takes over the desktop's carousel. */
+private val DESKTOP_LOGO_MAX_WIDTH = 420.dp
+private val DESKTOP_LOGO_MAX_HEIGHT = 130.dp
