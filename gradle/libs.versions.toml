@@ -64,6 +64,7 @@ slf4j = "2.0.20"
 # MediaRouter it finds receivers with. The regular APK only; an F-Droid build has neither
 # (app/build.gradle.kts, fdroidBuild).
 playServicesCast = "22.3.1"
+playServicesAuthApiPhone = "18.1.0"
 mediarouter = "1.8.1"
 
 [libraries]
@@ -130,6 +131,7 @@ jna-platform = { group = "net.java.dev.jna", name = "jna-platform", version.ref 
 filekit-dialogs-compose = { group = "io.github.vinceglb", name = "filekit-dialogs-compose", version.ref = "filekit" }
 slf4j-nop = { group = "org.slf4j", name = "slf4j-nop", version.ref = "slf4j" }
 play-services-cast-framework = { group = "com.google.android.gms", name = "play-services-cast-framework", version.ref = "playServicesCast" }
+play-services-auth-api-phone = { group = "com.google.android.gms", name = "play-services-auth-api-phone", version.ref = "playServicesAuthApiPhone" }
 androidx-mediarouter = { group = "androidx.mediarouter", name = "mediarouter", version.ref = "mediarouter" }
 
 [plugins]

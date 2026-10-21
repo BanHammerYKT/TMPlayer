@@ -1373,20 +1373,43 @@ private fun Root() {
                             signInError = null
                             scope.launch { signInError = Td.submitEmailCode(code) }
                         },
+                        onRun = { block ->
+                            signInError = null
+                            scope.launch { signInError = block() }
+                        },
                     )
                 }
                 if (!keyboard) {
-                    androidx.compose.material3.Text(
-                        L.authUnofficial,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                        color = Tone.muted,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier
+                    // Under every sign in screen: the line Telegram's terms ask for, and the proxy
+                    // settings, for a network where Telegram is only reached through one. Before
+                    // this the proxy was offered only once the line was already known to be down.
+                    androidx.compose.foundation.layout.Column(
+                        Modifier
                             .fillMaxWidth()
                             .windowInsetsPadding(WindowInsets.navigationBars)
                             .padding(horizontal = 24.dp)
-                            .padding(top = 10.dp, bottom = if (FormFactor.isTv(context)) Tv.SafeV else 10.dp),
-                    )
+                            .padding(top = 6.dp, bottom = if (FormFactor.isTv(context)) Tv.SafeV else 10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        val openProxies = { com.tmplayer.ui.connect.ProxyScreenState.open = true }
+                        if (FormFactor.isTv(context)) {
+                            // A real button on a remote, one press down from the form's own.
+                            com.tmplayer.ui.components.TmSecondaryButton(onClick = openProxies) {
+                                androidx.tv.material3.Text(LocalStrings.current.loginProxySettings)
+                            }
+                        } else {
+                            androidx.compose.material3.TextButton(onClick = openProxies) {
+                                androidx.compose.material3.Text(LocalStrings.current.loginProxySettings)
+                            }
+                        }
+                        androidx.compose.material3.Text(
+                            L.authUnofficial,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            color = Tone.muted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
             ConnectionStatus(

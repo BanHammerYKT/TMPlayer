@@ -3,13 +3,18 @@ package com.tmplayer.ui.auth
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.nav.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -37,7 +43,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.tmplayer.data.Country
 import com.tmplayer.data.PhoneCountries
-import com.tmplayer.ui.components.PhonePad
+import com.tmplayer.ui.components.isTouch
 import com.tmplayer.ui.theme.Tone
 
 /**
@@ -48,9 +54,9 @@ import com.tmplayer.ui.theme.Tone
  * pane rather than floating over it: on a phone a list of two hundred rows behind a keyboard needs
  * the whole screen, and a half-height sheet only makes the scrolling longer.
  *
- * Touch only: a remote would have to walk this list a row at a time, so the television keeps its
- * plain international field. Since nothing but a phone draws this, it is the one sign-in screen
- * written straight against the phone's Material theme with no branch in it.
+ * On every device: on a phone and a desktop the search box has the keyboard at once; on a TV the
+ * remote lands on the country already chosen ([selected]), the search box one press up, and the
+ * row in focus is filled so it can be seen from the sofa.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,13 +64,18 @@ fun CountryPicker(
     countries: List<Country>,
     onPick: (Country) -> Unit,
     onDismiss: () -> Unit,
+    selected: Country? = null,
 ) {
     val s = LocalStrings.current
+    val touch = isTouch()
     var query by remember { mutableStateOf("") }
     val search = remember { FocusRequester() }
+    val firstRow = remember { FocusRequester() }
     val shown = remember(countries, query) {
         countries.filter { PhoneCountries.matches(it, query) }
     }
+    val start = remember(shown, selected) { shown.indexOf(selected).coerceAtLeast(0) }
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = if (query.isEmpty()) start else 0)
 
     BackHandler(onBack = onDismiss)
 
@@ -88,7 +99,11 @@ fun CountryPicker(
             )
         },
     ) { insets ->
-        Column(Modifier.fillMaxSize().padding(insets)) {
+        Column(
+            Modifier.fillMaxSize().padding(insets),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val column = Modifier.widthIn(max = PICKER_MAX_WIDTH).fillMaxWidth()
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -108,9 +123,8 @@ fun CountryPicker(
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 shape = MaterialTheme.shapes.medium,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = PhonePad.Side, vertical = 8.dp)
+                modifier = column
+                    .padding(horizontal = SIDE, vertical = 8.dp)
                     .focusRequester(search),
             )
 
@@ -119,22 +133,27 @@ fun CountryPicker(
                     s.loginCountryNoMatch,
                     style = MaterialTheme.typography.bodyLarge,
                     color = Tone.muted,
-                    modifier = Modifier.padding(horizontal = PhonePad.Side, vertical = 8.dp),
+                    modifier = column.padding(horizontal = SIDE, vertical = 8.dp),
                 )
             }
 
-            LazyColumn(Modifier.fillMaxSize()) {
-                items(shown, key = { it.iso }) { country ->
+            LazyColumn(column.fillMaxSize(), state = list) {
+                itemsIndexed(shown, key = { _, it -> it.iso }) { index, country ->
+                    val interactions = remember { MutableInteractionSource() }
+                    val focused by interactions.collectIsFocusedAsState()
+                    val lit = focused && !touch
                     ListItem(
                         leadingContent = {
                             Text(country.flag, style = MaterialTheme.typography.titleLarge)
                         },
-                        headlineContent = { Text(country.name) },
-                        trailingContent = { Text("+${country.dialCode}") },
-                        colors = ListItemDefaults.colors(containerColor = Tone.background),
+                        headlineContent = { Text(country.name, color = if (lit) Tone.onFocusFill else Tone.text) },
+                        trailingContent = { Text("+${country.dialCode}", color = if (lit) Tone.onFocusFill else Tone.muted) },
+                        colors = ListItemDefaults.colors(containerColor = if (lit) Tone.focusFill else Tone.background),
                         // A row in a list of two hundred is a button whether or not it looks like
                         // one, and a screen reader is told so here because nothing else says it.
-                        modifier = Modifier.clickable(role = Role.Button) { onPick(country) },
+                        modifier = Modifier
+                            .then(if (index == (if (query.isEmpty()) start else 0)) Modifier.focusRequester(firstRow) else Modifier)
+                            .clickable(interactionSource = interactions, indication = androidx.compose.foundation.LocalIndication.current, role = Role.Button) { onPick(country) },
                     )
                     HorizontalDivider(color = Tone.outline)
                 }
@@ -142,7 +161,23 @@ fun CountryPicker(
         }
     }
 
-    // The keyboard is the point of this screen: two hundred rows are found by typing, not by
-    // scrolling, and every frame spent reaching for the search box is one the user spends flicking.
-    LaunchedEffect(Unit) { search.requestFocus() }
+    // The keyboard is the point of this screen on a phone: two hundred rows are found by typing,
+    // not by scrolling. A remote starts on the list instead, where Up reaches the search box.
+    LaunchedEffect(Unit) {
+        runCatching { if (touch) search.requestFocus() else firstRow.requestFocus() }
+    }
+}
+
+private val SIDE = 16.dp
+
+/** A desktop window can be wide; past this the rows read as a table nobody can follow across. */
+private val PICKER_MAX_WIDTH = 640.dp
+
+/** The countries Telegram accepts numbers from, loaded once per pane. Empty until TDLib answers. */
+@Composable
+fun rememberSignInCountries(): List<Country> {
+    val countries by androidx.compose.runtime.produceState(emptyList<Country>()) {
+        value = runCatching { PhoneCountries.from(com.tmplayer.data.Td.countries()) }.getOrDefault(emptyList())
+    }
+    return countries
 }

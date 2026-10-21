@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -58,8 +60,13 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.tmplayer.data.AuthState
 import com.tmplayer.data.CodeDelivery
+import com.tmplayer.data.CodeInput
 import com.tmplayer.data.Country
+import com.tmplayer.data.DeviceCountry
+import com.tmplayer.data.EmailReset
+import com.tmplayer.data.Failures
 import com.tmplayer.data.PhoneCountries
+import com.tmplayer.data.QrPhase
 import com.tmplayer.data.SignInMethod
 import com.tmplayer.data.Td
 import com.tmplayer.ui.components.BigError
@@ -71,6 +78,7 @@ import com.tmplayer.ui.components.TmSecondaryButton
 import com.tmplayer.ui.components.isTouch
 import com.tmplayer.ui.components.paneAction
 import com.tmplayer.ui.components.rememberToast
+import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Tone
 import com.tmplayer.ui.theme.Tv
@@ -90,6 +98,14 @@ fun loaderLabel(state: AuthState, s: com.tmplayer.i18n.Messages): String? = when
     else -> null
 }
 
+/**
+ * Runs one sign in request that answers with an error or null, the error landing under the
+ * field: the host clears the last error, launches [block] and shows what it returns. Used by the
+ * steps that need nothing more than that (forgot password, recovery, the account and email
+ * resets), so each does not need a callback of its own.
+ */
+typealias SignInRun = (suspend () -> String?) -> Unit
+
 @Composable
 fun LoginScreen(
     state: AuthState,
@@ -104,10 +120,11 @@ fun LoginScreen(
     onSubmitEmailAddress: (String) -> Unit = {},
     onSubmitEmailCode: (String) -> Unit = {},
     onRefreshQr: () -> Unit = {},
+    onRun: SignInRun = {},
 ) {
     val s = LocalStrings.current
-    // "Change number" on the code pane. TDLib is happy to be told a different number while it is
-    // waiting for a code, so this is a change of screen and nothing more: no logout, no lost
+    // "Wrong number? Edit" on the code pane. TDLib is happy to be told a different number while it
+    // is waiting for a code, so this is a change of screen and nothing more: no logout, no lost
     // session, and the code that was already sent stays valid if the user comes straight back.
     var changingNumber by rememberSaveable(state::class) { mutableStateOf(false) }
 
@@ -144,6 +161,7 @@ fun LoginScreen(
             // pane is, and going back there is what [onCancelPhoneEntry] arranges.
             onBack = if (touch) null else onCancelPhoneEntry,
             onUseQr = { onChooseMethod(SignInMethod.Qr) },
+            initial = null,
         )
         is AuthState.Code ->
             if (changingNumber) {
@@ -153,6 +171,7 @@ fun LoginScreen(
                     onSubmit = onSubmitPhoneNumber,
                     onBack = { changingNumber = false },
                     onUseQr = { onChooseMethod(SignInMethod.Qr) },
+                    initial = state.phoneNumber,
                 )
             } else {
                 CodePane(
@@ -165,15 +184,32 @@ fun LoginScreen(
                 )
             }
         is AuthState.Password ->
-            PasswordPane(state, submitError, onSubmitPassword, onStartOver)
+            PasswordPane(state, submitError, onSubmitPassword, onStartOver, onRun)
+        is AuthState.PasswordRecovery ->
+            PasswordRecoveryPane(state, submitError, onRun)
         is AuthState.EmailAddress ->
             EmailAddressPane(state, submitError, onSubmitEmailAddress, onStartOver)
         is AuthState.EmailCode ->
-            EmailCodePane(state, submitError, onSubmitEmailCode, onStartOver)
+            EmailCodePane(state, submitError, onSubmitEmailCode, onStartOver, onRun)
         is AuthState.Ready -> BrandLoader(s.loginSigningInStatus)
         // Starting over is the way out of every failure here, including a client that could not
-        // start at all, which it tries again.
-        is AuthState.Failed -> BigError(state.message, onRetry = onStartOver)
+        // start at all, which it tries again. A flood wait holds the button until it has passed.
+        is AuthState.Failed -> FailedPane(state, onStartOver)
+    }
+}
+
+/**
+ * A failure, with Try again; when Telegram said how long to wait, the wait counts down in the
+ * message and Try again appears once it is over, rather than failing the same way at once.
+ */
+@Composable
+private fun FailedPane(state: AuthState.Failed, onStartOver: () -> Unit) {
+    val s = LocalStrings.current
+    val left = rememberCountdown(state.waitSeconds, state)
+    if (left > 0) {
+        BigError("${state.message}\n${s.loginTryAgainIn(SignInWords.clock(left))}", onRetry = null)
+    } else {
+        BigError(state.message, onRetry = onStartOver)
     }
 }
 
@@ -255,7 +291,7 @@ private fun ExitOnBack() {
  * phone this is the first screen, so Back leaves the app, guarded the way the chat list guards it.
  * On a television it was reached from the QR pane, so Back goes there. The one exception is a
  * number being changed part way through a sign-in, where Back belongs to the code pane that sent
- * the viewer here, and that is what [onBack] carries.
+ * the viewer here, and that is what [onBack] carries. [initial] is the number being changed.
  */
 @Composable
 private fun PhonePane(
@@ -264,31 +300,62 @@ private fun PhonePane(
     onSubmit: (String) -> Unit,
     onBack: (() -> Unit)?,
     onUseQr: () -> Unit,
+    initial: String?,
 ) {
     val s = LocalStrings.current
     // Nothing has been sent yet, so leaving costs nothing either way.
     if (onBack == null) ExitOnBack() else BackHandler(onBack = onBack)
 
     if (isTouch()) {
-        TouchPhonePane(state, error, onSubmit, onBack, onUseQr)
+        TouchPhonePane(state, error, onSubmit, onBack, onUseQr, initial)
         return
     }
 
-    var number by rememberSaveable { mutableStateOf("+") }
+    val context = LocalContext.current
+    val countries = rememberSignInCountries()
+    // "+" and digits, nothing else: the grouping is drawn ([InternationalGrouping]), never typed,
+    // so the caret stays where the remote's keyboard left it.
+    var number by rememberSaveable { mutableStateOf(initial?.let(::keepInternational) ?: "+") }
+    var picking by rememberSaveable { mutableStateOf(false) }
     val submission = rememberSubmission(state, error)
+    val (country, pattern) = rememberInternational(number, countries)
+
+    // The country is filled in for the viewer: the one Telegram guesses from the address it sees,
+    // else the device's own. Only while nothing has been typed.
+    LaunchedEffect(countries) {
+        if (countries.isEmpty() || number != "+") return@LaunchedEffect
+        val iso = runCatching { Td.guessedCountryCode() }.getOrDefault("").ifBlank { DeviceCountry.code(context) }
+        val dial = PhoneCountries.byIso(countries, iso)?.dialCode
+        if (dial != null && number == "+") number = "+$dial"
+    }
+
+    if (picking) {
+        CountryPicker(
+            countries = countries,
+            selected = country,
+            onPick = { picked ->
+                val national = PhoneCountries.splitInternational(number, countries)?.second.orEmpty()
+                number = "+${picked.dialCode}$national"
+                picking = false
+            },
+            onDismiss = { picking = false },
+        )
+        return
+    }
 
     LoginForm(
         title = s.loginPhoneTitle,
         blurb = s.loginPhoneBlurbTv,
-        note = null,
+        note = country?.let { "${it.flag}  ${it.name}" },
         value = number,
         // The keyboard type is a request, not a guarantee: a leanback remote's on-screen keyboard
         // and every hardware keyboard will happily send letters to a field that asked for a
         // dialpad. What a number is made of is decided here instead.
-        onValueChange = { number = it.keepPhoneCharacters() },
+        onValueChange = { number = keepInternational(it) },
         placeholder = "+44 7700 900000",
         keyboardType = KeyboardType.Phone,
         masked = false,
+        transformation = InternationalGrouping(countries, pattern),
         error = error,
         submitLabel = s.loginSendCode,
         busyLabel = s.loginSendingCode,
@@ -299,6 +366,12 @@ private fun PhonePane(
         // secondary button says where it goes rather than only that it goes back.
         backLabel = if (onBack == null) s.loginUseQr else s.commonBack,
         onBack = onBack ?: onUseQr,
+        extras = {
+            TmSecondaryButton(onClick = { picking = true }) { Text(s.loginChooseCountry) }
+            // Reached from the QR pane, Back already returns there; from the code pane it does
+            // not, so the other way in gets its own button.
+            if (onBack != null) TmSecondaryButton(onClick = onUseQr) { Text(s.loginUseQr) }
+        },
     )
 }
 
@@ -317,32 +390,44 @@ private fun TouchPhonePane(
     /** Null when this is the first screen of the sign-in and there is nothing behind it. */
     onBack: (() -> Unit)?,
     onUseQr: () -> Unit,
+    initial: String?,
 ) {
     val s = LocalStrings.current
     val context = LocalContext.current
-    var countries by remember { mutableStateOf(emptyList<Country>()) }
+    val countries = rememberSignInCountries()
     var dial by rememberSaveable { mutableStateOf("") }
     // Plain digits, exactly as typed. Do not write grouped text back into the field: a space
     // inserted to the left of a still cursor moves the caret a character back, and on keyboards
-    // that report a selection of their own it jumps further still.
+    // that report a selection of their own it jumps further still. [PhoneGrouping] draws it.
     var national by rememberSaveable { mutableStateOf("") }
     var picking by rememberSaveable { mutableStateOf(false) }
     val country = remember(countries, dial) { PhoneCountries.byDialCode(countries, dial) }
+    val pattern = rememberPhonePattern(dial, national)
     val field = remember { FocusRequester() }
     val submission = rememberSubmission(state, error)
 
-    LaunchedEffect(Unit) {
-        // Off the main thread's critical path by construction: the pane draws with an empty list
-        // and fills in when TDLib answers, so a slow first connection never holds up the frame.
-        countries = PhoneCountries.from(Td.countries())
+    // A whole number pasted or autofilled into either field ("+44 7700 900123") is taken apart
+    // into its two halves rather than dropped into one as a run of digits.
+    fun take(raw: String): Boolean {
+        val (d, n) = PhoneCountries.splitInternational(raw, countries) ?: return false
+        dial = d
+        national = n
+        return true
+    }
+
+    LaunchedEffect(countries) {
+        if (countries.isEmpty()) return@LaunchedEffect
+        // The number being changed comes back as it was, for the one digit that was wrong.
+        if (initial != null && dial.isEmpty() && national.isEmpty() && take("+" + initial.filter(Char::isDigit))) return@LaunchedEffect
         if (dial.isNotEmpty()) return@LaunchedEffect
-        val iso = Td.guessedCountryCode().ifBlank { PhoneCountries.deviceCountryCode(context) }
+        val iso = runCatching { Td.guessedCountryCode() }.getOrDefault("").ifBlank { DeviceCountry.code(context) }
         if (dial.isEmpty()) dial = PhoneCountries.byIso(countries, iso)?.dialCode.orEmpty()
     }
 
     if (picking) {
         CountryPicker(
             countries = countries,
+            selected = country,
             onPick = {
                 dial = it.dialCode
                 picking = false
@@ -375,7 +460,7 @@ private fun TouchPhonePane(
                 value = dial,
                 // Typing the code is the other half of the picker: people who know their own
                 // reach for it before they will scroll a list to find their country.
-                onValueChange = { dial = it.filter { c -> c.isDigit() }.take(MAX_DIAL_DIGITS) },
+                onValueChange = { if (!take(it)) dial = it.filter { c -> c.isDigit() }.take(PhoneCountries.MAX_DIAL_DIGITS) },
                 placeholder = "00",
                 // The placeholder is the shape of a dial code, which is no use as a name for the
                 // field once it is filled in, so the floating label is given words of its own.
@@ -392,8 +477,9 @@ private fun TouchPhonePane(
                 // Digits and nothing else. The dialpad is a hint the IME may ignore, and a letter
                 // typed here would sit in the field looking accepted while being quietly dropped
                 // from the number that is actually sent.
-                onValueChange = { national = it.keepNationalCharacters() },
+                onValueChange = { if (!take(it)) national = it.keepNationalCharacters() },
                 placeholder = s.loginPhoneNumber,
+                visualTransformation = PhoneGrouping(pattern),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Phone,
                     imeAction = ImeAction.Done,
@@ -448,21 +534,33 @@ private fun CodePane(
     }
 
     var code by rememberSaveable { mutableStateOf("") }
+    var submitted by rememberSaveable { mutableStateOf<String?>(null) }
     // Most deliveries are a run of digits, but a couple are a word or a phrase, and those have to
     // keep their letters. The phone's version of this pane already asks the same question.
-    val digits = state.delivery.isDigits()
+    val digits = SignInWords.isDigits(state.delivery)
+    val length = SignInWords.codeLength(state)
     val submission = rememberSubmission(state, error)
+    val resend = rememberSubmission(state, error)
+    var resent by remember { mutableStateOf(0) }
+    val remaining = rememberCountdown(state.timeout, state.phoneNumber to resent)
+
+    val submit = {
+        submission.start {
+            submitted = code
+            onSubmit(code)
+        }
+    }
+    // The last digit typed with the remote is the whole answer: no trip down to the button.
+    LaunchedEffect(code) { if (CodeInput.shouldAutoSubmit(code, length, digits, submitted)) submit() }
 
     LoginForm(
         title = s.loginCodeTitle,
-        blurb = codeBlurb(state),
+        blurb = SignInWords.codeBlurb(state),
         note = null,
         value = code,
         // A number keyboard is a hint the leanback remote is free to ignore, so a code that is
         // only ever digits is held to that here rather than trusted to the keyboard.
-        onValueChange = { entered ->
-            code = if (digits) entered.filter(Char::isDigit).take(MAX_CODE_LENGTH) else entered
-        },
+        onValueChange = { entered -> code = CodeInput.clean(entered, digits, if (digits) length else 0) },
         placeholder = s.loginCode,
         keyboardType = if (digits) KeyboardType.Number else KeyboardType.Text,
         masked = false,
@@ -470,12 +568,33 @@ private fun CodePane(
         submitLabel = s.loginSignIn,
         busyLabel = s.loginSigningIn,
         busy = submission.busy,
-        canSubmit = code.isNotEmpty(),
-        onSubmit = { submission.start { onSubmit(code) } },
+        canSubmit = code.isNotEmpty() && code != submitted,
+        onSubmit = submit,
         // Not "Back": the code has been sent, so the way out is a fresh start, which is what
         // restarting the sign-in actually does.
         backLabel = s.loginStartOver,
         onBack = onStartOver,
+        extras = {
+            // TDLib sends a code again only by a route it offers next ([AuthState.Code.next]);
+            // with none, a resend button would only ever answer with an error.
+            if (state.canResend) {
+                TmSecondaryButton(
+                    onClick = {
+                        resend.start {
+                            resent++
+                            submitted = null
+                            onResend()
+                        }
+                    },
+                    enabled = remaining <= 0,
+                    loading = resend.busy,
+                    busyLabel = s.loginSendingCode,
+                ) {
+                    Text(if (remaining > 0) s.loginResendIn(SignInWords.clock(remaining)) else SignInWords.resendLabel(state.next))
+                }
+            }
+            TmSecondaryButton(onClick = onChangeNumber) { Text(s.loginWrongNumber) }
+        },
     )
 }
 
@@ -496,25 +615,20 @@ private fun TouchCodePane(
     onStartOver: () -> Unit,
 ) {
     val s = LocalStrings.current
-    val boxed = state.delivery.isDigits()
-    val length = state.length.takeIf { it in 1..MAX_CODE_LENGTH } ?: DEFAULT_CODE_LENGTH
+    val boxed = SignInWords.isDigits(state.delivery)
+    val length = SignInWords.codeLength(state)
     var code by rememberSaveable { mutableStateOf("") }
     // Which code has already been sent, so that a rejected one does not resubmit itself forever:
     // the field stays full after a wrong code, and auto-submit would fire on every recomposition.
     var submitted by rememberSaveable { mutableStateOf<String?>(null) }
-    var remaining by rememberSaveable(state.timeout, state.phoneNumber) { mutableStateOf(state.timeout) }
+    var resent by rememberSaveable { mutableStateOf(0) }
+    val remaining = rememberCountdown(state.timeout, state.phoneNumber to resent)
     val field = remember { FocusRequester() }
     // Two answers can be on their way at once, and they are not the same answer: the code being
     // checked and a fresh code being asked for. One flag between them would leave the button that
     // was not pressed looking busy.
     val signIn = rememberSubmission(state, error)
     val resend = rememberSubmission(state, error)
-
-    LaunchedEffect(remaining) {
-        if (remaining <= 0) return@LaunchedEffect
-        delay(1000)
-        remaining -= 1
-    }
 
     val submit = {
         signIn.start {
@@ -526,19 +640,27 @@ private fun TouchCodePane(
     // Typing the last digit is the whole answer, so asking for a button press afterwards is asking
     // twice. Only for the fixed-length kinds: a word or a phrase has no last box to notice.
     LaunchedEffect(code) {
-        if (boxed && code.length == length && code != submitted) submit()
+        if (CodeInput.shouldAutoSubmit(code, length, boxed, submitted)) submit()
     }
+
+    // A code that went by text can be filled from that text, with the viewer's say so in a system
+    // prompt, and only in a build with Play Services ([SmsCodeConsent]).
+    SmsCodeConsent(
+        active = state.delivery == CodeDelivery.Sms || state.delivery == CodeDelivery.SmsWord || state.delivery == CodeDelivery.SmsPhrase,
+        onMessage = { message -> code = CodeInput.clean(message, boxed, if (boxed) length else 0) },
+    )
 
     Pane {
         PaneHeader(onBack = onStartOver)
         Text(s.loginCodeTitle, style = MaterialTheme.typography.headlineLarge)
-        Text(codeBlurb(state), style = MaterialTheme.typography.bodyLarge)
+        Text(SignInWords.codeBlurb(state), style = MaterialTheme.typography.bodyLarge)
 
         if (boxed) {
             CodeBoxes(
                 code = code,
                 length = length,
-                onChange = { code = it.filter(Char::isDigit).take(length) },
+                // A paste or an autofill can be the whole text message; only its code is kept.
+                onChange = { code = CodeInput.clean(it, true, length) },
                 modifier = Modifier.focusRequester(field),
             )
         } else {
@@ -570,24 +692,27 @@ private fun TouchCodePane(
             Text(s.loginSignIn)
         }
 
-        TmSecondaryButton(
-            onClick = {
-                resend.start {
-                    remaining = state.timeout
-                    submitted = null
-                    onResend()
-                }
-            },
-            enabled = remaining <= 0,
-            loading = resend.busy,
-            busyLabel = s.loginSendingCode,
-            modifier = Modifier.paneAction(),
-        ) {
-            Text(if (remaining > 0) s.loginResendIn(clock(remaining)) else resendLabel(state.next))
+        // Only where TDLib offers a next route: with none it refuses the resend.
+        if (state.canResend) {
+            TmSecondaryButton(
+                onClick = {
+                    resend.start {
+                        resent++
+                        submitted = null
+                        onResend()
+                    }
+                },
+                enabled = remaining <= 0,
+                loading = resend.busy,
+                busyLabel = s.loginSendingCode,
+                modifier = Modifier.paneAction(),
+            ) {
+                Text(if (remaining > 0) s.loginResendIn(SignInWords.clock(remaining)) else SignInWords.resendLabel(state.next))
+            }
         }
 
         TmSecondaryButton(onClick = onChangeNumber, modifier = Modifier.paneAction()) {
-            Text(s.loginChangeNumber)
+            Text(s.loginWrongNumber)
         }
         TmSecondaryButton(onClick = onStartOver, modifier = Modifier.paneAction()) {
             Text(s.loginStartOver)
@@ -682,41 +807,6 @@ private fun CodeBoxes(
     )
 }
 
-/** Where the code went, in the user's words rather than TDLib's. */
-private fun codeBlurb(state: AuthState.Code): String = when (state.delivery) {
-    CodeDelivery.TelegramApp ->
-        L.loginDeliveryApp
-    CodeDelivery.Sms -> L.loginDeliverySms(state.phoneNumber)
-    CodeDelivery.Call -> L.loginDeliveryCall(state.phoneNumber)
-    CodeDelivery.MissedCall, CodeDelivery.FlashCall ->
-        L.loginDeliveryMissedCall
-    CodeDelivery.Fragment -> L.loginDeliveryFragment
-    CodeDelivery.SmsWord -> L.loginDeliveryWord
-    CodeDelivery.SmsPhrase -> L.loginDeliveryPhrase
-    CodeDelivery.Firebase ->
-        L.loginDeliveryFirebase(state.phoneNumber)
-    CodeDelivery.Unknown -> L.loginDeliveryUnknown(state.phoneNumber)
-}
-
-/** Named after what pressing it will actually do, which is not always "the same again". */
-private fun resendLabel(next: CodeDelivery?): String = when (next) {
-    CodeDelivery.Sms -> L.loginResendSms
-    CodeDelivery.Call, CodeDelivery.MissedCall, CodeDelivery.FlashCall -> L.loginResendCall
-    CodeDelivery.TelegramApp -> L.loginResendApp
-    CodeDelivery.Fragment -> L.loginResendFragment
-    else -> L.loginResendAgain
-}
-
-/** True where the code is digits of a known length, which is what a row of boxes can hold. */
-private fun CodeDelivery.isDigits(): Boolean = when (this) {
-    CodeDelivery.SmsWord, CodeDelivery.SmsPhrase, CodeDelivery.FlashCall,
-    CodeDelivery.MissedCall,
-    -> false
-    else -> true
-}
-
-private fun clock(seconds: Int): String = "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
-
 /** The touch pane's top row: an arrow out, and nothing at all on a television. */
 @Composable
 private fun PaneHeader(onBack: () -> Unit) {
@@ -744,6 +834,9 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit, onRef
     val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(initialValue = null, key1 = link) {
         value = withContext(Dispatchers.Default) { QrCode.render(link, QR_PIXELS) }
     }
+    // How far the code is through its life: the bar under the plate, and the veil once TDLib
+    // could not renew it (no line).
+    val life = rememberQrClock(link)
 
     // The code itself gets a white plate; contrast is what makes it scannable across a room.
     // A fixed 300dp square is fine on a television and wider than the content column on the
@@ -756,28 +849,30 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit, onRef
     }
 
     val plate: @Composable () -> Unit = {
-        Box(
-            plateSize
-                .clip(RoundedCornerShape(Corner.ExtraLarge))
-                .background(Color.White),
-            contentAlignment = Alignment.Center,
-        ) {
-            val rendered = bitmap
-            if (rendered == null) {
-                BigLoader(null)
-            } else {
-                Image(
-                    bitmap = rendered,
-                    contentDescription = s.loginQrDescription,
-                    // Inset from the plate's edge: a QR code needs a quiet margin of its own
-                    // colour around it or a scanner cannot find its corners.
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
-                )
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(
+                plateSize
+                    .clip(RoundedCornerShape(Corner.ExtraLarge))
+                    .background(Color.White),
+                contentAlignment = Alignment.Center,
+            ) {
+                val rendered = bitmap
+                if (rendered == null) {
+                    BigLoader(null)
+                } else {
+                    Image(
+                        bitmap = rendered,
+                        contentDescription = s.loginQrDescription,
+                        // Inset from the plate's edge: a QR code needs a quiet margin of its own
+                        // colour around it or a scanner cannot find its corners.
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                    )
+                }
+                QrScannedVeil(scanned, Modifier.matchParentSize())
+                // A code TDLib could not renew (no line) is veiled, never left looking usable.
+                QrExpiredVeil(life.phase == QrPhase.Expired && !scanned, onRefresh, Modifier.matchParentSize())
             }
-            com.tmplayer.ui.auth.QrScannedVeil(scanned, Modifier.matchParentSize())
-            // A code TDLib could not renew (no line) is veiled, never left looking usable.
-            val expired = com.tmplayer.ui.auth.rememberQrExpired(link)
-            com.tmplayer.ui.auth.QrExpiredVeil(expired && !scanned, onRefresh, Modifier.matchParentSize())
+            if (!scanned) QrLifeCue(life, Modifier.widthIn(max = PLATE).fillMaxWidth())
         }
     }
 
@@ -809,11 +904,12 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit, onRef
             TmSecondaryButton(onClick = onUsePhone, modifier = Modifier.paneAction()) {
                 Text(s.loginUsePhone)
             }
-            com.tmplayer.ui.auth.QrRefreshButton(onRefresh)
+            QrRefreshButton(onRefresh)
         }
         return
     }
 
+    val first = remember { FocusRequester() }
     Row(
         Modifier.fillMaxSize().padding(horizontal = Tv.SafeH, vertical = Tv.SafeV),
         verticalAlignment = Alignment.CenterVertically,
@@ -823,14 +919,16 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit, onRef
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             words()
             Spacer(Modifier.height(8.dp))
-            // On a remote this is the only focusable thing on the pane, so it is also what gives
-            // the D-pad somewhere to be. Without it the screen takes no input at all.
+            // On a remote these are the only focusable things on the pane, so they are also what
+            // gives the D-pad somewhere to be. Without them the screen takes no input at all.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                TmSecondaryButton(onClick = onUsePhone) { Text(s.loginUsePhone) }
-                com.tmplayer.ui.auth.QrRefreshButton(onRefresh)
+                TmSecondaryButton(onClick = onUsePhone, modifier = Modifier.focusRequester(first)) { Text(s.loginUsePhone) }
+                QrRefreshButton(onRefresh)
             }
         }
     }
+    // The remote starts on a button, not nowhere, so the first press does something.
+    LaunchedEffect(Unit) { runCatching { first.requestFocus() } }
 }
 
 @Composable
@@ -858,20 +956,45 @@ private fun Step(number: Int, text: String) {
     }
 }
 
+/**
+ * Two-step verification: the password with show and hide, the account's own hint, and "Forgot
+ * password?". With a recovery email that mails a code ([PasswordRecoveryPane]); without one it
+ * says what is left, which is changing the password from a device still signed in, or Telegram's
+ * account reset, offered only behind a second, plainly worded confirmation.
+ */
 @Composable
 private fun PasswordPane(
     state: AuthState.Password,
     error: String?,
     onSubmit: (String) -> Unit,
     onStartOver: () -> Unit,
+    onRun: SignInRun,
 ) {
     val s = LocalStrings.current
     var password by remember { mutableStateOf("") }
+    var shown by rememberSaveable { mutableStateOf(false) }
+    // The "no recovery email" step, and within it the confirmation of the reset.
+    var forgot by rememberSaveable { mutableStateOf(false) }
+    var confirming by rememberSaveable { mutableStateOf(false) }
     val submission = rememberSubmission(state, error)
+    val asking = rememberSubmission(state, error)
+
+    if (forgot) {
+        BackHandler { if (confirming) confirming = false else forgot = false }
+        NoRecoveryPane(
+            confirming = confirming,
+            error = error,
+            busy = asking.busy,
+            onReset = { if (confirming) asking.start { onRun { Td.resetAccount() } } else confirming = true },
+            onBack = { if (confirming) confirming = false else forgot = false },
+        )
+        return
+    }
 
     // The remote's Back is what anybody stuck here reaches for first.
     BackHandler(onBack = onStartOver)
 
+    val reveal = if (shown) s.loginHidePassword else s.loginShowPassword
     LoginForm(
         title = s.loginPasswordTitle,
         blurb = s.loginPasswordBlurb,
@@ -880,7 +1003,12 @@ private fun PasswordPane(
         onValueChange = { password = it },
         placeholder = s.loginPassword,
         keyboardType = KeyboardType.Password,
-        masked = true,
+        masked = !shown,
+        trailing = {
+            androidx.compose.material3.IconButton(onClick = { shown = !shown }) {
+                androidx.compose.material3.Icon(if (shown) TmIcons.VisibilityOff else TmIcons.Visibility, contentDescription = reveal)
+            }
+        },
         error = error,
         submitLabel = s.loginSignIn,
         busyLabel = s.loginSigningIn,
@@ -891,6 +1019,131 @@ private fun PasswordPane(
         // lost, because nobody is signed in yet.
         backLabel = s.loginStartOver,
         onBack = onStartOver,
+        extras = {
+            if (!isTouch()) TmSecondaryButton(onClick = { shown = !shown }) { Text(reveal) }
+            TmSecondaryButton(
+                onClick = {
+                    if (state.recoveryEmail == null) {
+                        forgot = true
+                    } else {
+                        asking.start { onRun { Td.forgotPassword() } }
+                    }
+                },
+                loading = asking.busy,
+                busyLabel = s.loginSendingCode,
+            ) { Text(s.loginForgotPassword) }
+        },
+    )
+}
+
+/** No password and no recovery email: what is left, and the account reset behind a confirmation. */
+@Composable
+private fun NoRecoveryPane(
+    confirming: Boolean,
+    error: String?,
+    busy: Boolean,
+    onReset: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val s = LocalStrings.current
+    val touch = isTouch()
+    val back = remember { FocusRequester() }
+    Pane {
+        PaneHeader(onBack = onBack)
+        Text(s.loginNoRecoveryTitle, style = MaterialTheme.typography.headlineLarge)
+        Text(if (confirming) s.loginResetAccountSure else s.loginNoRecoveryBody, style = MaterialTheme.typography.bodyLarge)
+        if (error != null) Text(error, style = MaterialTheme.typography.bodyLarge, color = Tone.danger)
+        val buttons: @Composable () -> Unit = {
+            // Back first and in focus on a remote: a reset is never one stray press away.
+            TmButton(onClick = onBack, modifier = (if (touch) Modifier.paneAction() else Modifier).focusRequester(back)) {
+                Text(if (confirming) s.commonCancel else s.loginBackToPassword)
+            }
+            TmSecondaryButton(
+                onClick = onReset,
+                loading = busy,
+                busyLabel = s.loginResetAccount,
+                modifier = if (touch) Modifier.paneAction() else Modifier,
+            ) {
+                Text(if (confirming) s.loginResetAccountConfirm else s.loginResetAccount, color = Tone.danger)
+            }
+        }
+        if (touch) buttons() else Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
+    }
+    LaunchedEffect(confirming) { if (!touch) runCatching { back.requestFocus() } }
+}
+
+/**
+ * "Forgot password?" with a recovery email: the code Telegram mailed, then a new password and
+ * its hint, or none, which turns two-step verification off and says so on the button.
+ */
+@Composable
+private fun PasswordRecoveryPane(state: AuthState.PasswordRecovery, error: String?, onRun: SignInRun) {
+    val s = LocalStrings.current
+    val submission = rememberSubmission(state, error)
+    val back = { onRun { Td.backToPassword(); null } }
+    BackHandler(onBack = back)
+
+    if (state.code == null) {
+        var code by rememberSaveable { mutableStateOf("") }
+        LoginForm(
+            title = s.loginRecoveryTitle,
+            blurb = s.loginRecoveryBody(state.pattern),
+            note = null,
+            value = code,
+            onValueChange = { code = it.filter(Char::isLetterOrDigit).take(RECOVERY_CODE_MAX) },
+            placeholder = s.loginRecoveryCodeLabel,
+            keyboardType = KeyboardType.Number,
+            masked = false,
+            error = error,
+            submitLabel = s.loginSignIn,
+            busyLabel = s.loginSigningIn,
+            busy = submission.busy,
+            canSubmit = code.isNotBlank(),
+            onSubmit = { submission.start { onRun { Td.submitRecoveryCode(code) } } },
+            backLabel = s.loginBackToPassword,
+            onBack = back,
+        )
+        return
+    }
+
+    var password by remember { mutableStateOf("") }
+    var hint by rememberSaveable { mutableStateOf("") }
+    var shown by rememberSaveable { mutableStateOf(false) }
+    val reveal = if (shown) s.loginHidePassword else s.loginShowPassword
+    LoginForm(
+        title = s.loginRecoveryNewTitle,
+        blurb = s.loginRecoveryNewBody,
+        note = null,
+        value = password,
+        onValueChange = { password = it },
+        placeholder = s.loginRecoveryNewLabel,
+        keyboardType = KeyboardType.Password,
+        masked = !shown,
+        trailing = {
+            androidx.compose.material3.IconButton(onClick = { shown = !shown }) {
+                androidx.compose.material3.Icon(if (shown) TmIcons.VisibilityOff else TmIcons.Visibility, contentDescription = reveal)
+            }
+        },
+        error = error,
+        submitLabel = if (password.isEmpty()) s.loginRecoveryTurnOff else s.loginRecoverySave,
+        busyLabel = s.loginSigningIn,
+        busy = submission.busy,
+        canSubmit = true,
+        onSubmit = { submission.start { onRun { Td.finishPasswordRecovery(password, hint) } } },
+        backLabel = s.loginBackToPassword,
+        onBack = back,
+        below = {
+            if (password.isNotEmpty()) {
+                PaneField(
+                    value = hint,
+                    onValueChange = { hint = it.take(HINT_MAX) },
+                    placeholder = s.loginRecoveryHintLabel,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        extras = { if (!isTouch()) TmSecondaryButton(onClick = { shown = !shown }) { Text(reveal) } },
     )
 }
 
@@ -929,7 +1182,8 @@ private fun EmailAddressPane(
 /**
  * The code Telegram mailed to the account's login email, which it uses in place of a text for some
  * accounts. Before this pane the sign in ended in "a step TMPlayer can't do", and such an account
- * could not sign in here at all.
+ * could not sign in here at all. With the code again on request, and the email reset with its
+ * waiting period as TDLib reports it, for somebody who no longer has that mailbox.
  */
 @Composable
 private fun EmailCodePane(
@@ -937,18 +1191,28 @@ private fun EmailCodePane(
     error: String?,
     onSubmit: (String) -> Unit,
     onStartOver: () -> Unit,
+    onRun: SignInRun,
 ) {
     val s = LocalStrings.current
     var code by rememberSaveable { mutableStateOf("") }
+    var submitted by rememberSaveable { mutableStateOf<String?>(null) }
     val submission = rememberSubmission(state, error)
-    val length = state.length.takeIf { it > 0 } ?: MAX_CODE_LENGTH
+    val asking = rememberSubmission(state, error)
+    val length = state.length.takeIf { it > 0 } ?: SignInWords.MAX_CODE_LENGTH
     BackHandler(onBack = onStartOver)
+    val submit = { submission.start { submitted = code; onSubmit(code) } }
+    LaunchedEffect(code) { if (state.length > 0 && CodeInput.shouldAutoSubmit(code, state.length, true, submitted)) submit() }
+    val pendingLeft = rememberCountdown((state.reset as? EmailReset.Pending)?.resetInSeconds ?: 0, state.reset)
     LoginForm(
         title = s.loginEmailCodeTitle,
         blurb = s.loginEmailCodeBody(state.pattern),
-        note = null,
+        note = when (val reset = state.reset) {
+            is EmailReset.Available -> s.loginEmailResetAvailable(Failures.waitPhrase(reset.waitSeconds))
+            is EmailReset.Pending -> s.loginEmailResetPending(Failures.waitPhrase(pendingLeft))
+            EmailReset.None -> null
+        },
         value = code,
-        onValueChange = { code = it.filter(Char::isLetterOrDigit).take(length) },
+        onValueChange = { code = CodeInput.clean(it, true, length) },
         placeholder = s.loginEmailCodeLabel,
         keyboardType = KeyboardType.Number,
         masked = false,
@@ -956,10 +1220,20 @@ private fun EmailCodePane(
         submitLabel = s.loginSignIn,
         busyLabel = s.loginSigningIn,
         busy = submission.busy,
-        canSubmit = code.isNotBlank(),
-        onSubmit = { submission.start { onSubmit(code) } },
+        canSubmit = code.isNotBlank() && code != submitted,
+        onSubmit = submit,
         backLabel = s.loginStartOver,
         onBack = onStartOver,
+        extras = {
+            TmSecondaryButton(
+                onClick = { asking.start { submitted = null; onRun { Td.resendCode() } } },
+                loading = asking.busy,
+                busyLabel = s.loginSendingCode,
+            ) { Text(s.loginEmailResend) }
+            if (state.reset is EmailReset.Available) {
+                TmSecondaryButton(onClick = { asking.start { onRun { Td.resetEmailAddress() } } }) { Text(s.loginEmailReset) }
+            }
+        },
     )
 }
 
@@ -969,7 +1243,10 @@ private fun EmailCodePane(
  *
  * All of them ask a single question, take a single line and offer the same way back out, so they
  * are one layout with different words rather than three that have to be kept looking alike.
+ * [extras] are the step's other ways on (resend, forgot password), under the two main buttons;
+ * [below] sits under the field (the recovery's password hint).
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun LoginForm(
     title: String,
@@ -989,6 +1266,10 @@ private fun LoginForm(
     onSubmit: () -> Unit,
     backLabel: String,
     onBack: () -> Unit,
+    transformation: VisualTransformation? = null,
+    trailing: (@Composable () -> Unit)? = null,
+    below: @Composable () -> Unit = {},
+    extras: @Composable () -> Unit = {},
 ) {
     val focus = remember { FocusRequester() }
     val touch = isTouch()
@@ -1009,14 +1290,17 @@ private fun LoginForm(
                 keyboardType = keyboardType,
                 imeAction = ImeAction.Done,
             ),
-            keyboardActions = KeyboardActions(onDone = { onSubmit() }),
-            visualTransformation = if (masked) {
-                PasswordVisualTransformation()
-            } else {
-                VisualTransformation.None
+            keyboardActions = KeyboardActions(onDone = { if (canSubmit) onSubmit() }),
+            visualTransformation = when {
+                masked -> PasswordVisualTransformation()
+                transformation != null -> transformation
+                else -> VisualTransformation.None
             },
+            trailing = if (touch) trailing else null,
+            isError = error != null,
             modifier = Modifier.fillMaxWidth().focusRequester(focus),
         )
+        below()
 
         if (error != null) {
             // Red, not the accent blue: the accent is the focus colour on this very screen,
@@ -1037,6 +1321,9 @@ private fun LoginForm(
             TmSecondaryButton(onClick = onBack, modifier = Modifier.paneAction()) {
                 Text(backLabel)
             }
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                extras()
+            }
             return@Pane
         }
 
@@ -1047,6 +1334,9 @@ private fun LoginForm(
             TmSecondaryButton(onClick = onBack) {
                 Text(backLabel)
             }
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            extras()
         }
     }
 
@@ -1075,28 +1365,15 @@ private val PLATE = 300.dp
  */
 private val DIAL_WIDTH = 104.dp
 
-private const val MAX_DIAL_DIGITS = 4
-
-/** Telegram's own code length, and what TDLib sends when it sends anything. */
-private const val DEFAULT_CODE_LENGTH = 5
-
-private const val MAX_CODE_LENGTH = 8
-
 // The shortest national numbers in use run to seven digits once the country code is counted, so
 // anything below this cannot be a real number and the button stays out of reach.
 private const val MIN_PHONE_DIGITS = 7
 
-/**
- * What may appear in the international field: digits, one leading plus, and the spaces that group
- * them. Written as a filter on the whole value rather than on the last keystroke, because a paste
- * or an autofill arrives as an entire string and would otherwise walk straight past a check that
- * only looked at what changed.
- */
-private fun String.keepPhoneCharacters(): String {
-    val kept = filter { it.isDigit() || it == '+' || it == ' ' }
-    val plus = if (kept.startsWith('+')) "+" else ""
-    return plus + kept.filter { it.isDigit() || it == ' ' }
-}
+/** Telegram's recovery codes are six digits; room for a longer one, never a whole email. */
+private const val RECOVERY_CODE_MAX = 12
+
+/** Telegram cuts a password hint off well before this. */
+private const val HINT_MAX = 64
 
 /**
  * The national field: digits only. No plus, because the dial code beside it is where that lives,

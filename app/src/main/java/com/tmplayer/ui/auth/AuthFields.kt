@@ -60,6 +60,12 @@ fun PaneField(
      * which is the right answer everywhere except the dial code, whose placeholder is "00".
      */
     label: String = placeholder,
+    /**
+     * An icon button at the end of the field on a phone: the password's show and hide. A remote
+     * cannot reach into a field, so a television gets its own button beside the form instead.
+     */
+    trailing: (@Composable () -> Unit)? = null,
+    isError: Boolean = false,
 ) {
     if (isTouch()) {
         OutlinedTextField(
@@ -71,6 +77,8 @@ fun PaneField(
             // floating label leaves room for it.
             placeholder = { M3Text(placeholder) },
             prefix = prefix?.let { { M3Text(it) } },
+            trailingIcon = trailing,
+            isError = isError,
             textStyle = M3.typography.titleMedium,
             visualTransformation = visualTransformation,
             keyboardOptions = keyboardOptions,

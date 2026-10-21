@@ -512,7 +512,12 @@ object Td {
                     // A client being replaced answers its open requests with an error; that is the
                     // retry working, not the sign in failing.
                     if (result is TdlResult.Failure && td === current && td !== retiring) {
-                        _auth.value = AuthState.Failed(Failures.humanise(result.message))
+                        // A flood wait carries its length, which the screen counts down before it
+                        // offers the code again, rather than a Try again that fails the same way.
+                        _auth.value = AuthState.Failed(
+                            Failures.humanise(result.message),
+                            Failures.floodWaitSeconds(result.message) ?: 0,
+                        )
                     }
                 }
             }
@@ -713,14 +718,126 @@ object Td {
     /** Submits the two-step verification password. Returns null on success, an error otherwise. */
     suspend fun submitPassword(password: String): String? {
         val td = current ?: return L.errorsNotConnected
-        val hint = (_auth.value as? AuthState.Password)?.hint.orEmpty()
-        return when (val result = td.checkAuthenticationPassword(password)) {
+        val asked = _auth.value as? AuthState.Password ?: AuthState.Password("")
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.checkAuthenticationPassword(password) }
+            ?: return L.errorsNoAnswer
+        return when (result) {
             is TdlResult.Success -> null
             is TdlResult.Failure -> {
-                _auth.value = AuthState.Password(hint, wrong = true)
+                _auth.value = asked.copy(wrong = true)
                 if (result.message == "PASSWORD_HASH_INVALID") L.errorsWrongPassword else Failures.humanise(result.message)
             }
         }
+    }
+
+    /**
+     * "Forgot password" on the two-step verification step: Telegram mails a recovery code to the
+     * account's recovery address ([AuthState.Password.recoveryEmail]). Null on success, with the
+     * screen moved to [AuthState.PasswordRecovery]; an error otherwise.
+     */
+    suspend fun forgotPassword(): String? {
+        val td = current ?: return L.errorsNotConnected
+        val asked = _auth.value as? AuthState.Password ?: return null
+        val pattern = asked.recoveryEmail ?: return L.loginRecoveryNoEmail
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.requestAuthenticationPasswordRecovery() }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> {
+                _auth.value = AuthState.PasswordRecovery(pattern)
+                null
+            }
+            is TdlResult.Failure -> Failures.humanise(result.message)
+        }
+    }
+
+    /** Checks the mailed recovery code; on success the screen asks for a new password, or none. */
+    suspend fun submitRecoveryCode(code: String): String? {
+        val td = current ?: return L.errorsNotConnected
+        val asked = _auth.value as? AuthState.PasswordRecovery ?: return null
+        val clean = code.trim()
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.checkAuthenticationPasswordRecoveryCode(clean) }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> {
+                _auth.value = asked.copy(code = clean, wrong = false)
+                null
+            }
+            is TdlResult.Failure -> {
+                _auth.value = asked.copy(wrong = true)
+                if (result.message.contains("CODE_INVALID")) L.errorsWrongCode else Failures.humanise(result.message)
+            }
+        }
+    }
+
+    /**
+     * Finishes the recovery with [newPassword] and its [hint]. A blank password turns two-step
+     * verification off, which the screen says in so many words before this is called.
+     */
+    suspend fun finishPasswordRecovery(newPassword: String, hint: String): String? {
+        val td = current ?: return L.errorsNotConnected
+        val asked = _auth.value as? AuthState.PasswordRecovery ?: return null
+        val code = asked.code ?: return null
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) {
+            td.recoverAuthenticationPassword(code, newPassword, if (newPassword.isEmpty()) "" else hint.trim())
+        } ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> null
+            is TdlResult.Failure -> Failures.humanise(result.message)
+        }
+    }
+
+    /** Back from the recovery to the password question, which TDLib never left. */
+    suspend fun backToPassword() {
+        if (_auth.value !is AuthState.PasswordRecovery) return
+        replay()
+    }
+
+    /**
+     * The last way in for somebody with neither the password nor a recovery email: Telegram's own
+     * account reset, which deletes the account's messages and chats. Only ever called after the
+     * screen has said exactly that and the viewer has confirmed it. A recently used account is
+     * reset only after a waiting period; Telegram then refuses with `2FA_CONFIRM_WAIT_<seconds>`,
+     * which comes back here as the sentence saying how long.
+     */
+    suspend fun resetAccount(): String? {
+        val td = current ?: return L.errorsNotConnected
+        if (_auth.value !is AuthState.Password) return null
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.deleteAccount("Forgot password", "") }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> null
+            is TdlResult.Failure -> SignInWaits.resetWaitSeconds(result.message)
+                ?.let { L.loginResetAccountWait(Failures.waitPhrase(it)) }
+                ?: Failures.humanise(result.message)
+        }
+    }
+
+    /**
+     * Asks Telegram to reset the login email of an account it signs in by email
+     * ([EmailReset.Available]). TDLib answers with a new email code state that carries the wait.
+     */
+    suspend fun resetEmailAddress(): String? {
+        val td = current ?: return L.errorsNotConnected
+        val result = withTimeoutOrNull(SUBMIT_TIMEOUT_MS) { td.resetAuthenticationEmailAddress() }
+            ?: return L.errorsNoAnswer
+        return when (result) {
+            is TdlResult.Success -> null
+            is TdlResult.Failure -> Failures.humanise(result.message)
+        }
+    }
+
+    /**
+     * TDLib's layout for a national number being typed after [dial]: separators where its country
+     * puts them and a "-" for each digit to come ([PhoneFormat]). Null when it has none. Answered
+     * from TDLib's own tables, before sign in and with no line to Telegram.
+     */
+    suspend fun formatPhone(dial: String, national: String): String? {
+        val td = current ?: return null
+        if (dial.isEmpty()) return null
+        return td.getPhoneNumberInfo("+$dial$national").valueOrNull
+            ?.takeIf { it.countryCallingCode == dial }
+            ?.formattedPhoneNumber
+            ?.takeIf { it.isNotBlank() }
     }
 
     suspend fun logOut() {
