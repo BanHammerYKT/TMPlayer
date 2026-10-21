@@ -120,6 +120,9 @@ fun main(args: Array<String>) {
         // Home as it was last built, read now so its first frame finds it in memory (HomeCache).
         com.tmplayer.data.HomeCache.file = java.io.File(DesktopPaths.dataDir, "home-cache.json")
         Background.scope.launch { runCatching { com.tmplayer.data.HomeCache.preload() } }
+        // And the chats opened most recently, so a cold start opens one of them at once (PageQueries).
+        com.tmplayer.data.PageQueries.store = com.tmplayer.data.ChatGridDisk(java.io.File(DesktopPaths.dataDir, "chat-grids.json"))
+        Background.scope.launch { runCatching { com.tmplayer.data.PageQueries.preload() } }
         // What an earlier run was in the middle of comes back paused, once there is an account to
         // ask TDLib about.
         // A storage move a crash or a kill cut short is finished first: it needs the settings store

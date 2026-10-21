@@ -228,6 +228,27 @@ private class MediaScreenStore : ViewModelStoreOwner {
     override val viewModelStore = ViewModelStore()
 }
 
+/**
+ * The shelves last laid out for the few chats opened most recently, with what each was laid out
+ * from. A chat opened again from the page cache ([com.tmplayer.data.PageQueries]) usually lists
+ * the very same videos, and then its first frame is the shelf itself, not the skeleton. Touched on
+ * the main thread only.
+ */
+private object ShelfMemo {
+    private const val CHATS = 6
+    private var kept = LinkedHashMap<Long, Pair<List<Any?>, Shelved>>()
+
+    fun match(chatId: Long, inputs: List<Any?>): Shelved? = kept[chatId]?.takeIf { it.first == inputs }?.second
+
+    fun keep(chatId: Long, inputs: List<Any?>, shelf: Shelved) {
+        val next = LinkedHashMap(kept)
+        next.remove(chatId)
+        next[chatId] = inputs to shelf
+        while (next.size > CHATS) next.remove(next.keys.first())
+        kept = next
+    }
+}
+
 @Suppress("UNCHECKED_CAST")
 private class MediaListViewModelFactory(
     private val chatId: Long,
@@ -558,10 +579,15 @@ fun MediaGridScreen(
             val order = if (query.isBlank()) sort else com.tmplayer.data.VideoSort.Newest
             // Filtered too, outside a search and outside ticking, where every video has to be reachable.
             val shownFilter = if (grouping) filter else com.tmplayer.data.VideoFilter.All
-            val arrangedShelf by produceState<Shelved?>(null, list.items, watchProgress, grouping, layout, order, corrections, watchedVideos, shownFilter) {
+            // A chat opened again from the page cache lists what it listed last time: the shelf laid
+            // out from those same videos then is used for the first frame, rather than a frame or
+            // two of skeleton while it is worked out again.
+            val shelfInputs = listOf(list.items, watchProgress, grouping, layout, order, corrections, watchedVideos, shownFilter)
+            val shelfBefore = remember(chatId) { ShelfMemo.match(chatId, shelfInputs) }
+            val arrangedShelf by produceState(shelfBefore, list.items, watchProgress, grouping, layout, order, corrections, watchedVideos, shownFilter) {
                 value = withContext(Dispatchers.Default) {
                     arrangeShelf(list.items, watchProgress, grouping, layout, order, watchedVideos.keys, corrections, shownFilter)
-                }
+                }.also { ShelfMemo.keep(chatId, shelfInputs, it) }
             }
             val (shelf, repeatedCaptions, posterKeys) = arrangedShelf ?: run {
                 MediaGridSkeleton(layout = layout)
@@ -641,8 +667,17 @@ fun MediaGridScreen(
             // Online metadata is on by default, so the first grid says once where posters come
             // from (see OnlineMetaNotice); not while searching or ticking, when the listing is a pick.
             val metaNotice = grouping && metaNoticeShown()
-            val gridState = rememberLazyGridState()
-            val listState = rememberLazyListState()
+            // Where this listing was left on the last visit, so coming back to a chat finds the
+            // same pages at the same place ([MediaListViewModel.restoredScroll]); written as it goes.
+            val restored = remember(viewModel) { viewModel.restoredScroll }
+            val gridState = rememberLazyGridState(restored.first, restored.second)
+            val listState = rememberLazyListState(restored.first, restored.second)
+            DisposableEffect(viewModel, layout) {
+                onDispose {
+                    if (layout == CardLayout.List) viewModel.rememberScroll(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+                    else viewModel.rememberScroll(gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+                }
+            }
             val firstItem = remember { FocusRequester() }
             val firstKey = shelf.firstOrNull()?.key
             // The first row of a television's listing, by key. Focus landing there asks to be

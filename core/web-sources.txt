@@ -40,3 +40,4 @@ com/tmplayer/data/UpdateScheduler.kt
 com/tmplayer/data/StorageRelocationPlan.kt
 com/tmplayer/data/VideoDecoder.kt
 com/tmplayer/data/LearntLanguages.kt
+com/tmplayer/data/PageQueries.kt

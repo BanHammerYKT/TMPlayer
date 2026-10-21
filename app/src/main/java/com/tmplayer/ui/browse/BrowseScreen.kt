@@ -2315,6 +2315,7 @@ private fun ChatTile(
     val touch = isTouch()
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
+    PrefetchWhileFocused(chat.id, focused)
 
     val body: @Composable ColumnScope.() -> Unit = {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2426,6 +2427,19 @@ private fun Modifier.marqueeWhen(active: Boolean): Modifier =
  * television keeps cards, where focus has to be visible from a sofa and a border is how that is
  * said.
  */
+/**
+ * A chat the remote rests on is likely the next one opened: its first page is fetched behind
+ * ([com.tmplayer.data.PageQueries]), so its grid opens with it rather than with placeholders.
+ */
+@Composable
+private fun PrefetchWhileFocused(chatId: Long, focused: Boolean) {
+    LaunchedEffect(chatId, focused) {
+        if (!focused) return@LaunchedEffect
+        delay(com.tmplayer.data.PageQueries.PREFETCH_DWELL_MS)
+        com.tmplayer.data.PageQueries.prefetchChat(chatId)
+    }
+}
+
 @Composable
 private fun ChatRow(
     chat: ChatSummary,
@@ -2442,6 +2456,7 @@ private fun ChatRow(
         TouchChatRow(chat, favorite, opensOnLaunch, onClick, onHold, modifier, interactions)
         return
     }
+    PrefetchWhileFocused(chat.id, focused)
 
     Row(
         modifier

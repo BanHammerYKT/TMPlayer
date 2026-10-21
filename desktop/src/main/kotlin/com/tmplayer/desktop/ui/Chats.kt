@@ -425,6 +425,13 @@ internal fun ChatRow(
     var menu by remember { mutableStateOf(false) }
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
+    // A row the pointer or the keyboard rests on is likely the next chat opened: its first page is
+    // fetched behind, so the grid opens with it ([com.tmplayer.data.PageQueries]).
+    LaunchedEffect(chat.id, hovered || hasFocus) {
+        if (!hovered && !hasFocus) return@LaunchedEffect
+        kotlinx.coroutines.delay(com.tmplayer.data.PageQueries.PREFETCH_DWELL_MS)
+        com.tmplayer.data.PageQueries.prefetchChat(chat.id)
+    }
     // No card at rest: the row is the avatar and the words on the page's ground. Under the pointer
     // or the keyboard it lifts onto the step above, and the keyboard's row also takes the ring.
     val fill = when {

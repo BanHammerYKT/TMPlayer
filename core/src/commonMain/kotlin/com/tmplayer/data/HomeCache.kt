@@ -132,6 +132,12 @@ object HomeCache {
         return Snapshot(loaded, recent, partial, art, json.optLong("saved"))
     }
 
+    /** One video in this file's spelling, for the other caches on the disk ([ChatGridDisk]). */
+    internal fun itemJson(item: MediaItem): JSONObject = item.toJson()
+
+    /** One video read back from [itemJson], or null when it cannot be read. */
+    internal fun itemOf(json: JSONObject): MediaItem? = item(json)
+
     private fun List<MediaItem>.toJson(): JSONArray = JSONArray(map { it.toJson() })
 
     private fun MediaItem.toJson(): JSONObject = JSONObject()

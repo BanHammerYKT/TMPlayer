@@ -12,6 +12,9 @@ import com.tmplayer.data.GlobalSearch
 import com.tmplayer.data.HidingFilter
 import com.tmplayer.data.KidsLock
 import com.tmplayer.data.MediaItem
+import com.tmplayer.data.PageQueries
+import com.tmplayer.data.QueryCache
+import com.tmplayer.data.QueryKey
 import com.tmplayer.data.ResultGroup
 import com.tmplayer.data.SearchFilters
 import com.tmplayer.data.SearchIdentity
@@ -127,7 +130,29 @@ class GlobalSearchViewModel(
     private val rememberMs: Long = REMEMBER_MS,
     /** What makes two results one card: see [SearchIdentity]. */
     private val identity: SearchIdentity = SearchIdentity.Default,
+    /**
+     * Where Telegram's pages are kept by query ([PageQueries]), so searching the same words again
+     * lists them at once and asks again only once they are [PageQueries.SEARCH_STALE_MS] old.
+     * Telegram's own source only: a fixture's pages (the promo build, the tests) are not kept.
+     */
+    private val cache: QueryCache? = if (source === VideoSearchSource.Telegram) PageQueries.cache else null,
 ) : ViewModel() {
+
+    /** Telegram's pages for one query, as the [cache] keeps them: before the kids lock and hidden chats. */
+    private data class Answer(val serverQuery: String, val pages: List<AllChatsPage>, val cursor: AllChatsCursor)
+
+    private fun keyOf(query: SearchQuery, filters: SearchFilters) =
+        QueryKey.Search(query.server, "${filters.serverSide.first}:${filters.serverSide.second}")
+
+    /** A first page, kept as the start of a fresh answer for [query]. */
+    private fun keepFirst(query: SearchQuery, filters: SearchFilters, page: AllChatsPage) {
+        cache?.put(keyOf(query, filters), Answer(serverQuery, listOf(page), page.cursor))
+    }
+
+    /** A further page, appended to the answer kept for [query] while it is still there. */
+    private fun keepNext(query: SearchQuery, filters: SearchFilters, page: AllChatsPage) {
+        cache?.update<Answer>(keyOf(query, filters)) { it?.copy(pages = it.pages + page, cursor = page.cursor) }
+    }
 
     private val _state = MutableStateFlow(GlobalSearchState())
     val state: StateFlow<GlobalSearchState> = _state.asStateFlow()
@@ -201,6 +226,7 @@ class GlobalSearchViewModel(
             runCatching { source.page(serverQuery, cursor, now.filters) }
                 .onSuccess { page ->
                     cursor = page.cursor
+                    keepNext(now.query, now.filters, page)
                     absorb(page)
                     _state.update { it.copy(loadingMore = false, endReached = page.cursor.done) }
                 }
@@ -263,6 +289,19 @@ class GlobalSearchViewModel(
             chats = now.chats,
             searching = true,
         )
+        // The same words searched before: Telegram's pages from then, listed at once through the
+        // kids lock and the hidden chats as they are now, and asked again only once stale.
+        val kept = cache?.peek<Answer>(keyOf(query, now.filters), PageQueries.SEARCH_STALE_MS)
+        if (kept != null) {
+            serverQuery = kept.data.serverQuery
+            cursor = kept.data.cursor
+            val hidden = com.tmplayer.data.HiddenChats.ids.value
+            kept.data.pages.forEach { page ->
+                absorb(page.copy(items = page.items.filter { KidsLock.allows(allowed, it.chatId) && it.chatId !in hidden }), keepTo = query)
+            }
+            _state.update { it.copy(searching = false, endReached = kept.data.cursor.done) }
+            if (!kept.stale) return
+        }
         job = viewModelScope.launch {
             if (settle > 0) delay(settle)
             firstAnswer(query)
@@ -291,6 +330,7 @@ class GlobalSearchViewModel(
                 }
             }
             cursor = page.cursor
+            keepFirst(query, filters, page)
             absorb(page, keepTo = query)
             _state.update { it.copy(searching = false, endReached = page.cursor.done) }
             while (GlobalSearch.wantsMore(_state.value.shown.size, pages, cursor.done)) {
@@ -298,6 +338,7 @@ class GlobalSearchViewModel(
                 val next = source.page(serverQuery, cursor, filters)
                 pages++
                 cursor = next.cursor
+                keepNext(query, filters, next)
                 absorb(next, keepTo = query)
                 _state.update { it.copy(endReached = next.cursor.done) }
             }
