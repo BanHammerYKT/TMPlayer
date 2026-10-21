@@ -2,7 +2,7 @@ package com.tmplayer.data
 
 import com.tmplayer.i18n.L
 import com.tmplayer.online.MetaSettings
-import com.tmplayer.online.MetadataStore
+import com.tmplayer.online.MetaSettingsStore
 
 /**
  * Backup and restore against the real stores, the same on the phone, the TV and the desktop. Where
@@ -14,7 +14,7 @@ import com.tmplayer.online.MetadataStore
 class BackupService(
     private val settings: SettingsStore,
     private val watched: WatchedStore,
-    private val metadata: MetadataStore?,
+    private val metadata: MetaSettingsStore?,
     private val appVersion: String,
     private val now: () -> Long = System::currentTimeMillis,
     private val bookmarks: BookmarkStore? = null,

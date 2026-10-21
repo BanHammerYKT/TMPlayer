@@ -6,41 +6,17 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.util.Properties
 
-/**
- * The poster and overview switches as this device knows them.
- *
- * [enabled] is on unless the viewer turns it off (the user's call on 2026-10-13: posters are what make
- * the grid readable). A lookup sends only a video's cleaned name to TMDB, TVmaze or AniList, and the
- * privacy page says so. [ownKey] is a TMDB key of the
- * viewer's own, used instead of the build's. [refusedKey] is a fingerprint of a key TMDB refused,
- * so TMDB stays off for that key and comes back by itself when an update brings another.
- */
-data class MetaSettings(
-    val enabled: Boolean = true,
-    val ownKey: String = "",
-    val refusedKey: String = "",
-    val refusedAt: Long = 0,
-    /** Skip intro, recap and credits buttons in the player, from TheIntroDB and AniSkip. */
-    val skipTimes: Boolean = true,
-    /**
-     * Whether [enabled] was turned off by this version or a later one (Settings, the first-run
-     * switch, the grid's note, a restore). False with [enabled] off means the off came from an
-     * older version, when off was the default, so the viewer is asked once (see [MetaNotice]).
-     */
-    val offByChoice: Boolean = false,
-)
-
 /** [MetaSettings] kept in a small properties file in the app's private storage. */
-class MetadataStore(private val file: File) {
+class MetadataStore(private val file: File) : MetaSettingsStore {
 
     private val state = MutableStateFlow(load())
 
-    val settings: StateFlow<MetaSettings> = state.asStateFlow()
+    override val settings: StateFlow<MetaSettings> = state.asStateFlow()
 
-    val now: MetaSettings get() = state.value
+    override val now: MetaSettings get() = state.value
 
     @Synchronized
-    fun update(change: (MetaSettings) -> MetaSettings) {
+    override fun update(change: (MetaSettings) -> MetaSettings) {
         val next = change(state.value)
         if (next == state.value) return
         save(next)

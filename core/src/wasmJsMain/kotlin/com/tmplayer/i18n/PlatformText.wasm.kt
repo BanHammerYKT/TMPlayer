@@ -87,6 +87,13 @@ internal actual object PlatformText {
         "som" to "so", "yor" to "yo", "zul" to "zu", "xho" to "xh", "lat" to "la",
     )
 
+    actual fun englishLanguageNames(): Map<String, String> =
+        threeLetterCodes().values.distinct().mapNotNull { code ->
+            jsDisplayName("en", "language", code).takeIf { it.isNotEmpty() }?.let { it.lowercase() to code }
+        }.toMap()
+
+    actual fun iso3Of(iso1: String): String? = threeLetterCodes().entries.firstOrNull { it.value == iso1 }?.key
+
     actual fun capitalize(text: String, locale: TmLocale): String = jsUpperFirst(locale.tag, text)
 }
 

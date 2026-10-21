@@ -219,6 +219,7 @@ kotlin {
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
         }
         val jvmSharedMain by getting {
             kotlin.srcDir("src/commonMain/kotlin")

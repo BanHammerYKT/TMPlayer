@@ -70,6 +70,11 @@ internal actual object PlatformText {
         return out
     }
 
+    actual fun englishLanguageNames(): Map<String, String> =
+        Locale.getISOLanguages().associateBy { Locale.forLanguageTag(it).getDisplayLanguage(Locale.ENGLISH).lowercase() }
+
+    actual fun iso3Of(iso1: String): String? = runCatching { Locale.forLanguageTag(iso1).isO3Language }.getOrNull()
+
     actual fun capitalize(text: String, locale: TmLocale): String =
         text.replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
 }
