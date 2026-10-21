@@ -2064,7 +2064,7 @@
     "forgot_last_chat": "TMPlayer will start at the chat list",
     "freed": "Freed {size}",
     "haptics": "Vibrate on taps",
-    "haptics_detail": "A light tick for play, pause, jumps and the hold, and for the star, Watched and Watch later",
+    "haptics_detail": "A light tick across the app: switches, choices, the PIN pad and sign in, the star, Watched and Watch later, and the player's taps, jumps and hold",
     "help": "Help",
     "hide_controls": "Hide the controls after",
     "hide_controls_detail": "{time} without the mouse moving. A paused video keeps them up",

@@ -219,6 +219,8 @@ private fun PopoverCard(
 @Composable
 fun ChoiceRow(label: String, icon: ImageVector?, chosen: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val press = remember { MutableInteractionSource() }
+    // A new choice taken is one tick; the one already chosen pressed again is not news.
+    val tick = rememberStepTick()
     val back by animateColorAsState(if (chosen) Tone.accent.copy(alpha = 0.14f) else Color.Transparent, Motion.standard(Motion.Fast), label = "choiceBack")
     val ink by animateColorAsState(if (chosen) Tone.accent else Tone.text, Motion.standard(Motion.Fast), label = "choiceInk")
     Row(
@@ -227,7 +229,7 @@ fun ChoiceRow(label: String, icon: ImageVector?, chosen: Boolean, modifier: Modi
             .height(ROW_HEIGHT)
             .clip(ROW_SHAPE)
             .background(back)
-            .selectable(selected = chosen, interactionSource = press, indication = ripple(), role = Role.Button, onClick = onClick)
+            .selectable(selected = chosen, interactionSource = press, indication = ripple(), role = Role.Button, onClick = { if (!chosen) tick(); onClick() })
             .padding(horizontal = 12.dp),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),

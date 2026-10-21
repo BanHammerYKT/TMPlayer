@@ -59,6 +59,8 @@ fun AccentSwatches(
     enabled: Boolean = true,
     size: Dp = 32.dp,
 ) {
+    // A colour taken is one tick, as a choice in a list is.
+    val tick = rememberStepTick()
     FlowRow(
         modifier.alpha(if (enabled) 1f else DISABLED_ALPHA),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -66,7 +68,7 @@ fun AccentSwatches(
     ) {
         Accent.entries.forEach { accent ->
             val swatch: @Composable () -> Unit = {
-                Swatch(accent, accent == selected, enabled, size) { onPick(accent) }
+                Swatch(accent, accent == selected, enabled, size) { if (accent != selected) tick(); onPick(accent) }
             }
             if (deviceForm() == DeviceForm.Desktop) IconTip(accent.label, content = swatch) else swatch()
         }

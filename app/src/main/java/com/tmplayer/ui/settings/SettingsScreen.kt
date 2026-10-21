@@ -977,6 +977,17 @@ fun SettingsScreen(
                     fun update(change: (TouchPrefs) -> TouchPrefs) {
                         scope.launch { settings.updateTouchPrefs(change) }
                     }
+                    // First on the page, ahead of the player's own gestures: it governs every
+                    // tick in the app, the switches, choices, PIN pad and sign in as well.
+                    item {
+                        ToggleRow(
+                            title = s.settingsHaptics,
+                            subtitle = s.settingsHapticsDetail,
+                            icon = TmIcons.Vibration,
+                            checked = touchPrefs.haptics,
+                            onToggle = { update { it.copy(haptics = !it.haptics) } },
+                        )
+                    }
                     item {
                         ToggleRow(
                             title = s.settingsTapPlays,
@@ -1043,15 +1054,6 @@ fun SettingsScreen(
                             icon = ImageVector.vectorResource(R.drawable.ic_volume),
                             checked = touchPrefs.volumeGesture,
                             onToggle = { update { it.copy(volumeGesture = !it.volumeGesture) } },
-                        )
-                    }
-                    item {
-                        ToggleRow(
-                            title = s.settingsHaptics,
-                            subtitle = s.settingsHapticsDetail,
-                            icon = TmIcons.Vibration,
-                            checked = touchPrefs.haptics,
-                            onToggle = { update { it.copy(haptics = !it.haptics) } },
                         )
                     }
                 }
@@ -2391,6 +2393,8 @@ private fun TouchRangeRow(
     }
     val low = SizeFilter.snap(SizeFilter.bytesAt(range.start))
     val high = SizeFilter.snap(SizeFilter.bytesAt(range.endInclusive))
+    // A light tick at each snapped size the thumb passes, nothing between (HAPTICS-PLAN row 4).
+    val haptic = com.tmplayer.ui.components.rememberHaptics()
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -2409,7 +2413,12 @@ private fun TouchRangeRow(
         // accessibility, with TalkBack announcing each thumb's value and moving it.
         RangeSlider(
             value = range,
-            onValueChange = { range = it },
+            onValueChange = { next ->
+                val nextLow = SizeFilter.snap(SizeFilter.bytesAt(next.start))
+                val nextHigh = SizeFilter.snap(SizeFilter.bytesAt(next.endInclusive))
+                if (nextLow != low || nextHigh != high) haptic(com.tmplayer.ui.components.Haptic.FrequentTick)
+                range = next
+            },
             onValueChangeFinished = {
                 onSetRange(
                     SizeFilter.snap(SizeFilter.bytesAt(range.start)),
@@ -2757,6 +2766,7 @@ private fun StorageCard(
  */
 @Composable
 internal fun TickRow(label: String, checked: Boolean, onToggle: () -> Unit) {
+    val tick = com.tmplayer.ui.components.rememberToggleTick()
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
     Row(
@@ -2769,7 +2779,7 @@ internal fun TickRow(label: String, checked: Boolean, onToggle: () -> Unit) {
                 interactionSource = interactions,
                 indication = LocalIndication.current,
                 role = Role.Checkbox,
-                onValueChange = { onToggle() },
+                onValueChange = { tick(!checked); onToggle() },
             )
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2800,6 +2810,7 @@ private fun StepperRow(
 ) {
     val s = LocalStrings.current
     val touch = isTouch()
+    val step = com.tmplayer.ui.components.rememberStepTick()
 
     if (touch) {
         ListItem(
@@ -2811,12 +2822,12 @@ private fun StepperRow(
             trailingContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     com.tmplayer.ui.components.IconTip(s.settingsStepDown) {
-                        IconButton(onClick = { onStep(-1) }, enabled = canDecrease) {
+                        IconButton(onClick = { step(); onStep(-1) }, enabled = canDecrease) {
                             M3Icon(TmIcons.ChevronDown, contentDescription = s.settingsStepDown)
                         }
                     }
                     com.tmplayer.ui.components.IconTip(s.settingsStepUp) {
-                        IconButton(onClick = { onStep(1) }, enabled = canIncrease) {
+                        IconButton(onClick = { step(); onStep(1) }, enabled = canIncrease) {
                             M3Icon(TmIcons.ChevronUp, contentDescription = s.settingsStepUp)
                         }
                     }
@@ -3055,15 +3066,18 @@ internal fun ToggleRow(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Every switch in Settings answers the thumb (a phone only; nothing on a television).
+    val tick = com.tmplayer.ui.components.rememberToggleTick()
+    val toggle = { tick(!checked); onToggle() }
     FocusRow(
         modifier = modifier,
-        onClick = onToggle,
+        onClick = toggle,
         headline = { M3Text(title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supporting = { M3Text(subtitle, maxLines = SUPPORTING_LINES, overflow = TextOverflow.Ellipsis) },
         leading = { SettingIconChip(icon) },
         // A real switch on a phone, not the drawn pill below: it can be dragged as well as
         // tapped, and TalkBack announces it as "switch, on" without being told.
-        trailing = { M3Switch(checked = checked, onCheckedChange = { onToggle() }) },
+        trailing = { M3Switch(checked = checked, onCheckedChange = { toggle() }) },
     ) { focused ->
         // A chip for the same reason ActionRow has one: the two kinds of row are stacked in one
         // column, and without it their titles would start at two different x positions.

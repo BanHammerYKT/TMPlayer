@@ -12,7 +12,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
-import android.view.HapticFeedbackConstants
+import com.tmplayer.ui.components.haptic
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.LinearInterpolator
@@ -194,7 +194,7 @@ class PlayerFeedback(private val root: FrameLayout, insertBelow: View?) {
     // ---- hold --------------------------------------------------------------------------------
 
     fun holdStarted(speed: Float) {
-        haptic(confirm = false)
+        root.haptic(com.tmplayer.ui.components.Haptic.GestureStart, hapticsEnabled)
         hold.text = "${TouchPrefs.holdLabel(speed)}   ▶▶"
         hold.animate().cancel()
         hold.alpha = 1f
@@ -203,6 +203,7 @@ class PlayerFeedback(private val root: FrameLayout, insertBelow: View?) {
 
     fun holdEnded() {
         if (hold.visibility != View.VISIBLE) return
+        root.haptic(com.tmplayer.ui.components.Haptic.GestureEnd, hapticsEnabled)
         hold.animate().alpha(0f).setDuration(FADE_MS).withEndAction { hold.visibility = View.GONE }.start()
     }
 
@@ -241,14 +242,9 @@ class PlayerFeedback(private val root: FrameLayout, insertBelow: View?) {
         ripple.stop()
     }
 
+    /** Through the app's one mapping ([com.tmplayer.ui.components.Haptics]), with its TV and no-vibrator gates. */
     private fun haptic(confirm: Boolean) {
-        if (!hapticsEnabled) return
-        val constant = when {
-            confirm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> HapticFeedbackConstants.CONFIRM
-            confirm -> HapticFeedbackConstants.VIRTUAL_KEY
-            else -> HapticFeedbackConstants.CLOCK_TICK
-        }
-        root.performHapticFeedback(constant)
+        root.haptic(if (confirm) com.tmplayer.ui.components.Haptic.Confirm else com.tmplayer.ui.components.Haptic.Tick, hapticsEnabled)
     }
 
     private fun pill(): TextView = TextView(context).apply {

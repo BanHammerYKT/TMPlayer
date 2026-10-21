@@ -507,11 +507,12 @@ class TrackPickerFragment : Fragment() {
             Segments(SubtitlePosition.entries.map { it.label }, SubtitlePosition.entries.indexOf(style.position)) {
                 change(host.subtitleStyleNow().copy(position = SubtitlePosition.entries[it]))
             }
+            val boxTick = com.tmplayer.ui.components.rememberToggleTick()
             Row(
                 Modifier
                     .fillMaxWidth()
                     .heightIn(min = 56.dp)
-                    .toggleable(value = style.box, role = Role.Switch) { on -> change(host.subtitleStyleNow().copy(box = on)) }
+                    .toggleable(value = style.box, role = Role.Switch) { on -> boxTick(on); change(host.subtitleStyleNow().copy(box = on)) }
                     .padding(horizontal = ADJUST_PAD),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -535,11 +536,12 @@ class TrackPickerFragment : Fragment() {
     /** One of a few, as Material's segmented buttons: every choice in sight, one tap each. */
     @Composable
     private fun Segments(labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
+        val segmentTick = com.tmplayer.ui.components.rememberStepTick()
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = ADJUST_PAD).padding(bottom = 12.dp)) {
             labels.forEachIndexed { index, label ->
                 SegmentedButton(
                     selected = index == selected,
-                    onClick = { onPick(index) },
+                    onClick = { if (index != selected) segmentTick(); onPick(index) },
                     shape = SegmentedButtonDefaults.itemShape(index, labels.size),
                     label = { M3Text(label, maxLines = 1) },
                 )

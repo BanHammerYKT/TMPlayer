@@ -1902,9 +1902,11 @@ internal fun TouchFilterChip(
         Motion.standard(Motion.Fast),
         label = "chipIcon",
     )
+    val toggleTick = com.tmplayer.ui.components.rememberToggleTick()
     androidx.compose.material3.FilterChip(
         selected = selected,
-        onClick = onClick,
+        // A chip taken is felt; pressing the one already chosen is not news.
+        onClick = { if (!selected) toggleTick(true); onClick() },
         label = { M3Text(label, maxLines = 1) },
         // A pill, like the television's chips and every other chip in the app.
         shape = CircleShape,

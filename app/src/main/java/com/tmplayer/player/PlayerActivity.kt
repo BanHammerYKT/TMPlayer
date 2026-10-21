@@ -15,6 +15,7 @@ import android.util.Rational
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import com.tmplayer.ui.components.haptic
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -5125,6 +5126,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         undoChip?.hide()
         if (locked) return
         locked = true
+        // The lock is invisible to a hand on a lap: it is felt going on and coming off.
+        findViewById<View>(R.id.player_root)?.haptic(com.tmplayer.ui.components.Haptic.Confirm, touchPrefs.haptics)
         lockedAt = android.os.SystemClock.uptimeMillis()
         controls?.hideAnimated()
         feedback?.clear()
@@ -5250,6 +5253,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun unlockScreen() {
         if (!locked) return
         locked = false
+        findViewById<View>(R.id.player_root)?.haptic(com.tmplayer.ui.components.Haptic.ToggleOff, touchPrefs.haptics)
         unlockHeldKey = 0
         unlockPill?.removeCallbacks(unlockAfterHold)
         resetUnlockProgress()

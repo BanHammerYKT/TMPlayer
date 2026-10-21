@@ -255,6 +255,9 @@ private fun ChoiceSwitch(
     modifier: Modifier,
 ) {
     val s = LocalStrings.current
+    // A new side taken is one tick, as a choice in a list is.
+    val stepTick = com.tmplayer.ui.components.rememberStepTick()
+    val picked: (SetupChoice) -> Unit = { choice -> if (choice != selected) stepTick(); onPick(choice) }
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusVisibleAsState()
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -276,7 +279,7 @@ private fun ChoiceSwitch(
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar -> other
                     else -> return@onKeyEvent false
                 }
-                if (pick != selected) onPick(pick)
+                if (pick != selected) picked(pick)
                 true
             }
             .focusable(interactionSource = interactions)
@@ -296,11 +299,11 @@ private fun ChoiceSwitch(
                         role = Role.RadioButton
                         this.selected = on
                         onClick(label = title) {
-                            onPick(choice)
+                            picked(choice)
                             true
                         }
                     }
-                    .pointerInput(choice) { detectTapGestures { onPick(choice) } }
+                    .pointerInput(choice) { detectTapGestures { picked(choice) } }
                     .testTag("setup-answer-${choice.name}")
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 contentAlignment = Alignment.Center,
