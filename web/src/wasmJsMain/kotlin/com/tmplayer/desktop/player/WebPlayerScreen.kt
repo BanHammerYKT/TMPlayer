@@ -98,6 +98,12 @@ fun WebPlayerScreen(
     var resumedFrom by remember { mutableStateOf<Long?>(null) }
     var showDetails by remember { mutableStateOf(false) }
     var showShortcuts by remember { mutableStateOf(false) }
+    // The first frame is in: the video opened and either plays or was held paused. Latched, so a
+    // later stall shows the buffering spinner and never the opening card again.
+    var started by remember(item) { mutableStateOf(false) }
+    LaunchedEffect(item, status.opened, status.buffering, status.playing) {
+        if (status.opened && (!status.buffering || !status.playing)) started = true
+    }
 
     fun showFlash(kind: Flash.Kind, text: String) {
         flashes++
@@ -350,10 +356,23 @@ fun WebPlayerScreen(
                 },
                 subtitlesButton = true,
             )
-            // One loader at a time: the centre button turns into the spinner while the controls are
-            // up, and this one stands in for it only while they are down, as on the desktop.
+            // One loader at a time: the opening card until the first frame, then the centre button
+            // turns into the spinner while the controls are up, and this one stands in for it only
+            // while they are down, as on the desktop.
             val controlsShown = controlsUp || !status.playing || menu != null
-            FeedbackLayer(flash, spinner = failure == null && (status.buffering || !status.opened) && !controlsShown, chip = null)
+            FeedbackLayer(flash, spinner = started && failure == null && status.buffering && !controlsShown, chip = null)
+            // The opening card, the shared PlayerLoader the desktop and the phone draw, over the
+            // page's video (under the canvas) until the video has a frame to show.
+            LoaderSheet(
+                phase = if (!started && failure == null) Phase.Loading(s.playerOpeningVideo) else Phase.Playing,
+                item = item,
+                downloaded = null,
+                bufferedMs = (status.bufferedMs - status.positionMs).coerceAtLeast(0),
+                isDownload = false,
+                onBack = onClose,
+                onRetry = engine::retry,
+                speedNotes = false,
+            )
             resumedFrom?.let { from ->
                 if (status.opened) {
                     ResumeNotice(

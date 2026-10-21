@@ -80,6 +80,11 @@ internal fun BoxScope.LoaderSheet(
     stalledOverride: Boolean? = null,
     /** "Play Telegram's 480p" (CP80): the next lighter copy's label and its press; null for none. */
     lighter: Pair<String, () -> Unit>? = null,
+    /**
+     * False where nothing counts the bytes (the browser, whose page fetches them): the slow
+     * wait's note could only ever say "slow" there, so it is left off.
+     */
+    speedNotes: Boolean = true,
 ) {
     val s = LocalStrings.current
     val loading = phase as? Phase.Loading
@@ -123,7 +128,9 @@ internal fun BoxScope.LoaderSheet(
             val rate = meter.bytesPerSec
             // The line as measured while bytes move, for choosing a lighter copy next time (CP80).
             if (fraction != null && fraction != 1f && now == lastAt) com.tmplayer.player.LineSpeed.note(rate)
-            note = if (now - started > SLOW_MS && rate >= StreamStats.MIN_MEANINGFUL_SPEED && (fraction ?: 1f) < 1f) {
+            note = if (!speedNotes) {
+                null
+            } else if (now - started > SLOW_MS && rate >= StreamStats.MIN_MEANINGFUL_SPEED && (fraction ?: 1f) < 1f) {
                 val figure = s.formatter.speed(rate)
                 val line = if (real) s.playerDownloadingRate(figure) else s.playerCachingRate(figure)
                 // Telegram's own cap on an account without Premium (CP83): said, nothing offered.
