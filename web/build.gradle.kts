@@ -120,8 +120,14 @@ val patchTdweb = tasks.register("patchTdweb") {
     doLast {
         val dir = out.get().asFile.apply { deleteRecursively(); mkdirs() }
         val src = source.get().asFile
-        for (name in tdwebFiles.keys) src.resolve(name).copyTo(dir.resolve(name), overwrite = true)
-        val workerName = "8a2ea5aea50674d967ce.worker.js"
+        // The wasm is served as it is; the page script and both worker files are patched below
+        // and served under new content-hashed names, since a hashed name is cached for a year
+        // (_headers, sw.js) and a patched file kept under the original name would never reach a
+        // browser that has the stock one.
+        val stockHash = "8a2ea5aea50674d967ce"
+        for (name in tdwebFiles.keys.filter { it.endsWith(".wasm") }) src.resolve(name).copyTo(dir.resolve(name), overwrite = true)
+        fun hashed(text: String) = sha256(text.toByteArray()).take(20)
+        val workerName = "$stockHash.worker.js"
         var worker = src.resolve(workerName).readText()
         fun edit(anchor: String, replacement: String) {
             val count = worker.split(anchor).size - 1
@@ -141,7 +147,40 @@ val patchTdweb = tasks.register("patchTdweb") {
             "value: function saveFile(pid, file) {",
             "value: function saveFile(pid, file) {\n      if ((file.size || file.expected_size || 0) > 8388608) {\n        return file;\n      }",
         )
-        dir.resolve(workerName).writeText(sparse.asFile.readText() + "\n" + worker)
+
+        // TDLib's file reads and writes past 2 GiB: the emscripten glue hands the position on as
+        // its low 32 bits only, read as a signed number, so a part at 3.9 GB into a 4 GB video
+        // was written to a negative position and the read waiting for it never ended. Both
+        // halves are joined, as the same glue's _fd_seek already does.
+        val glueName = "1.8a2ea5aea50674d967ce.worker.js"
+        var glue = src.resolve(glueName).readText()
+        fun editGlue(anchor: String, replacement: String) {
+            val count = glue.split(anchor).size - 1
+            if (count != 1) throw GradleException("tdweb patch: '$anchor' found $count times in $glueName, expected once")
+            glue = glue.replace(anchor, replacement)
+        }
+        editGlue(
+            "var num=SYSCALLS.doReadv(stream,iov,iovcnt,offset_low);",
+            "var num=SYSCALLS.doReadv(stream,iov,iovcnt,offset_high*4294967296+(offset_low>>>0));",
+        )
+        editGlue(
+            "var num=SYSCALLS.doWritev(stream,iov,iovcnt,offset_low);",
+            "var num=SYSCALLS.doWritev(stream,iov,iovcnt,offset_high*4294967296+(offset_low>>>0));",
+        )
+        editGlue("get64:function(low,high){return low}", "get64:function(low,high){return high*4294967296+(low>>>0)}")
+        val glueHash = hashed(glue)
+        dir.resolve("1.$glueHash.worker.js").writeText(glue)
+
+        // The worker loads the glue by name, and the page script the worker.
+        edit("chunkId + \".\" + \"$stockHash\" + \".worker.js\"", "chunkId + \".\" + \"$glueHash\" + \".worker.js\"")
+        val patchedWorker = sparse.asFile.readText() + "\n" + worker
+        val workerHash = hashed(patchedWorker)
+        dir.resolve("$workerHash.worker.js").writeText(patchedWorker)
+        var page = src.resolve("tdweb.js").readText()
+        val pageAnchor = "\"$stockHash.worker.js\""
+        if (page.split(pageAnchor).size - 1 != 1) throw GradleException("tdweb patch: worker name not found once in tdweb.js")
+        page = page.replace(pageAnchor, "\"$workerHash.worker.js\"")
+        dir.resolve("tdweb.js").writeText(page)
     }
 }
 

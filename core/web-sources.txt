@@ -38,3 +38,5 @@ com/tmplayer/data/OfflineDownloads.kt
 com/tmplayer/data/UpdateWords.kt
 com/tmplayer/data/UpdateScheduler.kt
 com/tmplayer/data/StorageRelocationPlan.kt
+com/tmplayer/data/VideoDecoder.kt
+com/tmplayer/data/LearntLanguages.kt
