@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TMPlayer Web</title>
+  <meta name="description" content="TMPlayer in your browser: a player for the videos already in your own Telegram chats. Unofficial, not affiliated with Telegram.">
+  <meta name="theme-color" content="#0E0F13">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="canonical" href="https://web.tmplayer.org/">
+  <link rel="preload" href="fonts/NotoSans.ttf" as="fetch" crossorigin>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="splash" role="status" aria-live="polite">
+    <img src="favicon.svg" width="72" height="72" alt="">
+    <p class="name">TMPlayer</p>
+    <p class="note" id="splash-note">Loading the player</p>
+    <noscript><p class="note">TMPlayer Web needs JavaScript and WebAssembly.</p></noscript>
+  </div>
+  <div id="app"></div>
+  <script src="tdweb.js"></script>
+  <script src="td-bridge.js"></script>
+  <script src="web-host.js"></script>
+  <script src="tmweb.js"></script>
+</body>
+</html>

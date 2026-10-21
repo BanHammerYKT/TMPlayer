@@ -2685,6 +2685,28 @@
     "yesterday": "Yesterday",
     "yesterday_phrase": "Watched yesterday"
   },
+  "web": {
+    "chats_empty": "No chats yet.",
+    "install_button": "Install",
+    "install_ios": "Tap Share, then Add to Home Screen. TMPlayer then opens full screen, like an app.",
+    "install_later": "Not now",
+    "install_title": "Install TMPlayer",
+    "keep_storage": "Keep TMPlayer's data in this browser",
+    "loading_player": "Loading the player",
+    "needs_app_badge": "Needs the app",
+    "needs_app_codec": "Your browser cannot play this kind of video.",
+    "needs_app_get": "Get the TMPlayer app",
+    "needs_app_picture_subtitles": "Its subtitles are pictures, which the browser cannot draw.",
+    "needs_app_title": "This video needs the TMPlayer app",
+    "needs_app_too_heavy": "It is too heavy to decode smoothly in this browser.",
+    "other_tab_body": "Only one tab can use your Telegram account at a time. Close the other tab, or use TMPlayer here instead.",
+    "other_tab_title": "TMPlayer is open in another tab",
+    "stopped_loading": "The video stopped loading. Check your connection, then try again.",
+    "storage_body": "Your sign in, settings and the parts of videos you played are kept in this browser only. Nothing goes to a server of ours.",
+    "storage_title": "Stored in this browser",
+    "switch_decoder": "This browser could not play it directly, so TMPlayer is decoding it itself.",
+    "use_here": "Use it here"
+  },
   "whatsnew": {
     "full_changelog": "Full changelog",
     "highlight_carousel": "Home opens on a carousel of the newest videos and shows in your starred chats",
