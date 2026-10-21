@@ -25,6 +25,15 @@ import kotlin.math.pow
  * which is what keeps a full scale peak lifted by the gain from clipping: it lands near -4.5 dBFS.
  * A hard limit at full scale catches whatever the attack is too slow for.
  *
+ * Even out volume ([level], on unless the viewer turns it off) lifts a track that is quiet as a
+ * whole: films are mastered for a cinema, around -24 to -31 LUFS with their dialogue low, where a
+ * video made for phones sits near -14, so the same volume setting played the film 10 dB or more
+ * quieter. It follows the track's average level (the mean square of its channels over about
+ * [LEVEL_SECONDS], with silence left out so a pause does not count as quiet) and lifts it towards
+ * [LEVEL_TARGET] (about -18 dBFS), at most [LEVEL_MAX] (about +12 dB), rising slowly and falling
+ * fast so it never pumps. It only ever lifts: a track already at that level or louder is left
+ * as it is. Its lift goes through the same compressor and limit as the boost, so nothing clips.
+ *
  * Always in the chain, so it can be switched while the video plays: the sink's processors are
  * fixed when the player is built. Off, it copies the sound straight through. Switching ramps the
  * gain over [RAMP_SECONDS] rather than jumping, which would click.
@@ -42,6 +51,20 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
     /** Night mode. Set from the main thread, read on the playback thread, like [enabled]. */
     @Volatile
     var night: Boolean = false
+
+    /** Even out volume. Set from the main thread, read on the playback thread, like [enabled]. */
+    @Volatile
+    var level: Boolean = true
+
+    /** The track's average level as the leveller hears it: a mean square, before any gain. */
+    private var loudness = LEVEL_TARGET_SQUARE
+
+    /** The leveller's lift as applied, walking towards what [loudness] asks for. */
+    private var levelGain = 1f
+
+    private var loudnessStep = 0f
+    private var levelRise = 0f
+    private var levelFall = 0f
 
     /** The gain actually applied, walking towards 1 or [BOOST]. */
     private var gain = 1f
@@ -63,6 +86,9 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         attack = coefficient(ATTACK_SECONDS, rate)
         release = coefficient(RELEASE_SECONDS, rate)
         rampStep = (BOOST * NIGHT_GAIN - 1f) / (RAMP_SECONDS * rate)
+        loudnessStep = coefficient(LEVEL_SECONDS, rate)
+        levelRise = coefficient(LEVEL_RISE_SECONDS, rate)
+        levelFall = coefficient(LEVEL_FALL_SECONDS, rate)
         frame = FloatArray(inputAudioFormat.channelCount)
         return inputAudioFormat
     }
@@ -72,7 +98,8 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         if (remaining == 0) return
         val out = replaceOutputBuffer(remaining)
         val night = night
-        if (!enabled && !night && gain == 1f) {
+        val level = level
+        if (!enabled && !night && !level && gain == 1f && levelGain == 1f) {
             envelope = 0f
             out.put(inputBuffer).flip()
             return
@@ -82,19 +109,30 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         val channels = frame.size
         val frames = remaining / inputAudioFormat.bytesPerFrame
         val target = targetGain(enabled, night)
-        val threshold = if (night) NIGHT_THRESHOLD else THRESHOLD
-        val ratio = if (night) NIGHT_RATIO else RATIO
+        // Even out volume alone keeps the track's own dynamics: only the very top of the range,
+        // which its lift or a surround fold may push past full scale, is held back.
+        val levelOnly = !enabled && !night
+        val threshold = if (night) NIGHT_THRESHOLD else if (levelOnly) LEVEL_THRESHOLD else THRESHOLD
+        val ratio = if (night) NIGHT_RATIO else if (levelOnly) LEVEL_RATIO else RATIO
         repeat(frames) {
             for (c in 0 until channels) {
                 frame[c] = if (float) input.getFloat() else input.getShort() / SHORT_SCALE
             }
             gain = if (gain < target) minOf(target, gain + rampStep) else maxOf(target, gain - rampStep)
+            var square = 0f
+            for (c in 0 until channels) square += frame[c] * frame[c]
+            square /= channels
+            // Silence and near silence say nothing about how loud the track is.
+            if (square > LEVEL_GATE_SQUARE) loudness += loudnessStep * (square - loudness)
+            val wanted = if (level) levelFor(loudness) else 1f
+            levelGain += (if (wanted > levelGain) levelRise else levelFall) * (wanted - levelGain)
             var peak = 0f
             for (c in 0 until channels) peak = maxOf(peak, abs(frame[c]))
-            peak *= gain
+            val lift = gain * levelGain
+            peak *= lift
             envelope += (if (peak > envelope) attack else release) * (peak - envelope)
             val squeeze = squeeze(envelope, threshold, ratio)
-            val scale = gain * squeeze
+            val scale = lift * squeeze
             for (c in 0 until channels) {
                 val sample = (frame[c] * scale).coerceIn(-1f, 1f)
                 if (float) {
@@ -114,6 +152,9 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
     override fun onReset() {
         envelope = 0f
         gain = 1f
+        // A new track is measured afresh. A seek (onFlush) keeps what was learnt of this one.
+        loudness = LEVEL_TARGET_SQUARE
+        levelGain = 1f
     }
 
     companion object {
@@ -130,6 +171,37 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         /** About -15 dBFS: Night mode squeezes everything above dialogue level. */
         const val NIGHT_THRESHOLD = 0.18f
         const val NIGHT_RATIO = 6f
+
+        /** Even out volume's aim, about -18 dBFS of average level. */
+        const val LEVEL_TARGET = 0.126f
+
+        /** Even out volume's largest lift, about +12 dB. */
+        const val LEVEL_MAX = 4f
+
+        private const val LEVEL_TARGET_SQUARE = LEVEL_TARGET * LEVEL_TARGET
+
+        /**
+         * About -1 dBFS and 20 to 1: Even out volume's own squeeze, a soft limit at the very top
+         * that a track at its own level barely touches, and that catches the peaks of its lift and
+         * of a surround fold (whose channels add up past full scale) instead of clipping them.
+         */
+        const val LEVEL_THRESHOLD = 0.89f
+        const val LEVEL_RATIO = 20f
+
+        /** About -60 dBFS: below this a frame is silence and is not measured. */
+        private const val LEVEL_GATE_SQUARE = 1e-6f
+
+        /** How long the average level is taken over. */
+        const val LEVEL_SECONDS = 2f
+        private const val LEVEL_RISE_SECONDS = 1.5f
+        private const val LEVEL_FALL_SECONDS = 0.3f
+
+        /**
+         * The lift Even out volume wants for a track whose average level is [meanSquare]: towards
+         * [LEVEL_TARGET], never below 1 (it only lifts) and never above [LEVEL_MAX].
+         */
+        fun levelFor(meanSquare: Float): Float =
+            if (meanSquare <= 0f) LEVEL_MAX else kotlin.math.sqrt(LEVEL_TARGET_SQUARE / meanSquare).coerceIn(1f, LEVEL_MAX)
 
         /** The gain the ramp walks towards for these switches. */
         fun targetGain(boost: Boolean, night: Boolean): Float =
