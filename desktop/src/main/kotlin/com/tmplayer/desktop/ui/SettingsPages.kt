@@ -248,14 +248,11 @@ internal fun SubtitlesRows(state: ShellState) {
     // (SubtitleStyleDialog), as on the phone and the TV.
     Action(
         s.settingsSubtitleStyle,
-        listOf(
-            subtitleStyle.size.label,
-            if (subtitleStyle.box) s.settingsSubtitleStyleBox else s.settingsSubtitleStyleNoBox,
-            subtitleStyle.position.label,
-        ).joinToString("  ·  "),
+        subtitleStyle.summary(),
         TmIcons.Subtitles,
     ) { styling = true }
     SubtitleLanguageSettings(settings, trackPrefs, scope)
+    LearntLanguagesSetting(settings, scope)
     OnlineSubtitlesGroup()
 
     if (styling) SubtitleStyleDialog(settings, subtitleStyle, onClose = { styling = false })

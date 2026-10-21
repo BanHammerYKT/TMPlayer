@@ -62,7 +62,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import androidx.lifecycle.Lifecycle
@@ -248,6 +247,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private var statusReload: android.widget.Button? = null
     private var statusOpenWith: android.widget.Button? = null
+
+    /** "Try the other decoder", on a decoding failure the other decoder might get past. See [DecoderSwitch]. */
+    private var statusDecoder: android.widget.Button? = null
+
+    /** The switch [statusDecoder] would make, worked out from the failure on screen. */
+    private var decoderPlan: DecoderSwitch.Plan? = null
+
+    /** Settings' Decoder, read before the player is built: it decides the renderers' order. */
+    private var videoDecoder = com.tmplayer.data.VideoDecoder.Automatic
 
     /** "Play Telegram's 480p" on the sheet that says nothing is arriving (CP80). */
     private var statusLighter: android.widget.Button? = null
@@ -823,6 +831,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusLighter = findViewById<android.widget.Button>(R.id.status_lighter).apply {
             setOnClickListener { lighterQuality()?.let { switchQuality(it.height) } }
         }
+        statusDecoder = findViewById<android.widget.Button>(R.id.status_decoder).apply {
+            text = L.playerDecoderOther
+            setOnClickListener { tryOtherDecoder() }
+        }
         // The layout carries English for the preview; the words on screen come from the catalog.
         statusRetry?.text = L.commonTryAgain
         statusReload?.text = L.commonReload
@@ -1264,6 +1276,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             nightModeOn = runCatching { settings.nightModeNow() }.getOrDefault(false)
             evenVolumeOn = runCatching { settings.evenVolumeNow() }.getOrDefault(true)
             skipSilence = runCatching { settings.skipSilenceNow() }.getOrDefault(false)
+            videoDecoder = runCatching { settings.videoDecoderNow() }.getOrDefault(com.tmplayer.data.VideoDecoder.Automatic)
             subtitleStyle = runCatching { settings.subtitleStyleNow() }.getOrDefault(SubtitleStyle())
             applySubtitleStyle()
             // Only a video from a message has somewhere to keep an offset; a file opened from
@@ -2235,6 +2248,31 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     .build()
             }
 
+            /**
+             * Sound keeps the device's decoder first whatever the Decoder setting says: "Prefer
+             * software video" is about the picture, and the device's own decoder is what passes
+             * Dolby through to a receiver.
+             */
+            override fun buildAudioRenderers(
+                context: Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                audioSink: AudioSink,
+                eventHandler: android.os.Handler,
+                eventListener: androidx.media3.exoplayer.audio.AudioRendererEventListener,
+                out: ArrayList<Renderer>,
+            ) {
+                val audioMode = if (extensionRendererMode == DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER) {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                } else {
+                    extensionRendererMode
+                }
+                super.buildAudioRenderers(
+                    context, audioMode, mediaCodecSelector, enableDecoderFallback, audioSink, eventHandler, eventListener, out,
+                )
+            }
+
             /** Media3's own text renderers, each behind the subtitle delay. See [DelayedTextRenderer]. */
             override fun buildTextRenderers(
                 context: Context,
@@ -2248,7 +2286,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 built.mapTo(out) { DelayedTextRenderer(it) { subtitleDelayUs } }
             }
         }
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            // Prefer software video puts the app's FFmpeg video decoder ahead of the device's;
+            // a format FFmpeg has no decoder for still goes to the device's.
+            .setExtensionRendererMode(
+                if (videoDecoder == com.tmplayer.data.VideoDecoder.Software) {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                } else {
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                },
+            )
             .setEnableDecoderFallback(true)
 
         // Deliberately small: on a 1 GB stick a generous buffer is what gets the app killed.
@@ -2828,6 +2874,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            // Worked out before anything else looks at the failure: the sheet shows the button
+            // only when the other decoder can take this format.
+            decoderPlan = DecoderSwitch.planFor(player, error)
             lastPlaybackError = error
             // A file TDLib cannot size is a stale id, not a slow network: retrying the same id
             // only spins for a minute, while asking for the message again fixes it in a second.
@@ -3885,22 +3934,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     }
 
     /**
-     * Draws subtitles the way [subtitleStyle] says. White with a black outline either way: the
+     * Draws subtitles the way [subtitleStyle] says: the size and height here, the colour, edge,
+     * typeface, weight and box through [SubtitleLook]. White with a black outline by default: the
      * outline is what survives a bright frame, and the optional box is for a busy one.
      */
     private fun applySubtitleStyle() {
         subtitleView.setFractionalTextSize(subtitleTextFraction())
         subtitleView.setBottomPaddingFraction(subtitleBottomFraction())
-        subtitleView.setStyle(
-            CaptionStyleCompat(
-                Color.WHITE,
-                if (subtitleStyle.box) SUBTITLE_BOX_COLOUR else Color.TRANSPARENT,
-                Color.TRANSPARENT,
-                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
-                Color.BLACK,
-                null,
-            ),
-        )
+        subtitleView.setStyle(SubtitleLook.captionStyle(subtitleStyle))
     }
 
     /**
@@ -6151,7 +6192,23 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusOpenWith?.visibility = View.GONE
         statusBack?.visibility = View.GONE
         statusLighter?.visibility = View.GONE
+        statusDecoder?.visibility = View.GONE
         statusName?.visibility = View.GONE
+    }
+
+    /**
+     * "Try the other decoder": the failed side's renderers off ([DecoderSwitch]), and the player
+     * prepared again where it stood. A player that failed keeps its position, so nothing is lost.
+     */
+    private fun tryOtherDecoder() {
+        val plan = decoderPlan ?: return
+        val exo = player ?: return
+        decoderPlan = null
+        hideFailureActions()
+        DecoderSwitch.apply(exo, plan)
+        showStatus(if (plan.toFfmpeg) L.playerDecoderSoftwareNow else L.playerDecoderDeviceNow)
+        exo.prepare()
+        exo.playWhenReady = true
     }
 
     /**
@@ -6159,7 +6216,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * others the quiet one, so the sheet always has exactly one button that reads as the answer.
      */
     private fun markPrimaryAction(primary: View) {
-        for (button in listOf(statusReload, statusBack, statusOpenWith, statusLighter)) {
+        for (button in listOf(statusReload, statusBack, statusOpenWith, statusLighter, statusDecoder)) {
             val chosen = button === primary
             button?.setBackgroundResource(if (chosen) R.drawable.bg_control_pill_primary else R.drawable.bg_control_pill)
             button?.setTextColor(getColorStateList(if (chosen) R.color.player_primary_text else R.color.player_control_icon))
@@ -6196,6 +6253,17 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             statusOpenWith?.apply {
                 text = L.downloadsFreeUpSpace
                 visibility = View.VISIBLE
+                markPrimaryAction(this)
+                requestFocus()
+            }
+            return
+        }
+        // A decoder that failed, with the other one able to take the format: that is the answer,
+        // ahead of Reload (the same bytes would fail the same way) and of another app.
+        val switch = decoderPlan
+        statusDecoder?.visibility = if (switch != null) View.VISIBLE else View.GONE
+        if (switch != null) {
+            statusDecoder?.apply {
                 markPrimaryAction(this)
                 requestFocus()
             }
@@ -6996,7 +7064,6 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         private const val MAX_CAUSE_HOPS = 6
 
         /** Three quarters black: dark enough to read white on, light enough to see the picture. */
-        private const val SUBTITLE_BOX_COLOUR = 0xC0000000.toInt()
 
 
         /** Anything at or above this is 4K territory, where a stick's decoder gives up. */

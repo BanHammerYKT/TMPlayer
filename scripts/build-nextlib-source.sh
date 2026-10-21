@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Builds nextlib-corresponding-source-1.11.1-0.16.0.tar.gz: the complete corresponding source of
-# the FFmpeg extension that the Android build bundles through nextlib-media3ext 1.11.1-0.16.0
-# (io.github.anilbeesetti, by Anil Beesetti, GPL-3.0).
+# Builds nextlib-corresponding-source-1.11.1-0.16.0-tm1.tar.gz: the complete corresponding source
+# of the FFmpeg extension that the Android build bundles through nextlib-media3ext 1.11.1-0.16.0
+# (io.github.anilbeesetti, by Anil Beesetti, GPL-3.0), as scripts/build-media3ext.sh builds it:
+# nextlib's tree at its tag, plus tmplayer/ holding TMPlayer's patch (five more FFmpeg video
+# decoders and their mappings) and that build script. Up to 1.27.x the app shipped nextlib's own
+# AAR from Maven Central, whose source is the archive without the "-tm1" (attached to v1.27.0).
 #
 # The AAR carries, for each of arm64-v8a, armeabi-v7a, x86 and x86_64, libmedia3ext.so (nextlib's
 # own JNI glue, built from media3ext/src/main/cpp) and FFmpeg's libavcodec, libavutil,
@@ -38,7 +41,7 @@ set -euo pipefail
 
 VERSION="1.11.1-0.16.0"
 COMMIT="2dc77cd2d9352bc308aa26782f9c77a320df510b"
-NAME="nextlib-corresponding-source-$VERSION"
+NAME="nextlib-corresponding-source-$VERSION-tm1"
 TREE="nextlib-$VERSION"
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -90,6 +93,10 @@ test "$(sed -n 's/^FFMPEG_VERSION=//p' "$stage/$TREE/ffmpeg/setup.sh")" = "9.0.1
 test "$(sed -n 's/^DAV1D_VERSION=//p' "$stage/$TREE/ffmpeg/setup.sh")" = "1.5.4"
 test "$(sed -n 's/^MBEDTLS_VERSION=//p' "$stage/$TREE/ffmpeg/setup.sh")" = "3.6.7"
 
+# TMPlayer's patch and the script that applies it and builds the AAR, beside the untouched tree.
+mkdir -p "$stage/$TREE/tmplayer"
+cp "$root/scripts/media3ext/tmplayer-decoders.patch" "$root/scripts/build-media3ext.sh" "$stage/$TREE/tmplayer/"
+
 upstream="$stage/$TREE/upstream-sources"
 mkdir -p "$upstream"
 manifest | tail -n +2 | while read -r sum file url; do
@@ -107,6 +114,11 @@ x86_64. The directory above this one is the nextlib source at its tag v$VERSION 
 \`$COMMIT\`); \`ffmpeg/setup.sh\` there is the build script for the native libraries and
 \`media3ext/src/main/cpp\` the JNI glue. This directory holds the upstream sources setup.sh builds
 from, as it downloads them; \`SHA256SUMS\` lists them.
+
+TMPlayer builds the tree with \`../tmplayer/tmplayer-decoders.patch\` applied, which adds FFmpeg's
+mpeg4, msmpeg4v2, msmpeg4v3, vc1 and mjpeg video decoders to setup.sh and maps Media3's formats
+to them in the Java glue; \`../tmplayer/build-media3ext.sh\` is the script that applies it and runs
+nextlib's own Gradle build (\`:media3ext:assembleRelease\`).
 
 | Component | Version | Licence | File |
 |---|---|---|---|

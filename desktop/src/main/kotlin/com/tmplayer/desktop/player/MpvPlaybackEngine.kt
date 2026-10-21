@@ -531,13 +531,15 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
     }
 
     /**
-     * Each property on its own, so one this libmpv does not know leaves the others applied.
+     * Each property on its own ([SubtitleStyle.mpvProperties]), so one this libmpv does not know
+     * leaves the others applied.
      *
      * The bundled libmpv is 0.41, where `background-box` draws one box behind the whole subtitle in
      * `sub-back-color` (mpv's colours are #AARRGGBB). `opaque-box`, the older style, boxes each line
      * in the outline colour instead and draws no outline, which is the fallback for a libmpv that
      * predates `background-box` (0.39). `sub-ass-override` stays at mpv's default, `scale`: these
-     * options reach plain text tracks, and an ASS track keeps the look its author gave it.
+     * options reach plain text tracks, and an ASS track keeps the look its author gave it. PGS and
+     * VobSub tracks are pictures and libass leaves them as they are.
      */
     private fun applySubtitleStyle(style: SubtitleStyle) {
         val h = handle
@@ -545,18 +547,35 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
         // the television put them, so a letterboxed video has its subtitles at the same height
         // on every device (PlayerActivity.subtitleBottomFraction).
         runCatching { h.setPropertyString("sub-use-margins", "no") }
-        runCatching { h.setPropertyString("sub-font-size", style.size.mpvFontSize.toString()) }
-        runCatching { h.setPropertyString("sub-pos", style.position.mpvSubPos.toString()) }
-        if (!style.box) {
-            runCatching { h.setPropertyString("sub-border-style", "outline-and-shadow") }
-            return
+        for ((name, value) in style.mpvProperties(subtitleFont(style.face))) {
+            val set = runCatching { h.setPropertyString(name, value) }.getOrDefault(false)
+            if (!set && name == "sub-border-style" && value == "background-box") {
+                runCatching {
+                    h.setPropertyString("sub-outline-color", SubtitleStyle.mpvColour(style.boxLevel.argb))
+                    h.setPropertyString("sub-border-style", "opaque-box")
+                }
+            }
         }
-        runCatching { h.setPropertyString("sub-back-color", BOX_COLOR) }
-        val boxed = runCatching { h.setPropertyString("sub-border-style", "background-box") }.getOrDefault(false)
-        if (!boxed) {
-            runCatching {
-                h.setPropertyString("sub-outline-color", BOX_COLOR)
-                h.setPropertyString("sub-border-style", "opaque-box")
+    }
+
+    /**
+     * The family libass asks the system's font provider for. Fontconfig (Linux) knows the generic
+     * names; Windows' DirectWrite and macOS' CoreText want a real family, so each gets one it
+     * ships with. A missing family falls back to libass's default, never to no text.
+     */
+    private fun subtitleFont(face: com.tmplayer.player.SubtitleFace): String {
+        val os = System.getProperty("os.name").orEmpty().lowercase()
+        return when (face) {
+            com.tmplayer.player.SubtitleFace.Default -> "sans-serif"
+            com.tmplayer.player.SubtitleFace.Serif -> when {
+                "win" in os -> "Georgia"
+                "mac" in os -> "Times New Roman"
+                else -> "serif"
+            }
+            com.tmplayer.player.SubtitleFace.Monospace -> when {
+                "win" in os -> "Consolas"
+                "mac" in os -> "Menlo"
+                else -> "monospace"
             }
         }
     }

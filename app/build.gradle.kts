@@ -47,6 +47,20 @@ val releaseAbis: List<String> = (findProperty("tmAbis") as String?)
 // Off, which is every other build, nothing changes.
 val fdroidBuild: Boolean = (findProperty("tmFdroid") as String?)?.trim()?.toBoolean() ?: false
 
+// The FFmpeg extension. scripts/build-media3ext.sh builds nextlib-media3ext from its pinned
+// source with TMPlayer's extra video decoders (MPEG-4 Part 2, DivX 3, VC-1, Motion JPEG) into
+// this AAR; without it the build takes the same nextlib from Maven Central, which lacks them and
+// says so. A release (and F-Droid's recipe) passes -PtmRequireMedia3ext=true, which fails the
+// build instead of shipping without them.
+val media3extAar = rootProject.file("build/media3ext/nextlib-media3ext-${libs.versions.nextlib.get()}-tm1.aar")
+val requireMedia3ext: Boolean = (findProperty("tmRequireMedia3ext") as String?)?.trim()?.toBoolean() ?: false
+if (!media3extAar.isFile) {
+    if (requireMedia3ext) {
+        throw GradleException("${media3extAar.name} is missing: run scripts/build-media3ext.sh first")
+    }
+    logger.lifecycle("FFmpeg extension: nextlib from Maven Central, without the extra video decoders (scripts/build-media3ext.sh builds them)")
+}
+
 android {
     namespace = "com.tmplayer"
     // 37 because tdl-coroutines 14+ refuses to be compiled against anything older. targetSdk is
@@ -294,7 +308,15 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.leanback)
     implementation(libs.androidx.fragment.ktx)
-    implementation(libs.nextlib.media3ext)
+    if (media3extAar.isFile) {
+        // The AAR's own dependencies, which a file dependency does not bring: the ones the Maven
+        // Central POM lists, Media3 itself being above.
+        implementation(files(media3extAar))
+        implementation(libs.androidx.annotation)
+        implementation(libs.errorprone.annotations)
+    } else {
+        implementation(libs.nextlib.media3ext)
+    }
 
     // Casting to a Chromecast or Google TV (CP73), in every build but F-Droid's: see fdroidBuild.
     // Looked up by name rather than through the typed accessor, so a recipe that deletes the

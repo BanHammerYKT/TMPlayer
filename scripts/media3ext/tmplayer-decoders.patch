@@ -1,0 +1,39 @@
+--- a/ffmpeg/setup.sh
++++ b/ffmpeg/setup.sh
+@@ -18,8 +18,8 @@
+ # Configuration
+ ANDROID_ABIS="x86 x86_64 armeabi-v7a arm64-v8a"
+ ANDROID_PLATFORM=21
+-ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9 libdav1d"
+-JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)
++ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo mpeg4 msmpeg4v2 msmpeg4v3 vc1 mjpeg vp8 vp9 libdav1d"
++JOBS=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)}
+ 
+ # Gradle supplies these; standalone callers use the same pinned versions.
+ CATALOG="$BASE_DIR/../gradle/libs.versions.toml"
+--- a/media3ext/src/main/java/io/github/anilbeesetti/nextlib/media3ext/ffdecoder/FfmpegLibrary.java
++++ b/media3ext/src/main/java/io/github/anilbeesetti/nextlib/media3ext/ffdecoder/FfmpegLibrary.java
+@@ -123,6 +123,11 @@
+       case MimeTypes.VIDEO_AV1 -> "libdav1d";
+       case MimeTypes.VIDEO_MPEG -> "mpegvideo";
+       case MimeTypes.VIDEO_MPEG2 -> "mpeg2video";
++      case MimeTypes.VIDEO_MP4V, MimeTypes.VIDEO_DIVX -> "mpeg4";
++      case MimeTypes.VIDEO_MP42 -> "msmpeg4v2";
++      case MimeTypes.VIDEO_MP43 -> "msmpeg4";
++      case MimeTypes.VIDEO_VC1 -> "vc1";
++      case MimeTypes.VIDEO_MJPEG -> "mjpeg";
+       case MimeTypes.VIDEO_VP8 -> "vp8";
+       case MimeTypes.VIDEO_VP9 -> "vp9";
+       default -> null;
+--- a/media3ext/src/main/java/io/github/anilbeesetti/nextlib/media3ext/ffdecoder/FfmpegVideoDecoder.java
++++ b/media3ext/src/main/java/io/github/anilbeesetti/nextlib/media3ext/ffdecoder/FfmpegVideoDecoder.java
+@@ -87,7 +87,8 @@
+                 System.arraycopy(pps, 0, extraData, sps.length, pps.length);
+                 return extraData;
+             }
+-            case MimeTypes.VIDEO_H265 -> {
++            case MimeTypes.VIDEO_H265, MimeTypes.VIDEO_MP4V, MimeTypes.VIDEO_VC1 -> {
++                // MPEG-4 Part 2: the VOL header; VC-1: the sequence and entry point headers.
+                 return initializationData.get(0);
+             }
+             default -> {
