@@ -275,6 +275,9 @@ const val DEVELOPER_PHRASE = "/namecheck"
 /** The order a chat's videos are listed in, per chat. See [VideoSort]. */
 private fun videoSortKey(chatId: Long) = stringPreferencesKey("vsort_$chatId")
 
+/** Which of a chat's videos are listed, per chat. See [VideoFilter]. */
+private fun videoFilterKey(chatId: Long) = stringPreferencesKey("vfilter_$chatId")
+
 /** The subtitle and audio offsets the viewer set for one file. See [SyncDelays]. */
 private fun delayKey(chatId: Long, messageId: Long) =
     stringPreferencesKey("delay_${chatId}_$messageId")
@@ -486,6 +489,13 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
 
     suspend fun setVideoSort(chatId: Long, sort: VideoSort) {
         prefs.edit { if (sort == VideoSort.DEFAULT) it.remove(videoSortKey(chatId)) else it[videoSortKey(chatId)] = sort.name }
+    }
+
+    /** Which of [chatId]'s videos are listed: [VideoFilter.All] until the viewer picks another. */
+    fun videoFilter(chatId: Long): Flow<VideoFilter> = read { VideoFilter.decode(it[videoFilterKey(chatId)]) }
+
+    suspend fun setVideoFilter(chatId: Long, filter: VideoFilter) {
+        prefs.edit { if (filter == VideoFilter.DEFAULT) it.remove(videoFilterKey(chatId)) else it[videoFilterKey(chatId)] = filter.name }
     }
 
     /**

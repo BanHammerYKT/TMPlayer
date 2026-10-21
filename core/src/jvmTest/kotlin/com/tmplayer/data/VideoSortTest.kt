@@ -12,13 +12,13 @@ class VideoSortTest {
 
     private var nextId = 1L
 
-    private fun video(fileName: String, date: Int, size: Long = 0) = MediaItem(
+    private fun video(fileName: String, date: Int, size: Long = 0, duration: Int = 0) = MediaItem(
         chatId = 3,
         messageId = nextId++,
         fileId = nextId.toInt(),
         title = fileName,
         sizeBytes = size,
-        durationSec = 0,
+        durationSec = duration,
         mimeType = "video/mp4",
         thumbnailFileId = 0,
         miniThumbnail = null,
@@ -73,6 +73,23 @@ class VideoSortTest {
     @Test
     fun `size puts the largest first and unknown sizes last, a show by its total`() {
         assertEquals(listOf("anchor point.mp4", "The Harbour Part 10 (2015).mkv", "Harbour Part 2 (2015).mkv", "show", "Coast Run (2014).mkv"), names(VideoSort.Size))
+    }
+
+    @Test
+    fun `longest puts the longest first, a show by its episodes added up, unknown lengths last`() {
+        val long = video("Long Walk (2010).mkv", date = 9, duration = 7200)
+        val short = video("Short Walk (2011).mkv", date = 8, duration = 1800)
+        val unknown = video("Mystery (2012).mkv", date = 7, duration = 0)
+        val epA = video("Walk.Show.S01E01.mkv", date = 6, duration = 3000)
+        val epB = video("Walk.Show.S01E02.mkv", date = 5, duration = 3000)
+        val shelf = SeriesShelf.arrange(listOf(unknown, short, epA, long, epB), emptyMap())
+        val sorted = VideoSorting.sort(shelf, VideoSort.Longest, locale = Locale.ENGLISH).map {
+            when (it) {
+                is ShelfEntry.Show -> "show"
+                is ShelfEntry.File -> it.item.fileName
+            }
+        }
+        assertEquals(listOf("Long Walk (2010).mkv", "show", "Short Walk (2011).mkv", "Mystery (2012).mkv"), sorted)
     }
 
     @Test

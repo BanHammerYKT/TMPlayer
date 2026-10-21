@@ -21,6 +21,8 @@ enum class VideoSort {
     Name,
     Year,
     Size,
+    /** By running time, the longest first; a show by all its episodes, a video of unknown length last. */
+    Longest,
     Unwatched,
     ;
 
@@ -86,13 +88,18 @@ object VideoSorting {
                 val sizes = indexed.map { sizeOf(it.value) }
                 compareBy<IndexedValue<ShelfEntry>> { sizes[it.index] <= 0 }.thenByDescending { sizes[it.index] }
             }
+            VideoSort.Longest -> {
+                val lengths = indexed.map { lengthOf(it.value) }
+                compareBy<IndexedValue<ShelfEntry>> { lengths[it.index] <= 0 }.thenByDescending { lengths[it.index] }
+            }
             VideoSort.Unwatched -> compareBy { progressOf(it.value, progress) }
         }
         // sortedWith is stable, and the index as the last word makes it so whatever the order says.
         return indexed.sortedWith(order.thenBy { it.index }).map { it.value }
     }
 
-    private fun items(entry: ShelfEntry): List<MediaItem> = when (entry) {
+    /** Every file an entry stands for: a show's episodes and their copies, a film's copies. */
+    internal fun items(entry: ShelfEntry): List<MediaItem> = when (entry) {
         is ShelfEntry.Show -> entry.series.episodes.flatMap { it.copies }
         is ShelfEntry.File -> entry.item.versions.ifEmpty { listOf(entry.item) }
     }
@@ -117,7 +124,18 @@ object VideoSorting {
             .maxOf { copy -> copy.parts.ifEmpty { listOf(copy) }.sumOf { it.sizeBytes.coerceAtLeast(0) } }
     }
 
-    private fun progressOf(entry: ShelfEntry, progress: (MediaItem) -> Progress): Progress = when (entry) {
+    /** A show's whole running time; a film's longest copy, its pieces added; 0 when nothing says. */
+    private fun lengthOf(entry: ShelfEntry): Long = when (entry) {
+        is ShelfEntry.Show -> entry.series.episodes.sumOf { it.item.durationSec.coerceAtLeast(0).toLong() }
+        is ShelfEntry.File -> entry.item.versions.ifEmpty { listOf(entry.item) }
+            .maxOf { copy -> copy.parts.ifEmpty { listOf(copy) }.sumOf { it.durationSec.coerceAtLeast(0).toLong() } }
+    }
+
+    /**
+     * How far the viewer is with a whole entry: a file by its furthest copy, a show Watched only
+     * when every episode is and Untouched only when none is started. Shared with [VideoFiltering].
+     */
+    fun progressOf(entry: ShelfEntry, progress: (MediaItem) -> Progress): Progress = when (entry) {
         is ShelfEntry.Show -> {
             val each = entry.series.episodes.map { episode -> episode.copies.maxOf { progress(it) } }
             when {
