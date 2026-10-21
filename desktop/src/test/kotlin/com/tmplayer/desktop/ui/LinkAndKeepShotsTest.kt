@@ -85,12 +85,6 @@ class LinkAndKeepShotsTest {
                 }
             },
             "round-only" to { Column(Modifier.padding(24.dp)) { RoundEntryRow(3, noVideos = true) {} } },
-            "forward-line" to {
-                Column(Modifier.padding(24.dp).width(420.dp)) {
-                    ForwardTargetLine(ChatSummary(2, "Saved Messages", null, 0, ChatKind.Saved)) {}
-                    ForwardTargetLine(ChatSummary(3, "Weekend group", null, 0, ChatKind.Group)) {}
-                }
-            },
         )
         for (dark in listOf(false, true)) {
             val theme = if (dark) "dark" else "light"

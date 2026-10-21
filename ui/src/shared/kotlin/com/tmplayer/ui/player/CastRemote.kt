@@ -324,13 +324,19 @@ private fun Timebar(state: CastRemoteState, actions: CastRemoteActions, modifier
     val shown = scrubbing?.let { (it * duration).toLong() } ?: state.positionMs
     val enabled = state.durationMs > 0 && !state.lost && state.error == null && state.phase != CastPhase.Starting
     val formatter = LocalStrings.current.formatter
+    // The phone as a remote is often held without looking: the drag is felt taking hold and letting go.
+    val haptic = com.tmplayer.ui.components.rememberHaptics()
     Column(modifier.fillMaxWidth()) {
         Slider(
             value = (shown.toFloat() / duration).coerceIn(0f, 1f),
-            onValueChange = { scrubbing = it },
+            onValueChange = {
+                if (scrubbing == null) haptic(com.tmplayer.ui.components.Haptic.GestureStart)
+                scrubbing = it
+            },
             onValueChangeFinished = {
                 scrubbing?.let { actions.seekTo((it * duration).toLong()) }
                 scrubbing = null
+                haptic(com.tmplayer.ui.components.Haptic.GestureEnd)
             },
             enabled = enabled,
             colors = SliderDefaults.colors(
@@ -460,9 +466,15 @@ private fun Volume(state: CastRemoteState, actions: CastRemoteActions, s: Messag
                 actions.toggleMute()
             },
         )
+        val volumeHaptic = com.tmplayer.ui.components.rememberHaptics()
         Slider(
             value = if (state.muted) 0f else state.volume.coerceIn(0f, 1f),
-            onValueChange = actions::setVolume,
+            // A light tick at each tenth of the television's volume crossed, not at every pixel.
+            onValueChange = { next ->
+                val before = if (state.muted) 0 else (state.volume * VOLUME_STEPS).toInt()
+                if ((next * VOLUME_STEPS).toInt() != before) volumeHaptic(com.tmplayer.ui.components.Haptic.FrequentTick)
+                actions.setVolume(next)
+            },
             enabled = !state.lost,
             colors = SliderDefaults.colors(
                 thumbColor = Tone.text,
@@ -545,3 +557,6 @@ private fun RoundIcon(
         }
     }
 }
+
+/** The volume steps the cast remote's slider ticks at: tenths. */
+private const val VOLUME_STEPS = 10

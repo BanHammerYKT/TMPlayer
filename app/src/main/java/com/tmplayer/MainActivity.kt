@@ -101,8 +101,6 @@ import com.tmplayer.ui.browse.onChatsPage
 import com.tmplayer.ui.browse.TouchNav
 import com.tmplayer.ui.browse.TouchNavHost
 import com.tmplayer.ui.browse.TouchPage
-import com.tmplayer.ui.browse.TouchDestination
-import com.tmplayer.ui.browse.TouchPageSpec
 import com.tmplayer.ui.browse.TouchRoutes
 import com.tmplayer.ui.browse.LocalTouchPageKey
 import androidx.compose.animation.AnimatedContent
@@ -111,6 +109,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.CompositionLocalProvider
@@ -175,7 +174,6 @@ private const val EXIT_WINDOW_MS = 2_000L
  * the player is up almost at once, passes in silence. Short enough that a slow one is explained
  * before the viewer has decided their press was missed.
  */
-private const val PREPARE_CHIP_AFTER_MS = 400L
 
 /** A small store for asks that happen once per install, and so are not settings or in backups. */
 private const val ONCE_PREFS = "once"
@@ -251,22 +249,32 @@ private object TouchScreens {
 
     /**
      * Where a screen stands along the bar, left to right, for which way the next one slides in:
-     * Home, Chats, Search, Settings, then the picture's pages. Null for a chat and About, which
-     * are not on the bar and change without a slide.
+     * Home, Chats, Search, then the picture's pages. Null for a chat, Settings and About, which
+     * are not places on the bar: a chat and About change without a slide, and Settings is pushed
+     * over whatever opened it ([isPushed]).
      */
     fun order(screen: Screen, tab: BrowseSection?): Int? = when (screen) {
         is Screen.Chats -> when {
             tab == null || tab.isHome -> 0
             tab.onChatsPage -> 1
-            else -> 4
+            else -> 3
         }
-        is Screen.Settings -> 3
-        is Screen.Downloads -> 4
-        is Screen.Media, is Screen.About -> null
+        is Screen.Downloads -> 3
+        is Screen.Settings, is Screen.Media, is Screen.About -> null
     }
+
+    /**
+     * Settings, which the picture's popover opens as a screen of its own rather than a tab: it
+     * comes in from the end and goes back out towards it, the way a pushed screen does, and no
+     * swipe leads into it.
+     */
+    fun isPushed(screen: Screen): Boolean = screen is Screen.Settings
 
     /** How far a screen slides in as it fades: a twelfth of the width, as the browser's pages do. */
     const val SLIDE_PART = 12
+
+    /** How far a pushed screen slides as it comes in, and the one under it as it goes: Material's shared axis. */
+    const val PUSH_PART = 10
 }
 
 /**
@@ -379,8 +387,16 @@ class MainActivity : ComponentActivity() {
      * A language picked on Android's own page for this app (Android 13 and later) while it was in
      * the background becomes the in-app choice. See [AppLocales].
      */
+    /** The player has the screen now; its own loader takes over from the press's spinner. */
+    override fun onStop() {
+        super.onStop()
+        com.tmplayer.ui.components.PlayPress.end()
+    }
+
     override fun onResume() {
         super.onResume()
+        // Back from the player (or never left): no press of Play is still on its way.
+        com.tmplayer.ui.components.PlayPress.end()
         lifecycleScope.launch {
             val store = SettingsStore(this@MainActivity)
             runCatching { AppLocales.adopt(this@MainActivity, store.language.first())?.let { store.setLanguage(it) } }
@@ -768,7 +784,7 @@ private fun Root() {
         factory = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }) as T
+                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }, cached = true) as T
         },
     )
     // Home keeps what it fetched, badges included, so its Cached badges are read off the disk again
@@ -778,6 +794,16 @@ private fun Root() {
     val shellInFront = lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     LaunchedEffect(shellInFront, cacheRecord) {
         if (shellInFront) homeViewModel.refreshLocalAvailability()
+    }
+    // Home keeps itself up to date while the app is in front: on coming back, when its rows are
+    // a minute old, and every few minutes after, in place (the tiles stay up and keep the focus).
+    LaunchedEffect(shellInFront) {
+        if (!shellInFront) return@LaunchedEffect
+        homeViewModel.refreshIfStale()
+        while (true) {
+            delay(HomeViewModel.AUTO_REFRESH_MS)
+            homeViewModel.refreshInPlace()
+        }
     }
     val accountHeader by chatsViewModel.accountHeader.collectAsStateWithLifecycle()
     val chats = (chatsState as? UiState.Content)?.value?.chats.orEmpty()
@@ -816,6 +842,7 @@ private fun Root() {
 
     var connectionNotice by remember { mutableStateOf(ConnectionNotice.Hidden) }
     var wasOffline by remember { mutableStateOf(false) }
+    var wasDisconnected by remember { mutableStateOf(false) }
     LaunchedEffect(networkStatus, telegramConnected, auth) {
         val effectivelyOffline = networkStatus == NetworkStatus.Offline && !telegramConnected
         when {
@@ -830,11 +857,30 @@ private fun Root() {
             wasOffline -> {
                 connectionNotice = ConnectionNotice.Hidden
                 wasOffline = false
+                wasDisconnected = false
+                if (auth is AuthState.Ready) {
+                    chatsViewModel.load()
+                    homeViewModel.refreshInPlace()
+                    updates.checkIfDue()
+                    toast(L.mainBackOnline)
+                }
+            }
+            // Online, signed in, and the line to Telegram is down: back from the background, most
+            // often. What is on screen stays; after a short settle a small "Connecting" pill says
+            // why nothing new arrives, as Telegram's own title does. Retry and the proxy wait for
+            // a real failure (Td.unreachable).
+            auth is AuthState.Ready && !telegramConnected -> {
+                delay(CONNECTING_SETTLE_MS)
+                wasDisconnected = true
+                connectionNotice = ConnectionNotice.Connecting
+            }
+            wasDisconnected -> {
+                // The line is back: the lists refresh quietly in place, no toast.
+                connectionNotice = ConnectionNotice.Hidden
+                wasDisconnected = false
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
                     homeViewModel.refresh()
-                    updates.checkIfDue()
-                    toast(L.mainBackOnline)
                 }
             }
             else -> connectionNotice = ConnectionNotice.Hidden
@@ -1009,12 +1055,16 @@ private fun Root() {
             // to it: it needs no connection, no room, and it is not the cache's to claim.
             if (LocalDownloads.fileFor(settings, item.chatId, item.messageId) != null) {
                 withContext(Dispatchers.Main) {
+                    com.tmplayer.ui.components.PlayPress.open()
                     context.startActivity(PlayerActivity.intent(context, item, chatTitle))
                 }
                 return@withContext
             }
             val local = runCatching { Td.localFileAvailability(item.fileId) }
                 .getOrDefault(LocalFileAvailability.Missing)
+            // A stream: its head and index start coming now, while the room is measured and the
+            // player is built ([com.tmplayer.player.StreamWarmup]).
+            if (local != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
             val canReachTelegram = telegramConnected || networkStatus != NetworkStatus.Offline
             if (!canReachTelegram && local != LocalFileAvailability.Complete) {
                 toast(
@@ -1061,6 +1111,7 @@ private fun Root() {
                 // The player claims the cache for itself the moment it opens, which is what keeps
                 // a series honest. This only has to leave the record alone for a kept download.
                 if (!kept) scope.launch { settings.rememberCachedVideo(item, chatTitle) }
+                com.tmplayer.ui.components.PlayPress.open()
                 context.startActivity(PlayerActivity.intent(context, item, chatTitle))
             }
 
@@ -1106,18 +1157,16 @@ private fun Root() {
         // and press again, so a second press while one is in flight is ignored.
         if (preparing && !confirmed) return
         preparing = true
+        // Answered at once: the page's Play pill spins and, past a beat, a "Starting" pill says
+        // which video is on its way (PlayPress, StartingStatus). It stays until the shell leaves
+        // the screen for the player, or goes at once when nothing is going to open.
+        val press = com.tmplayer.ui.components.PlayPress.begin(item.title)
         scope.launch {
-            // Only said out loud when it is actually slow. On the common path the player is up
-            // before this fires, and a chip that flashes on every press is worse than no chip.
-            val chip = launch {
-                delay(PREPARE_CHIP_AFTER_MS)
-                toast(L.mainStarting(title = item.title))
-            }
             try {
                 playNow(item, confirmed, chatTitle)
             } finally {
-                chip.cancel()
                 preparing = false
+                if (!com.tmplayer.ui.components.PlayPress.opened) com.tmplayer.ui.components.PlayPress.end(press)
             }
         }
     }
@@ -1199,11 +1248,15 @@ private fun Root() {
         // both got through and opened the player twice.
         if (openingStored || preparing) return
         openingStored = true
+        // The wait for Telegram's fresh copy is part of the press too.
+        val press = com.tmplayer.ui.components.PlayPress.begin(stored.title)
         scope.launch {
             try {
                 openStoredNow(stored, chatTitle)
             } finally {
                 openingStored = false
+                // play() took the press over with its own; this one only ends a lookup that failed.
+                com.tmplayer.ui.components.PlayPress.end(press)
             }
         }
     }
@@ -1235,7 +1288,9 @@ private fun Root() {
         // Once Telegram is reached, the loader waits on for Home's first whole screen (rows and the
         // carousel's first picture), at most HOLD_MAX_MS, so Home appears finished.
         var homeHoldOver by remember { mutableStateOf(false) }
-        val reached = auth is AuthState.Ready
+        // The QR code stays up for a moment after it is scanned, marked "Scanned" (rememberScanHold).
+        val shownAuth = com.tmplayer.ui.auth.rememberScanHold(auth)
+        val reached = shownAuth is AuthState.Ready
         LaunchedEffect(reached) {
             if (!reached) return@LaunchedEffect
             kotlinx.coroutines.delay(com.tmplayer.ui.browse.HomeFirstPaint.HOLD_MAX_MS)
@@ -1243,7 +1298,7 @@ private fun Root() {
         }
         val holdForHome = reached && !setupPending && !(appLock?.onOpen == true && !appUnlocked) && !homeHoldOver && !com.tmplayer.ui.browse.HomeFirstPaint.ready
         com.tmplayer.ui.components.BrandLoaderHandOff(
-            label = com.tmplayer.ui.auth.loaderLabel(auth, LocalStrings.current)
+            label = com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
                 ?: if (holdForHome) LocalStrings.current.loginGettingReady else null,
             modifier = Modifier.zIndex(1f),
             // The second line is the live step, drawn by ConnectingHelp under it.
@@ -1256,7 +1311,7 @@ private fun Root() {
                 sendLogs = { com.tmplayer.ui.settings.SendLogsButton(Modifier.padding(top = 8.dp)) },
             )
         }
-        if (auth !is AuthState.Ready) {
+        if (shownAuth !is AuthState.Ready) {
             // Signing out drops straight back to the login screen, so forget where we were.
             LaunchedEffect(Unit) {
                 screen = Screen.Chats
@@ -1276,7 +1331,7 @@ private fun Root() {
                         .then(if (keyboard) Modifier else Modifier.consumeWindowInsets(WindowInsets.navigationBars)),
                 ) {
                     LoginScreen(
-                        state = auth,
+                        state = shownAuth,
                         submitError = signInError,
                         onSubmitPassword = { password ->
                             signInError = null
@@ -1289,6 +1344,10 @@ private fun Root() {
                         onChooseMethod = { method ->
                             signInError = null
                             scope.launch { Td.chooseSignInMethod(method) }
+                        },
+                        onRefreshQr = {
+                            signInError = null
+                            scope.launch { Td.refreshQrCode() }
                         },
                         onSubmitPhoneNumber = { number ->
                             signInError = null
@@ -1527,10 +1586,10 @@ private fun Root() {
             HomeLaunch.show.compareAndSet(ask, null)
         }
 
-        // Settings and Downloads, from the phone's bar, its popover, the chat list's menus and the
-        // notification. Back from either goes to the page they were opened from; moving between the
-        // two by the bar is a step sideways, so Back skips the other one rather than bouncing
-        // between them (TouchRoutes).
+        // Settings and Downloads, from the picture's popover (the television's account menu), the
+        // chat list's menus and the notification. Back from either goes to the page they were opened
+        // from; moving between the two by the popover is a step sideways, so Back skips the other
+        // one rather than bouncing between them (TouchRoutes).
         val openSettings: () -> Unit = {
             if (screen !is Screen.Settings) {
                 settingsCameFrom = TouchRoutes.backTarget(
@@ -1572,6 +1631,8 @@ private fun Root() {
         val touchNav = TouchNav(
             account = accountHeader,
             favoriteCount = favorites.size,
+            watchingCount = continueWatching.size,
+            watchedCount = watchedVideos.size,
             downloadCount = activeDownloads.size,
             updateVersion = offeredUpdate,
             onHome = { browseTo(BrowseSection.of(BrowseTab.Home)) },
@@ -1593,26 +1654,14 @@ private fun Root() {
             onUpdate = { showUpdate = true },
         )
 
-        // The television's top bar over Settings' own list and Downloads,
-        // as it is over the browser's pages; a Settings page, the PIN pad and About have none.
+        // The television's top bar over Downloads, as it is over the browser's pages. Settings has
+        // none: it opens from the account's menu as a screen of its own, as About and the PIN pad do.
         val tvBar = FormFactor.isTv(context)
-        val tvBarShown = tvBar && (
-            screen is Screen.Downloads ||
-                (screen is Screen.Settings && settingsPage == null && appLock?.let { !it.pinSet || settingsUnlocked } == true)
-            )
+        val tvBarShown = tvBar && screen is Screen.Downloads
         val tvBarFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-        // Settings opened from a top bar's tab keeps the remote on the bar, as every tab does.
+        // Back from Settings to Downloads puts the remote back on the bar's picture, which opened it.
         var tvBarHold by remember { mutableStateOf(0) }
         var tvBarFocused by remember { mutableStateOf(false) }
-        // Back on such a page: to the bar first, then from the bar to Home, the remote kept on the bar.
-        val tvBarBack: () -> Unit = {
-            if (tvBarFocused) {
-                railReturn = com.tmplayer.ui.browse.RailReturn.Settings
-                browseTo(BrowseSection.of(BrowseTab.Home))
-            } else {
-                runCatching { tvBarFocus.requestFocus() }
-            }
-        }
         val screens: @Composable (Screen) -> Unit = screens@{ current ->
         when (current) {
             is Screen.Chats -> {
@@ -1638,10 +1687,7 @@ private fun Root() {
                     },
                     onOpenChat = { openChat(it) },
                     onResumeMedia = { resumeMedia(it) },
-                    onOpenSettings = {
-                        openSettings()
-                        if (tvBar) tvBarHold++
-                    },
+                    onOpenSettings = openSettings,
                     onOpenDownloads = openDownloads,
                     returnToRail = railReturn,
                     tvNav = if (tvBar) touchNav else null,
@@ -1759,14 +1805,15 @@ private fun Root() {
                         when (row) {
                             is HomeRow.Chat -> homeViewModel.request(row.chatId)
                             is HomeRow.Recent -> homeViewModel.requestRecent()
-                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
+                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
                         }
                     },
                     onHomeArtWanted = homeViewModel::requestArt,
                     onHomeLaterArtWanted = homeViewModel::requestArt,
                     onPlayMedia = { item, chatTitle -> play(item, chatTitle = chatTitle) },
+                    homeRefreshing = homeViewModel.refreshing.collectAsStateWithLifecycle().value,
                     onRefreshHome = {
-                        homeViewModel.refresh()
+                        homeViewModel.refreshInPlace()
                         chatsViewModel.refreshUnlessRateLimited()
                     },
                     onSetMediaWatched = { item, chatTitle, watched -> setWatched(item, chatTitle, watched) },
@@ -1820,7 +1867,19 @@ private fun Root() {
                     if (downloadsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Downloads
                     screen = downloadsCameFrom
                 }
-                BackHandler(onBack = { if (tvBarShown) tvBarBack() else leaveDownloads() })
+                // On a television one Back leaves too, the remote landing on the account's picture
+                // whose menu opened Downloads, as Back from Settings does: going by way of the bar
+                // took two presses (2026-10-21).
+                BackHandler(
+                    onBack = {
+                        if (tvBarShown) {
+                            if (downloadsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Profile
+                            screen = downloadsCameFrom
+                        } else {
+                            leaveDownloads()
+                        }
+                    },
+                )
                 // Keyed on the ask, so a second "Not enough space" while the page is up opens the
                 // sheet again rather than finding it already spent.
                 key(downloadsFreeUp) {
@@ -1844,23 +1903,20 @@ private fun Root() {
                     // so a full re-sync on the way out would be work nothing asked for.
                     chatsViewModel.refreshIfStale()
                     settingsPage = null
-                    if (settingsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Settings
+                    // On a television the remote goes back to the account's picture, whose menu
+                    // opened Settings.
+                    if (settingsCameFrom is Screen.Chats) railReturn = com.tmplayer.ui.browse.RailReturn.Profile
+                    if (tvBar && settingsCameFrom is Screen.Downloads) tvBarHold++
                     screen = settingsCameFrom
                 }
-                BackHandler(onBack = { if (tvBarShown) tvBarBack() else leaveSettings() })
+                BackHandler(onBack = leaveSettings)
                 val lock = appLock
                 // With no PIN there is nothing to ask, and a PIN set from inside Settings must not
                 // lock the viewer out of the page they set it on.
                 LaunchedEffect(lock?.pinSet) { if (lock?.pinSet == false) settingsUnlocked = true }
-                // The bar is on Settings' own list, with its Settings button lit; a page under it,
-                // or the PIN pad in front of it, has a back arrow instead.
-                TouchPage(
-                    if (lock != null && (!lock.pinSet || settingsUnlocked) && settingsPage == null) {
-                        TouchPageSpec(current = TouchDestination.Settings)
-                    } else {
-                        null
-                    },
-                )
+                // No floating bar: Settings is a screen pushed from the picture's popover, with
+                // its own back arrow, as a chat is.
+                TouchPage(null)
                 if (lock == null) return@screens
                 if (lock.pinSet && !settingsUnlocked) {
                     PinPad(
@@ -1912,12 +1968,11 @@ private fun Root() {
                     val stayOnBar = { railReturn = com.tmplayer.ui.browse.RailReturn.Settings }
                     com.tmplayer.ui.browse.TvTopBar(
                         nav = touchNav,
-                        current = if (screen is Screen.Settings) com.tmplayer.ui.browse.TvBarTab.Settings else null,
+                        current = null,
                         inProfile = screen is Screen.Downloads,
                         searchOpen = false,
                         onHome = { stayOnBar(); touchNav.onHome() },
                         onChats = { stayOnBar(); touchNav.onChats() },
-                        onSettings = openSettings,
                         onSearch = {
                             com.tmplayer.ui.browse.TvBarSignals.searchAsked.value = true
                             screen = Screen.Chats
@@ -1935,6 +1990,8 @@ private fun Root() {
             // The phone: one floating bar over every page it belongs to, and the pages changing
             // under it the way Home and Chats do (see PhoneBrowse), each keeping its scroll.
             val holder = rememberSaveableStateHolder()
+            // The end a pushed screen comes in from: the right, or the left in a right to left language.
+            val endSign = if (androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl) -1 else 1
             TouchNavHost(nav = touchNav, chrome = touchChrome, pageKey = TouchScreens.key(screen)) {
                 AnimatedContent(
                     targetState = screen,
@@ -1942,7 +1999,22 @@ private fun Root() {
                     transitionSpec = {
                         val from = TouchScreens.order(initialState, pickedTab)
                         val to = TouchScreens.order(targetState, pickedTab)
+                        val push = TouchScreens.isPushed(targetState) && initialState !is Screen.About
+                        val pop = TouchScreens.isPushed(initialState) && targetState !is Screen.About
                         when {
+                            // Settings, pushed over the page that opened it and popped back off:
+                            // in from the end and out towards it, the way a pushed screen moves.
+                            (push || pop) && reducedMotion -> fadeIn(Motion.standard(Motion.Fast)) togetherWith fadeOut(Motion.standard(Motion.Fast))
+                            push || pop -> {
+                                val sign = if (push) endSign else -endSign
+                                (
+                                    fadeIn(Motion.standard(Motion.Normal)) +
+                                        slideInHorizontally(Motion.standard(Motion.Normal)) { width -> sign * width / TouchScreens.PUSH_PART }
+                                    ) togetherWith (
+                                    fadeOut(Motion.standard(Motion.Fast)) +
+                                        slideOutHorizontally(Motion.standard(Motion.Normal)) { width -> -sign * width / TouchScreens.PUSH_PART }
+                                    )
+                            }
                             // A chat and About open as they always have, at once.
                             from == null || to == null -> EnterTransition.None togetherWith ExitTransition.None
                             reducedMotion -> fadeIn(Motion.standard(Motion.Fast)) togetherWith fadeOut(Motion.standard(Motion.Fast))
@@ -2160,6 +2232,14 @@ private fun Root() {
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 20.dp),
         )
+        // Over the connection notice's place, a little higher when both are up.
+        com.tmplayer.ui.components.StartingStatus(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(2f)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = if (connectionNotice == ConnectionNotice.Hidden) 20.dp else 76.dp, start = 16.dp, end = 16.dp),
+        )
         // The network is up and Telegram has not answered for a while: blocked, most likely,
         // which the offline pill above never says, since the device is not offline.
         val unreachable by Td.unreachable.collectAsStateWithLifecycle()
@@ -2177,6 +2257,9 @@ private fun Root() {
 }
 
 private const val OFFLINE_SETTLE_MS = 750L
+
+/** How long a lost line may take to come back before the "Connecting" pill shows. */
+private const val CONNECTING_SETTLE_MS = 2_500L
 
 /** How long the chat list is up before the support card may slide in. */
 private const val SUPPORT_CARD_DELAY_MS = 4_000L

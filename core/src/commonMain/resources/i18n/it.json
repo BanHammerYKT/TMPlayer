@@ -945,7 +945,6 @@
     "size_smaller": "Più piccola"
   },
   "keep": {
-    "cannot_post": "Non puoi pubblicare in quella chat.",
     "export_failed": "Impossibile copiarlo: {reason}",
     "export_folder": "Copia in una cartella",
     "export_folder_detail": "Una copia del download dove vuoi",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Una copia in Movies/TMPlayer, per altre app",
     "exported_folder": "Copiato in {folder}",
     "exported_gallery": "Salvato in Movies/TMPlayer",
-    "exporting": "Copia di {title}",
-    "failed": "Impossibile inoltrarlo: {reason}",
-    "forward_chat": "Inoltra a una chat",
-    "forward_chat_detail": "Condivide il post, non viene scaricato nulla",
-    "forward_none": "Nessuna chat a cui inoltrarlo.",
-    "forward_saved": "Inoltra a Messaggi salvati",
-    "forward_saved_detail": "Lo tiene nel tuo Telegram, non viene scaricato nulla",
-    "forward_search": "Trova una chat",
-    "forward_title": "Inoltra a",
-    "forwarded_saved": "Inoltrato a Messaggi salvati",
-    "forwarded_to": "Inoltrato a {chat}",
-    "forwarding": "Inoltro",
-    "not_forwardable": "Telegram non consente di inoltrare questo post.",
-    "protected": "Questa chat non consente di inoltrare o salvare i suoi video."
+    "exporting": "Copia di {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.scale
 import com.tmplayer.ui.theme.Tone
@@ -119,7 +120,7 @@ fun EdgeBackdrop(
                         contentScale = ContentScale.Crop,
                         alignment = Alignment.TopCenter,
                         filterQuality = Thumbnails.drawFilter,
-                        modifier = place,
+                        modifier = if (step.blurred) place.then(Modifier.blur(STAND_IN_BLUR)) else place,
                     )
                 } else {
                     // The colours alone: the cover's number and initial would sit under the clock.

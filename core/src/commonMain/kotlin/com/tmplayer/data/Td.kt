@@ -116,6 +116,16 @@ object Td {
     /** Bumped by [retryConnecting], so the stall count starts again while the state stays put. */
     private val connectAttempt = MutableStateFlow(0)
 
+    /**
+     * Whether any of the app's screens is on view ([onForegroundChanged]). Time spent in the
+     * background never counts towards [unreachable]: Android holds a backgrounded app's sockets
+     * and TDLib backs off, so the line is down for reasons that say nothing about the network.
+     */
+    private val foreground = MutableStateFlow(true)
+
+    /** Bumped each time the app comes back into view, so the [unreachable] count starts afresh. */
+    private val foregroundEpoch = MutableStateFlow(0)
+
     /** The client [retryConnecting] is closing, whose aborted requests are not a sign in failure. */
     @Volatile
     private var retiring: TdlClient? = null
@@ -267,9 +277,11 @@ object Td {
             // Signed in, the network up as far as the platform knows, and still no line: the
             // blocked network that otherwise reads as a slow one. A network that is really gone
             // has the offline notice already, so it is left to that.
-            val held = combine(_auth, _link, _network, connectAttempt) { auth, link, network, attempt ->
+            // Only while the app is on view, and counted from its return: a phone that was in a
+            // pocket comes back with its line down, and that is a reconnect, not a blocked network.
+            val held = combine(_auth, _link, _network, connectAttempt, combine(foreground, foregroundEpoch, ::Pair)) { auth, link, network, attempt, (shown, epoch) ->
                 val up = network.status != NetworkStatus.Offline && link != TelegramLink.WaitingForNetwork
-                (auth is AuthState.Ready && !link.isUp && up) to attempt
+                (shown && auth is AuthState.Ready && !link.isUp && up) to (attempt to epoch)
             }.distinctUntilChanged().map { it.first }
             AuthStall.watchWaiting(held, _unreachable, UNREACHABLE_MS)
         }
@@ -723,6 +735,13 @@ object Td {
      * account or cannot remember the password has nothing to press. Logging out here throws away
      * an attempt rather than an account, since nobody is signed in yet.
      */
+    /**
+     * A new QR code on request ("Get a new code"). TDLib takes requestQrCodeAuthentication only
+     * from its first question, not while a code is up, so the sign in starts over with the QR
+     * method kept, which asks for a fresh code at once.
+     */
+    suspend fun refreshQrCode() = restartSignIn(SignInMethod.Qr)
+
     suspend fun restartSignIn(next: SignInMethod = SignInMethod.Undecided) {
         method = next
         methodAfterRestart = next
@@ -801,6 +820,23 @@ object Td {
         if (!facts.isSwitchFrom(before)) return
         val td = current ?: return
         scope.launch { tellNetworkType(td) }
+    }
+
+    /**
+     * The app came into view ([visible]) or left it. Coming back with no line, TDLib is told the
+     * network again, which reopens its connections at once rather than after the backoff it built
+     * up while the app was in the background: what Telegram's own apps do on resume. A line that
+     * is already up is left alone, since the call drops every connection.
+     */
+    fun onForegroundChanged(visible: Boolean) {
+        if (foreground.value == visible) return
+        foreground.value = visible
+        if (!visible) return
+        foregroundEpoch.value++
+        val td = current ?: return
+        if (_auth.value !is AuthState.Ready || _link.value.isUp) return
+        Logger.i(TAG, "back in view with no line; reopening connections")
+        scope.launch { tellNetworkType(td, force = true) }
     }
 
     private suspend fun tellNetworkType(td: TdlClient, force: Boolean = false) {
@@ -1255,7 +1291,7 @@ object Td {
     const val SIGN_IN_STALL_MS = 12_000L
 
     /** How long a signed in session goes without a line before [unreachable] says so. */
-    private const val UNREACHABLE_MS = 15_000L
+    private const val UNREACHABLE_MS = 20_000L
 
     /** How long a typed answer (a number, an email) waits for Telegram before the screen says so. */
     private const val SUBMIT_TIMEOUT_MS = 20_000L

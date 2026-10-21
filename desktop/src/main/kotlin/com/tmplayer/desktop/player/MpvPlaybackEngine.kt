@@ -481,7 +481,7 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
     private fun applyNightOptions(on: Boolean) {
         val h = handle
         runCatching { h.setPropertyString("ad-lavc-ac3drc", if (on) NIGHT_AC3_DRC else "0") }
-        runCatching { h.setPropertyString("audio-swresample-o", if (on) NIGHT_DOWNMIX else "") }
+        runCatching { h.setPropertyString("audio-swresample-o", if (on) NIGHT_DOWNMIX else DIALOGUE_DOWNMIX) }
     }
 
     private fun addCompressor() {
@@ -690,6 +690,14 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
 
         /** A Dolby track's own range control at full. */
         const val NIGHT_AC3_DRC = "1"
+
+        /**
+         * The fold to stereo when Night mode is off: the centre, where a film keeps its dialogue,
+         * at full rather than swresample's 3 dB down, the surrounds 3 dB down and the low effects
+         * channel well down, as the phone's fold (AudioDownmix.dialogueCoefficients) has them.
+         * Folded the textbook way the voices sank under the music and the effects.
+         */
+        const val DIALOGUE_DOWNMIX = "clev=1.0,slev=0.7071,lfe_mix_level=0.35"
 
         /** The centre 3 dB up, the surrounds 6 dB down and no low effects, when folding to stereo. */
         const val NIGHT_DOWNMIX = "clev=1.414,slev=0.5,lfe_mix_level=0"

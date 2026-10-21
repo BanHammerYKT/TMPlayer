@@ -42,6 +42,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -128,9 +130,9 @@ import com.tmplayer.ui.theme.rememberReducedMotion
 /**
  * Where the phone's floating bar can take the viewer, in the bar's order. Search comes after them,
  * a button that opens the search over the page rather than a page of its own, and the profile
- * picture last, which opens [ProfilePopover] with the viewer's own lists.
+ * picture last, which opens [ProfilePopover] with the viewer's own lists and Settings.
  */
-internal enum class TouchDestination { Home, Chats, Settings }
+internal enum class TouchDestination { Home, Chats }
 
 /** The profile picture's place on the bar: after every [TouchDestination] and Search. */
 internal val PROFILE_SLOT = TouchDestination.entries.size + 1
@@ -152,10 +154,14 @@ internal class TouchNav(
     val favoriteCount: Int,
     /** Downloads in flight, badged on the Downloads row and on the picture. */
     val downloadCount: Int,
+    /** "Your viewing" over the picture's menu: videos part way through, and videos watched. */
+    val watchingCount: Int = 0,
+    val watchedCount: Int = 0,
     val updateVersion: String?,
     val onHome: () -> Unit,
     val onChats: () -> Unit,
     val onSearch: () -> Unit,
+    /** Settings, from the picture's popover (the phone, the television's account menu). */
     val onSettings: () -> Unit,
     val onFavourites: () -> Unit,
     val onDownloads: () -> Unit,
@@ -190,7 +196,7 @@ internal class TouchPageSpec(
  * asked of the bar, and a search asked for from a page that has none of its own.
  *
  * One bar for every page, rather than a bar per page, is what lets its highlight slide from Home to
- * Settings rather than blink, and what keeps it still while the pages under it change.
+ * Chats rather than blink, and what keeps it still while the pages under it change.
  */
 @Stable
 internal class TouchChrome {
@@ -230,8 +236,8 @@ internal fun TouchPage(spec: TouchPageSpec?) {
 }
 
 /**
- * The phone's floating bar, hosted once over every page: Home, Chats, Settings, Search and the
- * viewer's picture, with the popover of Favourites, Downloads, History, Watch later and Update
+ * The phone's floating bar, hosted once over every page: Home, Chats, Search and the viewer's
+ * picture, with the popover of Favourites, Downloads, History, Watch later, Settings and Update
  * behind the picture.
  *
  * The bar floats, so it takes no room from the listing: it slides away as the list is pushed up
@@ -239,7 +245,7 @@ internal fun TouchPage(spec: TouchPageSpec?) {
  * It never hides while TalkBack is on (a control that moves away is one a screen reader cannot
  * find again), and it is out of the way while the keyboard is up. How much of the screen it keeps
  * is [LocalBottomChrome], which the lists under it pad their ends by. A page with no
- * [TouchPageSpec] (a chat, a Settings page, About) has no bar.
+ * [TouchPageSpec] (a chat, Settings, About) has no bar.
  */
 @OptIn(ExperimentalSharedTransitionApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -296,7 +302,7 @@ internal fun TouchNavHost(
         // own buttons over it when there is one. A rail keeps nothing at the foot but that pill.
         val room = if (spec == null) 0.dp else navigationBar + touchShellClearance(withActions = spec.actions != null, rail = rail)
         // And the room a rail keeps at the start, which the page is laid out beside. A page with
-        // no bar (a chat, a Settings page) has the whole width; the change eases rather than jumps.
+        // no bar (a chat, Settings) has the whole width; the change eases rather than jumps.
         val safe = WindowInsets.safeDrawing
         val railInset = with(density) {
             (if (direction == LayoutDirection.Ltr) safe.getLeft(this, direction) else safe.getRight(this, direction)).toDp()
@@ -362,7 +368,6 @@ internal fun TouchNavHost(
                             badged = nav.downloadCount > 0 || nav.updateVersion != null,
                             onHome = retap(TouchDestination.Home, nav.onHome),
                             onChats = retap(TouchDestination.Chats, nav.onChats),
-                            onSettings = nav.onSettings,
                             onSearch = nav.onSearch,
                             onProfile = { profileOpen = true },
                             searchShared = searchShared,
@@ -408,12 +413,16 @@ internal fun TouchNavHost(
                     railRoom = railRoom,
                     favoriteCount = nav.favoriteCount,
                     downloadCount = nav.downloadCount,
+                    watchingCount = nav.watchingCount,
+                    watchedCount = nav.watchedCount,
                     updateVersion = nav.updateVersion,
                     onDismiss = { profileOpen = false },
+                    onWatched = { profileOpen = false; nav.onHistory(HistoryTab.Watched) },
                     onFavourites = { profileOpen = false; nav.onFavourites() },
                     onDownloads = { profileOpen = false; nav.onDownloads() },
                     onHistory = { profileOpen = false; nav.onHistory(HistoryTab.Continue) },
                     onWatchLater = { profileOpen = false; nav.onHistory(HistoryTab.WatchLater) },
+                    onSettings = { profileOpen = false; nav.onSettings() },
                     onUpdate = { profileOpen = false; nav.onUpdate() },
                 )
             }
@@ -478,8 +487,8 @@ private const val TOP_GLIDE_ITEMS = 8
 
 /**
  * The touch shell: the page (which draws its own title, see [PhonePageFrame]), and the search page
- * over everything while it is open. The floating bar is [TouchNavHost]'s, shared with Settings and Downloads; this
- * tells it which page is up and what the page's own buttons are. Outside a host (the screenshot
+ * over everything while it is open. The floating bar is [TouchNavHost]'s, shared with Downloads;
+ * this tells it which page is up and what the page's own buttons are. Outside a host (the screenshot
  * fixture) the shell hosts a bar of its own from [nav].
  *
  * The page's buttons ride in a small pill over the bar rather than in the top bar, so a large phone
@@ -526,7 +535,7 @@ internal fun TouchBrowseShell(
             position = barPosition,
         ),
     )
-    // The bar's magnifier, pressed on a page (Settings, Downloads) that has no search of its own.
+    // The bar's magnifier, pressed on a page (Downloads) that has no search of its own.
     LaunchedEffect(host.searchAsked) {
         if (host.searchAsked) {
             host.searchAsked = false
@@ -647,7 +656,6 @@ private fun FloatingBar(
     badged: Boolean,
     onHome: () -> Unit,
     onChats: () -> Unit,
-    onSettings: () -> Unit,
     onSearch: () -> Unit,
     onProfile: () -> Unit,
     searchShared: Modifier,
@@ -740,7 +748,6 @@ private fun FloatingBar(
             val buttons: @Composable () -> Unit = {
                 BarButton(TmIcons.Home, s.browseTabHome, current == TouchDestination.Home, onHome)
                 BarButton(TmIcons.Chats, s.browseTabChats, current == TouchDestination.Chats, onChats)
-                BarButton(TmIcons.Settings, s.navSettings, current == TouchDestination.Settings, onSettings)
                 BarButton(TmIcons.Search, s.commonSearch, false, onSearch, role = Role.Button, modifier = searchShared)
                 ProfileButton(account, inProfile, badged, onProfile)
             }
@@ -872,8 +879,8 @@ private fun ProfilePicture(account: Account?, size: Dp) {
 
 /**
  * The viewer's own lists, behind their picture: a small card that grows out of the bottom end
- * corner over a dimmed screen, with Favourites, Downloads, History, Watch later, and Update when
- * there is one. Settings is on the bar itself; the account and About are in it.
+ * corner over a dimmed screen, with Favourites, Downloads, History and Watch later, then Settings
+ * (which carries the account, Sign out and About) and Update when there is one.
  * A tap outside, Back, or picking a row closes it.
  */
 @Composable
@@ -885,12 +892,16 @@ private fun ProfilePopover(
     railRoom: Dp,
     favoriteCount: Int,
     downloadCount: Int,
+    watchingCount: Int,
+    watchedCount: Int,
     updateVersion: String?,
     onDismiss: () -> Unit,
+    onWatched: () -> Unit,
     onFavourites: () -> Unit,
     onDownloads: () -> Unit,
     onHistory: () -> Unit,
     onWatchLater: () -> Unit,
+    onSettings: () -> Unit,
     onUpdate: () -> Unit,
 ) {
     val s = LocalStrings.current
@@ -952,21 +963,29 @@ private fun ProfilePopover(
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 4.dp),
             ) {
+                com.tmplayer.ui.components.ViewingSummary(
+                    watching = watchingCount,
+                    watched = watchedCount,
+                    starred = favoriteCount,
+                    onWatching = onHistory,
+                    onWatched = onWatched,
+                    onStarred = onFavourites,
+                )
+                HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
                 val rows = buildList<@Composable (Modifier) -> Unit> {
                     add { m -> PopoverRow(TmIcons.StarOutline, s.browseTabFavourites, favoriteCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onFavourites) }
                     add { m -> PopoverRow(TmIcons.Download, s.navDownloads, downloadCount.takeIf { it > 0 }?.toString(), modifier = m, onClick = onDownloads) }
                     add { m -> PopoverRow(TmIcons.History, s.browseTabHistory, null, modifier = m, onClick = onHistory) }
                     add { m -> PopoverRow(TmIcons.Clock, s.browseTabWatchLater, null, modifier = m, onClick = onWatchLater) }
+                    add { m -> PopoverRow(TmIcons.Settings, s.navSettings, null, modifier = m, onClick = onSettings) }
                     if (updateVersion != null) {
                         // Amber, as on the television's rail and the desktop's side bar: the one row that is news.
                         add { m -> PopoverRow(TmIcons.Refresh, s.navUpdate, updateVersion, ink = Tone.caution, modifier = m, onClick = onUpdate) }
                     }
                 }
                 rows.take(POPOVER_LISTS).forEach { it(Modifier) }
-                if (rows.size > POPOVER_LISTS) {
-                    HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
-                    rows.drop(POPOVER_LISTS).forEach { it(Modifier) }
-                }
+                HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 2.dp))
+                rows.drop(POPOVER_LISTS).forEach { it(Modifier) }
             }
         }
     }
@@ -982,12 +1001,24 @@ private fun PopoverRow(
     onClick: () -> Unit,
 ) {
     val press = remember { MutableInteractionSource() }
+    // A held or keyboard-focused row fills, as the desktop's popover rows do, so a press is seen
+    // under the thumb and not only in the ripple round it.
+    val pressed by press.collectIsPressedAsState()
+    val focused by press.collectIsFocusedAsState()
+    val fill by androidx.compose.animation.animateColorAsState(
+        if (pressed || focused) Tone.surfaceHigh else Color.Transparent,
+        com.tmplayer.ui.theme.Motion.standard(com.tmplayer.ui.theme.Motion.Fast),
+        label = "popoverRowFill",
+    )
     Row(
         modifier
             .fillMaxWidth()
             .height(POPOVER_ROW)
+            .padding(horizontal = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(fill)
             .clickable(interactionSource = press, indication = ripple(), role = Role.Button, onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -1058,7 +1089,7 @@ internal val BAR_SHADOW = 8.dp
 private val POPOVER_WIDTH = 208.dp
 private val POPOVER_ROW = 44.dp
 
-/** The popover's rows before the divider: the four lists; Update comes after it. */
+/** The popover's rows before the divider: the four lists; Settings and Update come after it. */
 private const val POPOVER_LISTS = 4
 private val POPOVER_SHAPE = RoundedCornerShape(20.dp)
 

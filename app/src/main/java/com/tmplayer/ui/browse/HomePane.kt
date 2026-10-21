@@ -74,6 +74,7 @@ import androidx.tv.material3.Text
 import com.tmplayer.data.HomeRow
 import com.tmplayer.data.HomeRows
 import com.tmplayer.data.MediaItem
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.Series
 import com.tmplayer.data.SeriesShelf
@@ -369,27 +370,17 @@ internal fun HomePane(
                     }
                 }
                 items(listed, key = { it.key }, contentType = { it::class }) { row ->
-                    val loaded = when (row) {
-                        is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> true
-                        is HomeRow.Chat -> row.loaded
-                        is HomeRow.Recent -> row.loaded
-                    }
+                    val loaded = row.isLoaded
                     // Asked for when the row first comes on screen, and again after a refresh empties it.
                     LaunchedEffect(row.key, loaded) { if (!loaded) onRowShown(row) }
                     val isFirst = row === listed.first()
-                    val title = when (row) {
-                        is HomeRow.Continue -> s.homeRowContinue
-                        is HomeRow.WatchLater -> s.homeRowWatchLater
-                        is HomeRow.NewEpisodes -> s.homeRowNewEpisodes
-                        is HomeRow.Chat -> row.title
-                        is HomeRow.Recent -> s.homeRowRecent
-                    }
+                    val title = homeRowTitle(row, s)
                     // Only a row that leaves something out offers the rest of it.
                     val seeAll: (() -> Unit)? = when (row) {
                         is HomeRow.Continue -> onSeeContinue
                         is HomeRow.WatchLater -> onSeeWatchLater
                         is HomeRow.Chat -> { { onOpenChat(row.chatId) } }
-                        is HomeRow.NewEpisodes, is HomeRow.Recent -> null
+                        is HomeRow.NewEpisodes, is HomeRow.Recent, is HomeRow.Across -> null
                     }?.takeIf { row.hasMore }
                     val countLabel = if (row.totalAtLeast) s.homeSeeAllCountAtLeast(row.total) else s.homeSeeAllCount(row.total)
                     // On a television "See all" sits on the heading, where it can be seen, but it only
@@ -502,6 +493,7 @@ internal fun HomePane(
                             }
                             is HomeRow.Chat -> ShelfRows(row.entries, watch, touch, isFirst, first, { row.title }, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
                             is HomeRow.Recent -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
+                            is HomeRow.Across -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
                         }
                     }
                 }
@@ -537,12 +529,7 @@ internal fun HomePane(
     // Somewhere for the remote to stand the moment Home opens. Keyed on the first row, so a row
     // arriving above (Continue appearing after a first play) moves focus to the new top.
     val firstKey = listed.firstOrNull()?.key
-    val firstReady = when (val top = listed.firstOrNull()) {
-        null -> false
-        is HomeRow.Chat -> top.loaded
-        is HomeRow.Recent -> top.loaded
-        is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> true
-    }
+    val firstReady = listed.firstOrNull()?.isLoaded == true
     LaunchedEffect(firstKey, firstReady) {
         if (!touch && firstReady && mayTakeFocus()) {
             runCatching { first.requestFocus() }
@@ -618,10 +605,15 @@ private fun LazyListScope.entries(
                 onFocused = {},
                 dense = touch,
                 poster = poster,
+                // Its first bytes asked for while the card is in focus or under the finger.
                 modifier = modifier,
             )
             is ShelfEntry.Show -> {
                 val progress = remember(entry.series, watch) { watch.progress(entry.series) }
+                // A show's card warms the episode its page would play.
+                val next = remember(progress, watch) {
+                    (progress.next ?: entry.series.episodes.firstOrNull())?.let { watch.pick(it, progress) }
+                }
                     SeriesCard(
                         series = entry.series,
                         progress = progress,
@@ -629,7 +621,7 @@ private fun LazyListScope.entries(
                         onClick = { onOpenSeries(entry.series) },
                         dense = touch,
                         poster = poster,
-                        modifier = modifier,
+                        modifier = modifier.warmUpOnIntent(next),
                     )
             }
         }

@@ -152,20 +152,8 @@ fun detailRow(
         DetailAction.UseMatch -> DetailRow(action, s.gridMatchAgain, TmIcons.Image, onSelect = onSelect)
         DetailAction.Rename -> DetailRow(action, s.gridRename, TmIcons.Edit, s.gridRenameDetail, onSelect = onSelect)
         DetailAction.CommentVideos -> DetailRow(action, s.detailCommentsVideos, TmIcons.Chats, onSelect = onSelect)
-        DetailAction.ForwardToSaved -> DetailRow(action, s.keepForwardSaved, TmIcons.Bookmark, s.keepForwardSavedDetail, onSelect = onSelect)
-        DetailAction.ForwardToChat -> DetailRow(action, s.keepForwardChat, TmIcons.Send, s.keepForwardChatDetail, onSelect = onSelect)
         DetailAction.ExportCopy -> DetailRow(action, s.keepExportGallery, TmIcons.Image, s.keepExportGalleryDetail, onSelect = onSelect)
     }
-}
-
-/**
- * A forward line for a video whose chat restricts saving and forwarding: it stays on the page
- * and says why under its name, and its press says it again rather than trying (CP82).
- */
-fun DetailRow.refusedForwarding(item: MediaItem, say: (String) -> Unit): DetailRow {
-    if (action != DetailAction.ForwardToSaved && action != DetailAction.ForwardToChat) return this
-    val why = com.tmplayer.data.KeepVideo.reason(com.tmplayer.data.KeepVideo.verdict(item.canBeSaved, null)) ?: return this
-    return copy(detail = why, onSelect = { say(why) })
 }
 
 /**

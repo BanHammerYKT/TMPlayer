@@ -945,7 +945,6 @@
     "size_smaller": "Más pequeño"
   },
   "keep": {
-    "cannot_post": "No puedes publicar en ese chat.",
     "export_failed": "No se pudo copiar: {reason}",
     "export_folder": "Copiar a una carpeta",
     "export_folder_detail": "Una copia de la descarga donde quieras",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Una copia en Movies/TMPlayer, para otras apps",
     "exported_folder": "Copiado a {folder}",
     "exported_gallery": "Guardado en Movies/TMPlayer",
-    "exporting": "Copiando {title}",
-    "failed": "No se pudo reenviar: {reason}",
-    "forward_chat": "Reenviar a un chat",
-    "forward_chat_detail": "Comparte la publicación, no se descarga nada",
-    "forward_none": "No hay ningún chat al que reenviarlo.",
-    "forward_saved": "Reenviar a Mensajes guardados",
-    "forward_saved_detail": "Lo guarda en tu propio Telegram, no se descarga nada",
-    "forward_search": "Buscar un chat",
-    "forward_title": "Reenviar a",
-    "forwarded_saved": "Reenviado a Mensajes guardados",
-    "forwarded_to": "Reenviado a {chat}",
-    "forwarding": "Reenviando",
-    "not_forwardable": "Telegram no permite reenviar esta publicación.",
-    "protected": "Este chat no permite reenviar ni guardar sus videos."
+    "exporting": "Copiando {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

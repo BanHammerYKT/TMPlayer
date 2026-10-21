@@ -38,6 +38,7 @@ private val COMPACT_NAV = booleanPreferencesKey("compact_nav")
 private val DOWNMIX_STEREO = booleanPreferencesKey("downmix_stereo")
 private val VOLUME_BOOST = booleanPreferencesKey("volume_boost")
 private val NIGHT_MODE = booleanPreferencesKey("night_mode")
+private val EVEN_VOLUME = booleanPreferencesKey("even_volume")
 private val RESUME_SYNC = booleanPreferencesKey("resume_sync")
 private val RESUME_SYNC_MESSAGE = longPreferencesKey("resume_sync_message")
 private val RESUME_SYNC_KEYS = stringPreferencesKey("resume_sync_keys")
@@ -101,6 +102,15 @@ private val PURE_BLACK = booleanPreferencesKey("pure_black")
 
 /** The accent colour, an [Accent] by name. About the device's look, so it outlives a sign out. */
 private val ACCENT = stringPreferencesKey("accent")
+
+/** The viewer's own accent as ARGB, used while [ACCENT] says Custom. The device's look, like [ACCENT]. */
+private val ACCENT_CUSTOM = longPreferencesKey("accent_custom")
+
+/** The typeface, an [AppTypeface] by name. */
+private val APP_TYPEFACE = stringPreferencesKey("app_typeface")
+
+/** Second lines and edges brought forward. */
+private val HIGH_CONTRAST = booleanPreferencesKey("high_contrast")
 
 private val LANGUAGE = stringPreferencesKey("language")
 
@@ -362,6 +372,9 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
             // is how sparingly it may use the mobile data it pays for.
             val device = listOf(LIGHTER_PICTURES, REDUCE_MOTION, DEVICE_CARD_DISMISSED, DEVICE_HINT_SHOWN, SAVE_MOBILE_DATA)
                 .mapNotNull { key -> prefs[key]?.let { Pair(key, it) } }
+            val customAccent = prefs[ACCENT_CUSTOM]
+            val typeface = prefs[APP_TYPEFACE]
+            val highContrast = prefs[HIGH_CONTRAST]
             val migrated = prefs[DOWNLOADS_MIGRATED]
             val support = SUPPORT_KEYS.mapNotNull { key -> prefs[key]?.let { Pair(key, it) } }
             val supportNever = prefs[SUPPORT_NEVER]
@@ -384,6 +397,9 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
             accent?.let { prefs[ACCENT] = it }
             dynamic?.let { prefs[DYNAMIC_COLOUR] = it }
             uiScale?.let { prefs[UI_SCALE] = it }
+            customAccent?.let { prefs[ACCENT_CUSTOM] = it }
+            typeface?.let { prefs[APP_TYPEFACE] = it }
+            highContrast?.let { prefs[HIGH_CONTRAST] = it }
             for ((key, value) in device) prefs[key] = value
             for ((key, value) in support) prefs[key] = value
             supportNever?.let { prefs[SUPPORT_NEVER] = it }
@@ -669,6 +685,20 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
 
     /** Read before the player is built, like [volumeBoostNow]. */
     suspend fun nightModeNow(): Boolean = prefs.data.first()[NIGHT_MODE] ?: false
+
+    /**
+     * Even out volume: a track mastered quietly (a film made for a cinema, most surround tracks)
+     * lifted towards the level of everything else, never past a cap and never clipped. On until
+     * turned off, because a film 10 dB quieter than the video before it is the common case.
+     */
+    val evenVolume: Flow<Boolean> = read { it[EVEN_VOLUME] ?: true }
+
+    suspend fun setEvenVolume(value: Boolean) {
+        prefs.edit { it[EVEN_VOLUME] = value }
+    }
+
+    /** Read before the player is built, like [volumeBoostNow]. */
+    suspend fun evenVolumeNow(): Boolean = prefs.data.first()[EVEN_VOLUME] ?: true
 
     /**
      * Resume across devices ([ResumeSync]): Continue watching kept in a message in the viewer's
@@ -1861,6 +1891,65 @@ class SettingsStore(private val prefs: DataStore<Preferences>) {
 
     suspend fun setAccent(value: Accent) {
         prefs.edit { it[ACCENT] = value.name }
+    }
+
+    /** The viewer's own accent colour as ARGB, or null before one was picked; see [Accent.Custom]. */
+    val customAccent: Flow<Int?> = read { it[ACCENT_CUSTOM]?.toInt() }
+
+    /** Picks [argb] as the accent, and makes it the one in use. */
+    suspend fun setCustomAccent(argb: Int) {
+        prefs.edit {
+            it[ACCENT_CUSTOM] = argb.toLong() and 0xFFFFFFFFL
+            it[ACCENT] = Accent.Custom.name
+        }
+    }
+
+    /** The typeface every screen is set in; see [AppTypeface]. */
+    val typeface: Flow<AppTypeface> = read { AppTypeface.from(it[APP_TYPEFACE]) }
+
+    suspend fun setTypeface(value: AppTypeface) {
+        prefs.edit { it[APP_TYPEFACE] = value.name }
+    }
+
+    /** Second lines and edges brought forward. */
+    val highContrast: Flow<Boolean> = read { it[HIGH_CONTRAST] ?: false }
+
+    suspend fun setHighContrast(value: Boolean) {
+        prefs.edit { it[HIGH_CONTRAST] = value }
+    }
+
+    /**
+     * "Back to the defaults" on the Appearance page: the theme, Pure black, the accent and the
+     * viewer's own colour, the wallpaper's colours, the interface size, the typeface and the
+     * contrast as a fresh install has them. Hands back what they were, for Undo.
+     */
+    suspend fun resetAppearance(): AppearanceSnapshot {
+        var before: AppearanceSnapshot? = null
+        prefs.edit { p ->
+            before = AppearanceSnapshot(
+                theme = p[THEME_CHOICE], pureBlack = p[PURE_BLACK], accent = p[ACCENT], customAccent = p[ACCENT_CUSTOM]?.toInt(),
+                dynamic = p[DYNAMIC_COLOUR], uiScale = p[UI_SCALE], typeface = p[APP_TYPEFACE], highContrast = p[HIGH_CONTRAST],
+            )
+            listOf(THEME_CHOICE, ACCENT, UI_SCALE, APP_TYPEFACE).forEach { p.remove(it) }
+            listOf(PURE_BLACK, DYNAMIC_COLOUR, HIGH_CONTRAST).forEach { p.remove(it) }
+            p.remove(ACCENT_CUSTOM)
+        }
+        return before!!
+    }
+
+    /** Puts back what [resetAppearance] took away. */
+    suspend fun restoreAppearance(snapshot: AppearanceSnapshot) {
+        prefs.edit { p ->
+            fun <T> put(key: Preferences.Key<T>, value: T?) { if (value == null) p.remove(key) else p[key] = value }
+            put(THEME_CHOICE, snapshot.theme)
+            put(PURE_BLACK, snapshot.pureBlack)
+            put(ACCENT, snapshot.accent)
+            put(ACCENT_CUSTOM, snapshot.customAccent?.let { it.toLong() and 0xFFFFFFFFL })
+            put(DYNAMIC_COLOUR, snapshot.dynamic)
+            put(UI_SCALE, snapshot.uiScale)
+            put(APP_TYPEFACE, snapshot.typeface)
+            put(HIGH_CONTRAST, snapshot.highContrast)
+        }
     }
 
     /** A stored Black, rewritten as Dark with the Pure black switch on. */

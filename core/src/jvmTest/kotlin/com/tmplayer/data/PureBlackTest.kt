@@ -97,7 +97,8 @@ class PureBlackTest {
     fun `the accent is Telegram blue until one is picked, and outlives a sign out`() = runBlocking {
         assertEquals(Accent.Telegram, settings.accent.first())
         assertEquals(Accent.Telegram, Accent.from("Nonsense"))
-        assertEquals(Accent.Monochrome, Accent.entries.last())
+        assertEquals(Accent.Custom, Accent.entries.last())
+        assertTrue(Accent.Monochrome in Accent.entries)
         settings.setAccent(Accent.Red)
         settings.clearEverything()
         assertEquals(Accent.Red, settings.accent.first())

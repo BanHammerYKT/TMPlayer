@@ -945,7 +945,6 @@
     "size_smaller": "کوچک‌تر"
   },
   "keep": {
-    "cannot_post": "نمی‌توانید در آن گفتگو پست بگذارید.",
     "export_failed": "کپی نشد: {reason}",
     "export_folder": "کپی در یک پوشه",
     "export_folder_detail": "یک نسخه از دانلود هر جا که بخواهید",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "یک نسخه در Movies/TMPlayer، برای برنامه‌های دیگر",
     "exported_folder": "در {folder} کپی شد",
     "exported_gallery": "در Movies/TMPlayer ذخیره شد",
-    "exporting": "در حال کپی {title}",
-    "failed": "هدایت نشد: {reason}",
-    "forward_chat": "هدایت به یک گفتگو",
-    "forward_chat_detail": "پست را هم‌رسانی می‌کند، چیزی دانلود نمی‌شود",
-    "forward_none": "گفتگویی برای هدایت نیست.",
-    "forward_saved": "هدایت به پیام‌های ذخیره‌شده",
-    "forward_saved_detail": "آن را در Telegram خودتان نگه می‌دارد، چیزی دانلود نمی‌شود",
-    "forward_search": "یافتن گفتگو",
-    "forward_title": "هدایت به",
-    "forwarded_saved": "به پیام‌های ذخیره‌شده هدایت شد",
-    "forwarded_to": "به {chat} هدایت شد",
-    "forwarding": "در حال هدایت",
-    "not_forwardable": "Telegram اجازه هدایت این پست را نمی‌دهد.",
-    "protected": "این گفتگو اجازه هدایت یا ذخیره ویدیوهایش را نمی‌دهد."
+    "exporting": "در حال کپی {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

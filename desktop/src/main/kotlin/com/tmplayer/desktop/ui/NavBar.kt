@@ -101,9 +101,9 @@ import com.tmplayer.ui.theme.rememberReducedMotion
 /**
  * The window's navigation, the phone's floating bar brought to the desktop: one rounded pill
  * centred at the foot of the page, floating over it with the floating hairline and a soft shadow,
- * holding Home, Chats, Settings, Search (the Ctrl+K palette) and the viewer's picture, which opens
- * their own lists (Favourites, Downloads, History, Watch later, and Update when there is one), the
- * phone's bar and popover as they are now.
+ * holding Home, Chats, Search (the Ctrl+K palette) and the viewer's picture, which opens their own
+ * lists (Favourites, Downloads, History, Watch later), then Settings, and Update when there is one:
+ * the phone's bar and popover as they are now (Settings left the bar for the picture, 2026-10-21).
  *
  * It replaces the side bar of earlier versions, so the desktop and the phone are one app: the
  * pages get the whole width of the window, and the same places sit in the same order. A pointer
@@ -147,7 +147,7 @@ fun NavFrame(
 }
 
 /** Which of the bar's buttons the page on screen lights, or null for none (a page behind the picture). */
-internal enum class NavPlace { Home, Chats, Settings, Search }
+internal enum class NavPlace { Home, Chats, Search }
 
 /** The bar's lit button for where the window is. */
 internal fun navPlaceOf(state: ShellState): NavPlace? = when {
@@ -156,15 +156,14 @@ internal fun navPlaceOf(state: ShellState): NavPlace? = when {
     else -> when (state.destination) {
         Destination.Home -> NavPlace.Home
         Destination.Chats -> NavPlace.Chats
-        Destination.Settings -> NavPlace.Settings
-        Destination.Favourites, Destination.History, Destination.Downloads -> null
+        Destination.Settings, Destination.Favourites, Destination.History, Destination.Downloads -> null
     }
 }
 
 /** True on the pages behind the picture, which then wears a ring. */
 private fun inProfile(state: ShellState): Boolean =
     !state.paletteOpen && state.openChat == null &&
-        state.destination in setOf(Destination.Favourites, Destination.History, Destination.Downloads)
+        state.destination in setOf(Destination.Favourites, Destination.History, Destination.Downloads, Destination.Settings)
 
 /** The command key as the OS names it, for the tooltips. */
 private val COMMAND = if (OsInfo.isMac) "⌘" else "Ctrl+"
@@ -232,7 +231,6 @@ private fun NavBar(
                         val open = state.chatSection
                         state.showChats(if (open.onChatsPage) open else BrowseSection.of(BrowseTab.Chats))
                     }
-                    NavButton(TmIcons.Settings, s.navSettings, "$COMMAND,", current == NavPlace.Settings) { state.go(Destination.Settings) }
                     NavButton(TmIcons.Search, s.commonSearch, "${COMMAND}K", current == NavPlace.Search) { state.paletteOpen = !state.paletteOpen }
                     ProfileButton(
                         account = account,
@@ -427,6 +425,8 @@ private fun BoxScope.ProfilePopover(state: ShellState, update: NavUpdate?, ancho
         )
     }
     val favourites by state.settings.favorites.collectAsState(initial = emptySet())
+    val watching by state.settings.continueWatching.collectAsState(initial = emptyList())
+    val watchedVideos by state.watched.watched.collectAsState(initial = emptyMap())
     val inFlight = rememberDownloadsInFlight()
     val half = POPOVER_WIDTH / 2
     Box(
@@ -466,10 +466,21 @@ private fun BoxScope.ProfilePopover(state: ShellState, update: NavUpdate?, ancho
                     }
                     .padding(vertical = 6.dp),
             ) {
+                com.tmplayer.ui.components.ViewingSummary(
+                    watching = watching.size,
+                    watched = watchedVideos.size,
+                    starred = favourites.size,
+                    onWatching = close { state.showHistory(HistoryTab.Continue) },
+                    onWatched = close { state.showHistory(HistoryTab.Watched) },
+                    onStarred = close { state.go(Destination.Favourites) },
+                )
+                HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), color = Tone.outline)
                 PopoverRow(TmIcons.StarOutline, s.browseTabFavourites, favourites.size.takeIf { it > 0 }?.toString(), Modifier.focusRequester(first), onClick = close { state.go(Destination.Favourites) })
                 PopoverRow(TmIcons.Download, s.navDownloads, inFlight.takeIf { it > 0 }?.toString(), onClick = close { state.go(Destination.Downloads) })
                 PopoverRow(TmIcons.History, s.browseTabHistory, null, onClick = close { state.showHistory(HistoryTab.Continue) })
                 PopoverRow(TmIcons.Clock, s.browseTabWatchLater, null, onClick = close { state.showHistory(HistoryTab.WatchLater) })
+                HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), color = Tone.outline)
+                PopoverRow(TmIcons.Settings, s.navSettings, null, shortcut = "$COMMAND,", onClick = close { state.go(Destination.Settings) })
                 if (update != null) {
                     // Amber, as on the television's rail and the phone's popover: the one row that is news.
                     HorizontalDivider(Modifier.padding(horizontal = 14.dp, vertical = 4.dp), color = Tone.outline)

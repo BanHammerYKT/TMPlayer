@@ -73,6 +73,7 @@ private const val FULLSCREEN_SETTLE_MS = 250L
 fun main(args: Array<String>) {
     // Loads every native library, reports, exits: no window, no second instance check.
     args.firstOrNull(SelfTest::matches)?.let { exitProcess(SelfTest.run(it)) }
+    com.tmplayer.data.PerfLog.processStart
     // Before the first window: sway and its kind never reparent, which AWT has to be told.
     NonReparentingWm.applyIfNeeded()
     // TDLib's Windows DLL needs the C++ runtime; take the bundled JVM's copy (see WindowsRuntime).
@@ -115,6 +116,9 @@ fun main(args: Array<String>) {
         // The viewer's corrections to names and groups, for every screen that arranges a chat.
         com.tmplayer.data.VideoCorrections.follow(settings)
         OnlineMetadata.current = desktopOnlineMetadata()
+        // Home as it was last built, read now so its first frame finds it in memory (HomeCache).
+        com.tmplayer.data.HomeCache.file = java.io.File(DesktopPaths.dataDir, "home-cache.json")
+        Background.scope.launch { runCatching { com.tmplayer.data.HomeCache.preload() } }
         // What an earlier run was in the middle of comes back paused, once there is an account to
         // ask TDLib about.
         // A storage move a crash or a kill cut short is finished first: it needs the settings store
@@ -134,6 +138,8 @@ fun main(args: Array<String>) {
             (Runtime.getRuntime().maxMemory() / 6).coerceIn(64L shl 20, 256L shl 20).toInt(),
         )
         Background.scope.launch { settings.lighterPictures.collect { com.tmplayer.data.Thumbnails.light = it } }
+        // The stream warm-up stays out of Low storage mode ([com.tmplayer.player.StreamWarmup]).
+        Background.scope.launch { settings.lowStorageMode.collect { low -> com.tmplayer.player.StreamWarmup.allowed = { !low } } }
         Background.scope.launch { settings.reduceMotion.collect { com.tmplayer.ui.theme.Motion.reduced = it } }
         // `-Dtmplayer.lowend=true`: the low-end verdict, short of storage, for checking the card and the step.
         if (System.getProperty("tmplayer.lowend") == "true") {
@@ -170,6 +176,11 @@ fun main(args: Array<String>) {
             val windowState = remember { WindowMemory.load() }
             LaunchedEffect(windowState) { WindowMemory.follow(windowState) }
             val shell = remember { ShellState(settings, DesktopServices.downloads, DesktopServices.watched, bookmarks = DesktopServices.bookmarks) }
+            // A card under the pointer or a key on it warms its stream (PlaybackWarmup, StreamWarmup).
+            androidx.compose.runtime.DisposableEffect(shell) {
+                com.tmplayer.data.PlaybackWarmup.warmer = com.tmplayer.data.PlaybackWarmup.Warmer { shell.warmStream(it) }
+                onDispose { com.tmplayer.data.PlaybackWarmup.warmer = null }
+            }
             val quit = {
                 // Saving is a courtesy; a failure there must never keep the app from closing.
                 runCatching { WindowMemory.save(windowState) }
@@ -407,7 +418,12 @@ fun DesktopTheme(settings: SettingsStore, content: @Composable () -> Unit) {
     // fills whatever space it is given, so it is the same at every size.
     val scale by rememberUiScale(settings)
     val accent by settings.accent.collectAsState(initial = com.tmplayer.data.Accent.Default)
-    TmMaterialTheme(dark = dark, black = black, accent = accent) { ProvideFocusVisibility { UiScaled(scale, content) } }
+    val customAccent by settings.customAccent.collectAsState(initial = null)
+    val highContrast by settings.highContrast.collectAsState(initial = false)
+    val typeface by settings.typeface.collectAsState(initial = com.tmplayer.data.AppTypeface.Default)
+    TmMaterialTheme(dark = dark, black = black, accent = accent, customAccent = customAccent, highContrast = highContrast, typeface = typeface) {
+        ProvideFocusVisibility { UiScaled(scale, content) }
+    }
 }
 
 /**
@@ -430,4 +446,4 @@ internal fun desktopOnlineMetadata(): OnlineMetadata = OnlineMetadata(
     store = MetadataStore(java.io.File(DesktopPaths.dataDir, "online-metadata.properties")),
     cache = MetadataCache(java.io.File(DesktopPaths.cacheDir, "online-metadata")),
     appVersion = BuildInfo.VERSION,
-).also { metadata -> Background.scope.launch { runCatching { metadata.cache.prune() } } }
+).also { metadata -> Background.scope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }

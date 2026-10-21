@@ -945,7 +945,6 @@
     "size_smaller": "小さい"
   },
   "keep": {
-    "cannot_post": "そのチャットには投稿できません。",
     "export_failed": "コピーできませんでした: {reason}",
     "export_folder": "フォルダにコピー",
     "export_folder_detail": "ダウンロードのコピーを好きな場所に",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Movies/TMPlayerにコピーし、他のアプリでも使えます",
     "exported_folder": "{folder}にコピーしました",
     "exported_gallery": "Movies/TMPlayerに保存しました",
-    "exporting": "{title}をコピー中",
-    "failed": "転送できませんでした: {reason}",
-    "forward_chat": "チャットに転送",
-    "forward_chat_detail": "投稿を共有します。何もダウンロードしません",
-    "forward_none": "転送先のチャットがありません。",
-    "forward_saved": "保存済みメッセージに転送",
-    "forward_saved_detail": "自分のTelegramに残します。何もダウンロードしません",
-    "forward_search": "チャットを探す",
-    "forward_title": "転送先",
-    "forwarded_saved": "保存済みメッセージに転送しました",
-    "forwarded_to": "{chat}に転送しました",
-    "forwarding": "転送中",
-    "not_forwardable": "Telegramではこの投稿の転送が許可されていません。",
-    "protected": "このチャットでは動画の転送や保存が許可されていません。"
+    "exporting": "{title}をコピー中"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

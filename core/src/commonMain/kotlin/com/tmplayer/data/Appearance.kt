@@ -145,6 +145,12 @@ enum class Accent(private val labelText: () -> String) {
     Violet({ L.accentViolet }),
     Pink({ L.accentPink }),
     Monochrome({ L.accentMonochrome }),
+
+    /**
+     * The viewer's own colour ([SettingsStore.customAccent]), made readable on the light and the
+     * dark ground before it is used: see `TmCustomAccent` in `:ui`.
+     */
+    Custom({ L.accentCustom }),
     ;
 
     val label: String get() = labelText()
@@ -155,3 +161,38 @@ enum class Accent(private val labelText: () -> String) {
         fun from(stored: String?): Accent = entries.firstOrNull { it.name == stored } ?: Default
     }
 }
+
+/**
+ * The letters every screen is set in, under Appearance (REELBOX-PARITY: typeface choice). The
+ * system's own face, its serif, and its monospaced one: all three are on every Android and every
+ * desktop, so nothing is bundled and the app stays its size. Stored by name.
+ */
+enum class AppTypeface(private val labelText: () -> String) {
+    System({ L.settingsTypefaceSystem }),
+    Serif({ L.settingsTypefaceSerif }),
+    Typewriter({ L.settingsTypefaceTypewriter }),
+    ;
+
+    val label: String get() = labelText()
+
+    companion object {
+        val Default = System
+
+        fun from(stored: String?): AppTypeface = entries.firstOrNull { it.name == stored } ?: Default
+    }
+}
+
+/**
+ * Everything "Back to the defaults" puts back, as it was just before, so Undo can put it back
+ * again ([SettingsStore.resetAppearance], [SettingsStore.restoreAppearance]).
+ */
+data class AppearanceSnapshot(
+    val theme: String?,
+    val pureBlack: Boolean?,
+    val accent: String?,
+    val customAccent: Int?,
+    val dynamic: Boolean?,
+    val uiScale: String?,
+    val typeface: String?,
+    val highContrast: Boolean?,
+)

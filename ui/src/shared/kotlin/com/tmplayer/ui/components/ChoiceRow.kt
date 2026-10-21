@@ -63,8 +63,10 @@ fun ChoiceRow(
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(Corner.Medium)
+    // A new choice taken is one tick; the one already chosen pressed again is not news.
+    val tick = rememberStepTick()
     val target = if (selected != null) {
-        Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+        Modifier.selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = { if (!selected) tick(); onClick() })
     } else {
         Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick)
     }

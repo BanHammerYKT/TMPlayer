@@ -130,7 +130,9 @@ fun DesktopShell(
         ) {
             val auth by Td.auth.collectAsState()
             Box(Modifier.fillMaxSize()) {
-                val signedIn = auth == AuthState.Ready
+                // The QR code stays up for a moment after it is scanned, marked "Scanned".
+                val shownAuth = com.tmplayer.ui.auth.rememberScanHold(auth)
+                val signedIn = shownAuth == AuthState.Ready
                 // A sign in screen arms the setup that follows it (CP67, see Setup).
                 LaunchedEffect(auth) {
                     if (Setup.isSignInStep(auth)) {
@@ -163,7 +165,7 @@ fun DesktopShell(
                     // loads under it and is where it was when the setup ends.
                     Browse(state, player)
                 } else {
-                    SignInScreen(auth)
+                    SignInScreen(shownAuth)
                 }
                 // Telegram out of reach on a screen already drawn: a sign in pane with no line yet,
                 // or a session whose network is up and Telegram is not answering (blocked, most

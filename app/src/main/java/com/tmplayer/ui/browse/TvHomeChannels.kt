@@ -38,6 +38,7 @@ object HomeLaunch {
                 when (row) {
                     is HomeRow.Recent -> row.entries.asSequence()
                     is HomeRow.Chat -> row.entries.asSequence()
+                    is HomeRow.Across -> row.entries.asSequence()
                     else -> emptySequence()
                 }
             }
@@ -88,8 +89,10 @@ fun TvHomeChannels(
     val starredIds = remember(starred) { starred.map { it.id } }
     LaunchedEffect(enabled, signedIn, starredIds) {
         if (enabled != true || !signedIn) return@LaunchedEffect
-        if (starredIds.size >= HomeRows.RECENT_MIN_STARRED) model.requestRecent()
-        else starredIds.singleOrNull()?.let(model::request)
+        // Home fills itself from the search across chats, which with one starred chat or none is
+        // where the default channel's videos come from too.
+        model.requestRecent()
+        starredIds.singleOrNull()?.let(model::request)
     }
     // Watch later's records keep no picture; Home looks each one up for its tile, and so do the cards.
     val later = remember(rows) { rows.filterIsInstance<HomeRow.WatchLater>().firstOrNull()?.records.orEmpty() }

@@ -7,11 +7,42 @@ import org.junit.Test
 class AudioDownmixTest {
 
     @Test
-    fun `a phone folds 5 point 1 down to two channels`() {
-        assertTrue(
-            AudioDownmix.folds(television = false)
-                .contains(AudioDownmix.Fold.ConstantPower(6)),
+    fun `a phone folds 5 point 1 down to two channels, dialogue forward`() {
+        assertEquals(
+            AudioDownmix.Fold.Wide(6, AudioDownmix.dialogueCoefficients(6)!!),
+            AudioDownmix.folds(television = false)[5],
         )
+    }
+
+    /** Row major pairs: what input [channel] gives the left and the right output. */
+    private fun pair(coefficients: FloatArray, channel: Int) = coefficients[channel * 2] to coefficients[channel * 2 + 1]
+
+    @Test
+    fun `the centre, where the dialogue is, reaches both sides at full in every surround layout`() {
+        for (channels in listOf(3, 5, 6, 7, 8)) {
+            val c = AudioDownmix.dialogueCoefficients(channels)!!
+            assertEquals("$channels", 1f to 0f, pair(c, 0))
+            assertEquals("$channels", 0f to 1f, pair(c, 1))
+            assertEquals("$channels", AudioDownmix.CENTRE to AudioDownmix.CENTRE, pair(c, 2))
+        }
+    }
+
+    /** The bug behind quiet 7.1 tracks: the alternating fold sent the centre left only, at half. */
+    @Test
+    fun `seven point one no longer sends its centre to the left alone`() {
+        val old = AudioDownmix.wideCoefficients(8)
+        assertEquals(0.5f to 0f, pair(old, 2))
+        assertEquals(AudioDownmix.Fold.Wide(8, AudioDownmix.dialogueCoefficients(8)!!), AudioDownmix.folds(television = false)[7])
+        val c = AudioDownmix.dialogueCoefficients(8)!!
+        // Side surrounds to their own side, like the back ones.
+        assertEquals(AudioDownmix.SURROUND to 0f, pair(c, 6))
+        assertEquals(0f to AudioDownmix.SURROUND, pair(c, 7))
+    }
+
+    @Test
+    fun `quad has no centre and keeps media3's fold`() {
+        assertEquals(null, AudioDownmix.dialogueCoefficients(4))
+        assertEquals(AudioDownmix.Fold.ConstantPower(4), AudioDownmix.folds(television = false)[3])
     }
 
     @Test
@@ -54,7 +85,7 @@ class AudioDownmixTest {
 
     @Test
     fun `a wide fold keeps the power constant, so it cannot clip`() {
-        for (channels in 7..AudioDownmix.MAX_LAYOUT) {
+        for (channels in 9..AudioDownmix.MAX_LAYOUT) {
             val coefficients = AudioDownmix.wideCoefficients(channels)
             for (output in 0 until AudioDownmix.STEREO) {
                 val power = (0 until channels).sumOf { input ->

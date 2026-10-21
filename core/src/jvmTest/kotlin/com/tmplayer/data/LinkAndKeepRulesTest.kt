@@ -73,35 +73,6 @@ class LinkAndKeepRulesTest {
     }
 
     @Test
-    fun `forwarding follows the saving rule, then telegram's own flag`() {
-        assertEquals(KeepVideo.Forwarding.Protected, KeepVideo.verdict(canBeSaved = false, canBeForwarded = true))
-        assertEquals(KeepVideo.Forwarding.Protected, KeepVideo.verdict(canBeSaved = true, canBeForwarded = true, protectedContent = true))
-        assertEquals(KeepVideo.Forwarding.NotForwardable, KeepVideo.verdict(canBeSaved = true, canBeForwarded = false))
-        assertEquals(KeepVideo.Forwarding.Allowed, KeepVideo.verdict(canBeSaved = true, canBeForwarded = true))
-        // Not asked yet: offered, and Telegram is asked at the press.
-        assertEquals(KeepVideo.Forwarding.Allowed, KeepVideo.verdict(canBeSaved = true, canBeForwarded = null))
-        assertEquals(L.keepProtected, KeepVideo.reason(KeepVideo.Forwarding.Protected))
-        assertNull(KeepVideo.reason(KeepVideo.Forwarding.Allowed))
-    }
-
-    @Test
-    fun `a forward carries every piece of a cut video and every part of a film`() {
-        assertEquals(listOf(100L), KeepVideo.messagesOf(video()))
-        val pieces = video(messageId = 101).copy(pieces = listOf(video(messageId = 101), video(messageId = 102), video(messageId = 103)))
-        assertEquals(listOf(101L, 102L, 103L), KeepVideo.messagesOf(pieces))
-        val parts = video(messageId = 200).copy(parts = listOf(video(messageId = 200), video(messageId = 205)))
-        assertEquals(listOf(200L, 205L), KeepVideo.messagesOf(parts))
-    }
-
-    @Test
-    fun `the picker lists saved messages first, never a channel, only what the kids lock allows`() {
-        val chats = listOf(chat(1, ChatKind.Channel), chat(2, ChatKind.Group, "Weekend group"), chat(3, ChatKind.Saved, "Saved Messages"), chat(4, ChatKind.Direct, "Anna"))
-        assertEquals(listOf(3L, 2L, 4L), KeepVideo.targets(chats, null).map { it.id })
-        assertEquals(listOf(2L), KeepVideo.targets(chats, setOf(1L, 2L)).map { it.id })
-        assertEquals(listOf(4L), KeepVideo.targets(chats, null, query = "ann").map { it.id })
-    }
-
-    @Test
     fun `a copy out needs saving allowed and the whole download here`() {
         assertTrue(KeepVideo.mayExport(canBeSaved = true, inDownloads = true))
         assertFalse(KeepVideo.mayExport(canBeSaved = false, inDownloads = true))
@@ -109,19 +80,8 @@ class LinkAndKeepRulesTest {
     }
 
     @Test
-    fun `forward errors are said`() {
-        assertEquals(L.keepProtected, KeepVideo.forwardFailure("CHAT_FORWARDS_RESTRICTED"))
-        assertEquals(L.keepCannotPost, KeepVideo.forwardFailure("CHAT_WRITE_FORBIDDEN"))
-    }
-
-    @Test
-    fun `the detail page offers keeping and comments only where they apply`() {
+    fun `the detail page offers a copy out and comments only where they apply`() {
         val base = DetailContext(canBeSaved = true)
-        assertFalse(DetailActions.of(base).contains(DetailAction.ForwardToSaved))
-        val forwarding = DetailActions.of(base.copy(canForward = true))
-        assertTrue(forwarding.containsAll(listOf(DetailAction.ForwardToSaved, DetailAction.ForwardToChat)))
-        // Still offered in a restricted chat, where the line says why it cannot be used.
-        assertTrue(DetailActions.of(base.copy(canBeSaved = false, canForward = true)).contains(DetailAction.ForwardToChat))
         assertTrue(DetailActions.of(base.copy(canExport = true, inDownloads = true)).contains(DetailAction.ExportCopy))
         assertFalse(DetailActions.of(base.copy(canExport = true, inDownloads = false)).contains(DetailAction.ExportCopy))
         assertFalse(DetailActions.of(base.copy(canBeSaved = false, canExport = true, inDownloads = true)).contains(DetailAction.ExportCopy))

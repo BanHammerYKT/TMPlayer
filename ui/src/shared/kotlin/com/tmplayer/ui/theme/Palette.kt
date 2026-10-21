@@ -292,7 +292,7 @@ fun ColorScheme.withAccent(accent: Accent, dark: Boolean): ColorScheme {
 object TmAccents {
 
     fun roles(accent: Accent, dark: Boolean): AccentRoles? = when (accent) {
-        Accent.Telegram -> null
+        Accent.Telegram, Accent.Custom -> null
         else -> (if (dark) darkRoles else lightRoles).getValue(accent)
     }
 
@@ -495,10 +495,17 @@ fun TmMaterialTheme(
     black: Boolean = false,
     /** The accent colour, Telegram blue unless the viewer picked another. */
     accent: Accent = Accent.Default,
-    scheme: ColorScheme = animateAccentRoles(TmSchemes.of(dark, black, accent)),
+    /** The viewer's own colour as ARGB, used when [accent] is [Accent.Custom]. */
+    customAccent: Int? = null,
+    /** Second lines and edges brought forward ([highContrast]). */
+    highContrast: Boolean = false,
+    typeface: com.tmplayer.data.AppTypeface = com.tmplayer.data.AppTypeface.Default,
+    scheme: ColorScheme = animateAccentRoles(
+        TmSchemes.of(dark, black, accent).withCustomAccent(accent, customAccent, dark).highContrast(highContrast),
+    ),
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(colorScheme = scheme, shapes = TmShapes, typography = TmTouchTypography) {
+    MaterialTheme(colorScheme = scheme, shapes = TmShapes, typography = TmTouchTypography.withFamily(typeface.family())) {
         CompositionLocalProvider(
             LocalContentColor provides scheme.onSurface,
             LocalDarkTheme provides dark,

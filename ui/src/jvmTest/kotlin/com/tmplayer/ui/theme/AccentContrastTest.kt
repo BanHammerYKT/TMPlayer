@@ -74,4 +74,34 @@ class AccentContrastTest {
             }
         }
     }
+
+    /** Seeds a viewer might pick: a pale yellow, a deep navy, a near grey, a neon green, a hot pink. */
+    private val seeds = listOf(0xFFFFF59D, 0xFF0D1B4C, 0xFF8A8F94, 0xFF39FF14, 0xFFFF1493, 0xFF7C5CFF).map { it.toInt() }
+
+    @Test
+    fun `the viewer's own colour is made readable in every mode`() {
+        for (seed in seeds) {
+            for (mode in modes) {
+                val s = TmSchemes.of(mode.dark, mode.black, Accent.Custom).withCustomAccent(Accent.Custom, seed, mode.dark)
+                val name = "custom ${Integer.toHexString(seed)} ${mode.name}"
+                atLeast("$name onPrimary", 4.5f, s.onPrimary, s.primary)
+                atLeast("$name onPrimaryContainer", 4.5f, s.onPrimaryContainer, s.primaryContainer)
+                atLeast("$name onSecondaryContainer", 4.5f, s.onSecondaryContainer, s.secondaryContainer)
+                atLeast("$name onTertiaryContainer", 4.5f, s.onTertiaryContainer, s.tertiaryContainer)
+                for (ground in listOf(s.background, s.surfaceContainerLow, s.surfaceContainerHigh)) {
+                    atLeast("$name primary on the ground", 3f, s.primary, ground)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `high contrast brings second lines closer to the text`() {
+        for (mode in modes) {
+            val base = TmSchemes.of(mode.dark, mode.black)
+            val high = base.highContrast(true)
+            assertTrue(contrastRatio(high.onSurfaceVariant, high.background) > contrastRatio(base.onSurfaceVariant, base.background))
+            assertEquals(base.onSurface, high.onSurface)
+        }
+    }
 }

@@ -242,6 +242,42 @@ object MetaRules {
      * too small to fill a tile is passed over. Null when none is left, and the caller keeps what
      * the title's own record names.
      */
+    /**
+     * The title logo to draw for a film or show from TMDB's `logos`: one in the UI language, else
+     * English, else one with no words, PNG only (an SVG would not decode), wide rather than tall
+     * (a logo set in a carousel's corner is a line of type), then by votes and width. Null when
+     * there is none worth drawing, and the carousel sets the name as text.
+     */
+    fun logo(logos: List<MetaPoster>, uiLanguage: String): MetaPoster? {
+        val ui = uiLanguage.substringBefore('-').lowercase(Locale.ROOT)
+        fun tier(p: MetaPoster): Int? {
+            val lang = p.language?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() && it != "xx" }
+            return when {
+                lang != null && lang == ui -> 0
+                lang == "en" -> 1
+                lang == null -> 2
+                else -> null
+            }
+        }
+        return logos
+            .filter { it.path.startsWith("/") && it.path.endsWith(".png", ignoreCase = true) && it.aspect >= LOGO_MIN_ASPECT && it.width >= LOGO_MIN_WIDTH }
+            .mapNotNull { p -> tier(p)?.let { it to p } }
+            .sortedWith(
+                compareBy<Pair<Int, MetaPoster>> { it.first }
+                    .thenByDescending { it.second.voteAverage }
+                    .thenByDescending { it.second.voteCount }
+                    .thenByDescending { it.second.width },
+            )
+            .firstOrNull()
+            ?.second
+    }
+
+    /** A logo narrower than this for its height is a stacked badge that would tower over the buttons. */
+    const val LOGO_MIN_ASPECT = 1.2
+
+    /** Smaller than this and a logo is soft at the carousel's size. */
+    const val LOGO_MIN_WIDTH = 200
+
     fun poster(posters: List<MetaPoster>, uiLanguage: String, original: String?): MetaPoster? {
         val ui = uiLanguage.substringBefore('-').lowercase(Locale.ROOT)
         val first = original?.substringBefore('-')?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() }

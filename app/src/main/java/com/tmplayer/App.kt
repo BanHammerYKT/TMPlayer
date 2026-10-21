@@ -48,6 +48,8 @@ class App : Application() {
         CrashReports.watch(this)
         // The shared code logs through a facade; on Android it goes to logcat as it always has.
         Logger.sink = AndroidLogSink
+        // The clock Home's first paint is timed against (adb logcat -s tm-perf).
+        com.tmplayer.data.PerfLog.processStart
         Updates.configureForAndroid()
         Updates.enabled = BuildConfig.UPDATE_CHECK
         SupportReminder.enabled = BuildConfig.SUPPORT_LINKS
@@ -64,6 +66,26 @@ class App : Application() {
                 Translator.select(saved, AppLocales.system(this@App))
                 AppLocales.apply(this@App, saved)
             }
+        }
+        // A card in focus or under the finger warms its stream, unless the file is whole here
+        // already (a download, the watch cache) or is pieces played joined.
+        com.tmplayer.data.PlaybackWarmup.warmer = com.tmplayer.data.PlaybackWarmup.Warmer { item ->
+            if (item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
+            backgroundScope.launch {
+                val local = runCatching { com.tmplayer.data.Td.localFileAvailability(item.fileId) }.getOrNull()
+                if (local != com.tmplayer.data.LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
+            }
+        }
+        // The stream warm-up stays out of Low storage mode and of "Save mobile data" on a metered
+        // line, whatever asks for it ([com.tmplayer.player.StreamWarmup]).
+        backgroundScope.launch {
+            val store = SettingsStore(this@App)
+            val tv = com.tmplayer.data.FormFactor.isTv(this@App)
+            kotlinx.coroutines.flow.combine(store.lowStorageMode, store.saveMobileData) { low, save -> low to save }
+                .collect { (low, save) ->
+                    val saving = com.tmplayer.data.MeteredPolicy.saveMobileDataInForce(save, tv)
+                    com.tmplayer.player.StreamWarmup.allowed = { !low && !(saving && NetworkMonitor.metered.value) }
+                }
         }
         // Lighter pictures and Reduce motion (CP68), from the stored choice and whenever it changes.
         // Before the promo return, so the fixture shows a screen as a low-end device draws it.
@@ -119,12 +141,15 @@ class App : Application() {
         Thumbnails.sizeFor(memory)
         // Posters and overviews: the build's TMDB key, the switches in private files, the answers
         // and pictures under the app's cache. Off until the viewer turns it on in Settings.
+        // Home as it was last built, read now so its first frame finds it in memory (HomeCache).
+        com.tmplayer.data.HomeCache.file = java.io.File(filesDir, "home/home-cache.json")
+        backgroundScope.launch { runCatching { com.tmplayer.data.HomeCache.preload() } }
         OnlineMetadata.current = OnlineMetadata(
             buildKey = BuildConfig.TMDB_API_KEY,
             store = MetadataStore(java.io.File(filesDir, "online/metadata.properties")),
             cache = MetadataCache(java.io.File(cacheDir, "online-metadata")),
             appVersion = BuildConfig.VERSION_NAME,
-        ).also { metadata -> backgroundScope.launch { runCatching { metadata.cache.prune() } } }
+        ).also { metadata -> backgroundScope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }
         Thumbnails.connectivity = NetworkMonitor
         NetworkMonitor.start(this)
         // TDLib takes a moment to open its database; starting here means the login screen is
@@ -173,13 +198,18 @@ class App : Application() {
         override fun onActivityStarted(activity: android.app.Activity) {
             started++
             inFront = true
+            // Back in view: TDLib reopens a line it lost in the background at once (Td).
+            Td.onForegroundChanged(true)
         }
 
         override fun onActivityStopped(activity: android.app.Activity) {
             started = (started - 1).coerceAtLeast(0)
             inFront = started > 0
             // A rotation stops and starts the same activity; it is not the app being left.
-            if (started == 0 && !activity.isChangingConfigurations) AppLockSession.lock()
+            if (started == 0 && !activity.isChangingConfigurations) {
+                AppLockSession.lock()
+                Td.onForegroundChanged(false)
+            }
         }
 
         override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) = Unit

@@ -945,7 +945,6 @@
     "size_smaller": "Менший"
   },
   "keep": {
-    "cannot_post": "Ви не можете публікувати в цьому чаті.",
     "export_failed": "Не вдалося скопіювати: {reason}",
     "export_folder": "Копіювати в папку",
     "export_folder_detail": "Копія завантаження в будь-якому вибраному місці",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "Копія в Movies/TMPlayer, для інших застосунків",
     "exported_folder": "Скопійовано в {folder}",
     "exported_gallery": "Збережено в Movies/TMPlayer",
-    "exporting": "Копіювання: {title}",
-    "failed": "Не вдалося переслати: {reason}",
-    "forward_chat": "Переслати в чат",
-    "forward_chat_detail": "Пересилає допис, нічого не завантажується",
-    "forward_none": "Немає чату, до якого можна переслати.",
-    "forward_saved": "Переслати в Збережене",
-    "forward_saved_detail": "Зберігає у вашому Telegram, нічого не завантажується",
-    "forward_search": "Знайти чат",
-    "forward_title": "Переслати в",
-    "forwarded_saved": "Переслано в Збережене",
-    "forwarded_to": "Переслано в {chat}",
-    "forwarding": "Пересилання",
-    "not_forwardable": "Telegram не дозволяє пересилати цей допис.",
-    "protected": "Цей чат забороняє пересилати й зберігати його відео."
+    "exporting": "Копіювання: {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

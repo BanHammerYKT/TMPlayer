@@ -945,7 +945,6 @@
     "size_smaller": "較小"
   },
   "keep": {
-    "cannot_post": "你無法在那個聊天中發文。",
     "export_failed": "無法複製：{reason}",
     "export_folder": "複製到資料夾",
     "export_folder_detail": "將下載的副本放到你選擇的位置",
@@ -953,20 +952,7 @@
     "export_gallery_detail": "在 Movies/TMPlayer 中存一份副本，供其他應用程式使用",
     "exported_folder": "已複製到 {folder}",
     "exported_gallery": "已儲存到 Movies/TMPlayer",
-    "exporting": "正在複製 {title}",
-    "failed": "無法轉傳：{reason}",
-    "forward_chat": "轉傳到聊天",
-    "forward_chat_detail": "分享貼文，不會下載任何內容",
-    "forward_none": "沒有可轉傳的聊天。",
-    "forward_saved": "轉傳到已儲存的訊息",
-    "forward_saved_detail": "保存在你自己的 Telegram 中，不會下載任何內容",
-    "forward_search": "尋找聊天",
-    "forward_title": "轉傳到",
-    "forwarded_saved": "已轉傳到已儲存的訊息",
-    "forwarded_to": "已轉傳到 {chat}",
-    "forwarding": "正在轉傳",
-    "not_forwardable": "Telegram 不允許轉傳這則貼文。",
-    "protected": "這個聊天不允許轉傳或儲存其中的影片。"
+    "exporting": "正在複製 {title}"
   },
   "keys": {
     "audio_delay_keys": "Ctrl+-, Ctrl+=",

@@ -148,6 +148,7 @@ import androidx.compose.runtime.withFrameNanos
 import com.tmplayer.data.LocalDownloads
 import com.tmplayer.data.MediaFeedEntry
 import com.tmplayer.data.MediaItem
+import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.data.MediaMapper
 import com.tmplayer.data.OfflineDownloads
 import com.tmplayer.data.Series
@@ -557,7 +558,18 @@ fun MediaGridScreen(
             val courseTitle = topicBar?.let { bar -> bar.nameOf(bar.selected) } ?: chatTitle
             // Every order but Newest is of what has loaded so far, while older pages remain.
             val loadedOnly = com.tmplayer.data.VideoSorting.sortsLoadedOnly(order, list.endReached)
+            // The size limits' count, said over the listing with a way past them for this chat:
+            // an episode missing with no word about why reads as TMPlayer having lost it.
+            val sizeHidden by viewModel.sizeHidden.collectAsStateWithLifecycle()
+            val sizeNote = query.isBlank() && sizeHidden > 0
             val courseHeader: @Composable () -> Unit = {
+                if (sizeNote) {
+                    HiddenBySizeNote(
+                        count = sizeHidden,
+                        onShowHidden = viewModel::showHidden,
+                        modifier = Modifier.padding(horizontal = if (touch && layout == CardLayout.Grid) 4.dp else 0.dp).padding(bottom = 6.dp),
+                    )
+                }
                 if (loadedOnly) {
                     Text(
                         s.gridSortLoadedNote(list.items.size),
@@ -689,7 +701,7 @@ fun MediaGridScreen(
                             if (metaNotice) {
                                 item(key = "meta-notice", span = { GridItemSpan(maxLineSpan) }) { metaNoticeCard() }
                             }
-                            if (course != null || loadedOnly) {
+                            if (course != null || loadedOnly || sizeNote) {
                                 item(key = "course", span = { GridItemSpan(maxLineSpan) }) { courseHeader() }
                             }
                             // The chat's pinned video, its audio and its round videos, over its videos.
@@ -771,7 +783,7 @@ fun MediaGridScreen(
                             verticalArrangement = Arrangement.spacedBy(if (touch) 2.dp else 4.dp),
                         ) {
                             if (metaNotice) item(key = "meta-notice") { metaNoticeCard() }
-                            if (course != null || loadedOnly) item(key = "course") { courseHeader() }
+                            if (course != null || loadedOnly || sizeNote) item(key = "course") { courseHeader() }
                             val pinnedShown = pinnedPost
                             if (pinnedShown != null && query.isBlank()) {
                                 item(key = "pinned") {
@@ -2073,7 +2085,8 @@ internal fun MediaCard(
         dense = dense,
         poster = poster,
         selected = selected,
-        modifier = modifier,
+        // Every video card, in a chat's grid, Home and search: its stream warmed on focus or press.
+        modifier = modifier.then(Modifier.warmUpOnIntent(item)),
         meta = meta ?: { ink -> MetaLine(item, watched, ink, finished = finished, poster = poster) },
     ) {
         MediaArt(
@@ -2857,5 +2870,29 @@ internal fun LazyGridScope.shelfGrid(
         } else {
             card(entry)
         }
+    }
+}
+
+/**
+ * "N videos hidden by the size limits." with Show hidden videos, over a chat's listing on the
+ * phone and the TV. Brought back after 633972e dropped it in the Settings rework: without it a
+ * chat whose files fall outside the limits only ever said so once every video was hidden.
+ * Show hidden videos lifts the limits for this chat while it stays open; Settings keeps them.
+ */
+@Composable
+internal fun HiddenBySizeNote(count: Int, onShowHidden: () -> Unit, modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
+    Row(
+        modifier.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            com.tmplayer.i18n.L.browseHiddenBySize(count),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Tone.muted,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        com.tmplayer.ui.components.TmSecondaryButton(onClick = onShowHidden) { Text(s.commonShowHidden) }
     }
 }

@@ -4,11 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import com.tmplayer.data.ChatGate
-import com.tmplayer.data.ChatRepository
-import com.tmplayer.data.ChatSummary
 import com.tmplayer.data.ChatVideoNotes
 import com.tmplayer.data.Failures
-import com.tmplayer.data.KeepVideo
 import com.tmplayer.data.LinkRefusal
 import com.tmplayer.data.MediaItem
 import com.tmplayer.data.PostComments
@@ -112,31 +109,3 @@ fun rememberCommentCount(item: MediaItem): Int {
     return count
 }
 
-/**
- * The chats a video can be forwarded to ([KeepVideo.targets]), read from TDLib's own list when
- * the picker opens; null while it is being read.
- */
-@Composable
-fun rememberForwardTargets(): List<ChatSummary>? {
-    val chats by produceState<List<ChatSummary>?>(initialValue = null) {
-        val session = Td.awaitConnectedSessionOrNull()
-        val all = if (session == null) emptyList() else runCatching { ChatRepository(session.client).cachedChats(FORWARD_CHATS) }.getOrDefault(emptyList())
-        value = KeepVideo.targets(all, ChatGate.awaitReady())
-    }
-    return chats
-}
-
-/** Forwards [item] to Saved Messages (null [toChatId]) or a chat; the words to say afterwards. */
-suspend fun forwardVideo(item: MediaItem, toChatId: Long?, toTitle: String = ""): String {
-    val session = Td.awaitConnectedSessionOrNull() ?: return Failures.OFFLINE
-    val refused = try {
-        if (toChatId == null) KeepVideo.toSaved(session.client, item) else KeepVideo.forward(session.client, item, toChatId)
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        Failures.humanise(e)
-    }
-    return refused ?: if (toChatId == null) L.keepForwardedSaved else L.keepForwardedTo(toTitle)
-}
-
-private const val FORWARD_CHATS = 150

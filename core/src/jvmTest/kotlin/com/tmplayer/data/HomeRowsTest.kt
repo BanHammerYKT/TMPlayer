@@ -47,6 +47,7 @@ class HomeRowsTest {
         is HomeRow.Chat -> row.entries.flatMap(::idsOf)
         is HomeRow.NewEpisodes -> row.episodes.map { it.item.messageId }
         is HomeRow.Recent -> row.entries.flatMap(::idsOf)
+        is HomeRow.Across -> row.entries.flatMap(::idsOf)
     }
 
     private fun idsOf(entry: ShelfEntry): List<Long> = when (entry) {
@@ -105,6 +106,7 @@ class HomeRowsTest {
                 is HomeRow.Chat -> row.entries.size
                 is HomeRow.NewEpisodes -> row.episodes.size
                 is HomeRow.Recent -> row.entries.size
+                is HomeRow.Across -> row.entries.size
             }
             assertEquals(row.key, HomeRows.LIMIT, size)
         }
