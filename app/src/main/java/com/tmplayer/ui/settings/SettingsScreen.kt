@@ -338,6 +338,17 @@ fun SettingsScreen(
     val dynamicColour by settings.dynamicColour.collectAsStateWithLifecycle(initialValue = false)
     val pureBlack by settings.pureBlack.collectAsStateWithLifecycle(initialValue = false)
     val accent by settings.accent.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.Accent.Default)
+    val customAccent by settings.customAccent.collectAsStateWithLifecycle(initialValue = null)
+    val typeface by settings.typeface.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.AppTypeface.Default)
+    val highContrast by settings.highContrast.collectAsStateWithLifecycle(initialValue = false)
+    // What Back to the defaults took away, while its Undo is offered.
+    var appearanceUndo by remember { mutableStateOf<com.tmplayer.data.AppearanceSnapshot?>(null) }
+    LaunchedEffect(appearanceUndo) {
+        if (appearanceUndo != null) {
+            kotlinx.coroutines.delay(APPEARANCE_UNDO_MS)
+            appearanceUndo = null
+        }
+    }
     val uiScale by rememberUiScale(settings)
     val lighterPictures by settings.lighterPictures.collectAsStateWithLifecycle(initialValue = false)
     val reduceMotion by settings.reduceMotion.collectAsStateWithLifecycle(initialValue = false)
@@ -660,6 +671,12 @@ fun SettingsScreen(
             }
 
             SettingsPage.Appearance -> {
+                // The choices below, live: a card drawn in the theme, colour, typeface and contrast as they stand.
+                item(key = "appearance_preview") {
+                    com.tmplayer.ui.components.AppearancePreview(
+                        Modifier.padding(horizontal = if (touch) 16.dp else 0.dp, vertical = 8.dp),
+                    )
+                }
                 // First, on both devices: a stick often lives on a screen in a bright room, so the theme
                 // is worth offering there too.
                 item {
@@ -708,6 +725,34 @@ fun SettingsScreen(
                         selected = accent,
                         wallpaper = touch && dynamicColour && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
                         onPick = { scope.launch { settings.setAccent(it) } },
+                        custom = customAccent,
+                        onCustom = { argb -> scope.launch { settings.setCustomAccent(argb) } },
+                    )
+                }
+
+                // The letters, the same stepper on both devices: three faces the system already has.
+                item(key = "typeface") {
+                    StepperRow(
+                        title = s.settingsTypeface,
+                        subtitle = s.settingsTypefaceDetail,
+                        value = typeface.label,
+                        icon = TmIcons.TextSize,
+                        canDecrease = typeface.ordinal > 0,
+                        canIncrease = typeface.ordinal < com.tmplayer.data.AppTypeface.entries.lastIndex,
+                        onStep = { direction ->
+                            com.tmplayer.data.AppTypeface.entries.getOrNull(typeface.ordinal + direction)?.let { next ->
+                                scope.launch { settings.setTypeface(next) }
+                            }
+                        },
+                    )
+                }
+                item(key = "high_contrast") {
+                    ToggleRow(
+                        title = s.settingsHighContrast,
+                        subtitle = s.settingsHighContrastDetail,
+                        icon = TmIcons.Theme,
+                        checked = highContrast,
+                        onToggle = { scope.launch { settings.setHighContrast(!highContrast) } },
                     )
                 }
 
@@ -756,6 +801,24 @@ fun SettingsScreen(
                         icon = TmIcons.Frames,
                         checked = reduceMotion,
                         onToggle = { scope.launch { settings.setReduceMotion(!reduceMotion) } },
+                    )
+                }
+                // Back to the defaults, with Undo in its place for a few seconds after.
+                item(key = "appearance_defaults") {
+                    // One row whose words change, so the remote stays on it through both presses.
+                    val taken = appearanceUndo
+                    ActionRow(
+                        title = if (taken == null) s.settingsAppearanceDefaults else s.settingsAppearanceUndo,
+                        subtitle = if (taken == null) s.settingsAppearanceDefaultsDetail else s.settingsAppearanceDefaultsDone,
+                        icon = TmIcons.Refresh,
+                        onClick = {
+                            if (taken == null) {
+                                scope.launch { appearanceUndo = settings.resetAppearance() }
+                            } else {
+                                appearanceUndo = null
+                                scope.launch { settings.restoreAppearance(taken) }
+                            }
+                        },
                     )
                 }
 
@@ -2683,7 +2746,13 @@ private fun ThemePicker(current: ThemeChoice, onPick: (ThemeChoice) -> Unit) {
  * With the wallpaper's colours in use ([wallpaper]) the swatches are faded and take nothing.
  */
 @Composable
-private fun AccentRow(selected: com.tmplayer.data.Accent, wallpaper: Boolean, onPick: (com.tmplayer.data.Accent) -> Unit) {
+private fun AccentRow(
+    selected: com.tmplayer.data.Accent,
+    wallpaper: Boolean,
+    onPick: (com.tmplayer.data.Accent) -> Unit,
+    custom: Int? = null,
+    onCustom: ((Int) -> Unit)? = null,
+) {
     val s = LocalStrings.current
     val touch = isTouch()
     Column(
@@ -2722,6 +2791,8 @@ private fun AccentRow(selected: com.tmplayer.data.Accent, wallpaper: Boolean, on
             enabled = !wallpaper,
             size = if (touch) 30.dp else 34.dp,
             modifier = Modifier.padding(start = 46.dp, top = 8.dp),
+            custom = custom,
+            onCustom = onCustom,
         )
     }
 }
@@ -3371,3 +3442,6 @@ private fun NoticeToggleRow(
         },
     )
 }
+
+/** How long Undo stands in for Back to the defaults. */
+private const val APPEARANCE_UNDO_MS = 10_000L
