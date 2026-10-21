@@ -1,7 +1,18 @@
 package com.tmplayer.web
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import com.tmplayer.data.TdTabs
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -109,8 +120,20 @@ fun main() {
                 Translator.select(chosen, system)
             }
         }
-        // Settings in the beta: Appearance (the theme) and Sign out. The rest is the apps' for now.
-        settingsCategories = listOf(SettingsCategory.Appearance)
+        // Settings: every page the apps have that means something in a browser
+        // (desktop/ui/SettingsPagesWeb.kt has the rows). Left out: Setup choices, whose answers
+        // are the desktop's (performance, crash reports) or live on Library and Storage here, and
+        // Notifications, whose checks the browser build does not run.
+        settingsCategories = listOf(
+            SettingsCategory.Appearance,
+            SettingsCategory.Playback,
+            SettingsCategory.Subtitles,
+            SettingsCategory.Mouse,
+            SettingsCategory.Library,
+            SettingsCategory.Storage,
+            SettingsCategory.Lock,
+            SettingsCategory.About,
+        )
 
         val shell = ShellState(
             settings,
@@ -156,6 +179,10 @@ fun main() {
                                 },
                             )
                         }
+                        // Another tab holds the account (TdTabs): this one waits over its own
+                        // screens, kept as they were, until the viewer uses it here again.
+                        val elsewhere by TdTabs.elsewhere.collectAsState()
+                        if (elsewhere) OtherTab(onUseHere = TdTabs::useHere)
                     }
                 }
             }
@@ -195,6 +222,23 @@ private fun WebTheme(settings: SettingsStore, family: FontFamily?, content: @Com
             }
         } else {
             ProvideFocusVisibility { UiScaled(scale, content) }
+        }
+    }
+}
+
+/** The page while another tab holds the account: nothing under it can be pressed. */
+@Composable
+private fun OtherTab(onUseHere: () -> Unit) {
+    val s = com.tmplayer.ui.i18n.LocalStrings.current
+    androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(Modifier.widthIn(max = 420.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(s.webOtherTabTitle, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(8.dp))
+                Text(s.webOtherTabBody, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(20.dp))
+                Button(onClick = onUseHere, modifier = Modifier.height(48.dp)) { Text(s.webUseHere) }
+            }
         }
     }
 }

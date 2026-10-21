@@ -13,19 +13,11 @@ internal object System {
     fun nanoTime(): Long = com.tmplayer.platform.monotonicMillis() * 1_000_000
 }
 
-/** Backup.kt's raw write, for the stores the browser build compiles without Backup itself. */
-internal fun androidx.datastore.preferences.core.MutablePreferences.putRaw(name: String, value: Any) {
-    @Suppress("UNCHECKED_CAST")
-    when (value) {
-        is Boolean -> this[androidx.datastore.preferences.core.booleanPreferencesKey(name)] = value
-        is Int -> this[androidx.datastore.preferences.core.intPreferencesKey(name)] = value
-        is Long -> this[androidx.datastore.preferences.core.longPreferencesKey(name)] = value
-        is Float -> this[androidx.datastore.preferences.core.floatPreferencesKey(name)] = value
-        is Double -> this[androidx.datastore.preferences.core.doublePreferencesKey(name)] = value
-        is String -> this[androidx.datastore.preferences.core.stringPreferencesKey(name)] = value
-        is Set<*> -> this[androidx.datastore.preferences.core.stringSetPreferencesKey(name)] = value as Set<String>
-    }
-}
+// The stores' raw write (putRaw) is Backup.kt's own, now that the browser build compiles it.
+
+/** `toSortedMap`, which Kotlin's maps have only on the JVM: a copy in key order. */
+internal fun <K : Comparable<K>, V> Map<K, V>.toSortedMap(): Map<K, V> =
+    entries.sortedBy { it.key }.associateTo(LinkedHashMap()) { it.key to it.value }
 
 /** `java.util.Map.getOrDefault`, which Kotlin's maps have only on the JVM. */
 internal fun <K, V> Map<K, V>.getOrDefault(key: K, defaultValue: V): V = this[key] ?: defaultValue

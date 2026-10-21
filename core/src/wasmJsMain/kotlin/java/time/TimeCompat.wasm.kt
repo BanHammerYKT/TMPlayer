@@ -56,3 +56,17 @@ data class LocalDate(val epochDay: Long) : Comparable<LocalDate> {
         fun now(): LocalDate = Instant.ofEpochMilli(com.tmplayer.platform.nowMillis()).atZone(ZoneId.systemDefault()).toLocalDate()
     }
 }
+
+/** A moment on the device's clock, for the log export's file name and header (LogExport). */
+class LocalDateTime private constructor(private val localMilli: Long) {
+    /** The pattern's yyyy, MM, dd, HH, mm and ss, which is all LogExport writes. */
+    fun format(formatter: java.time.format.DateTimeFormatter): String =
+        java.text.SimpleDateFormat(formatter.pattern).format(java.util.Date(localMilli))
+
+    companion object {
+        fun now(): LocalDateTime {
+            val utc = com.tmplayer.platform.nowMillis()
+            return LocalDateTime(utc - offsetMinutes(utc.toDouble()) * 60_000L)
+        }
+    }
+}

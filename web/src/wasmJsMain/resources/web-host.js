@@ -207,6 +207,55 @@
       } catch (e) {}
       return false;
     },
+    // Whether the browser has already agreed to keep the page's storage under pressure.
+    async persisted() {
+      try {
+        if (navigator.storage && navigator.storage.persisted) return await navigator.storage.persisted();
+      } catch (e) {}
+      return false;
+    },
+    // A text file handed to the browser's downloads (a backup, the logs): the page has no folder.
+    saveText(name, text, mime) {
+      try {
+        const url = URL.createObjectURL(new Blob([text], { type: mime || 'text/plain' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
+    // A text file the viewer picks (a backup to restore): its text, or '' when nothing was
+    // picked or it is larger than maxBytes.
+    pickText(accept, maxBytes) {
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = (v) => {
+          if (done) return;
+          done = true;
+          input.remove();
+          resolve(v);
+        };
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = accept || '';
+        input.style.display = 'none';
+        input.addEventListener('change', () => {
+          const f = input.files && input.files[0];
+          if (!f || f.size > maxBytes) return finish('');
+          f.text().then(finish, () => finish(''));
+        });
+        input.addEventListener('cancel', () => finish(''));
+        document.body.appendChild(input);
+        input.click();
+      });
+    },
     async estimate() {
       try {
         const e = await navigator.storage.estimate();

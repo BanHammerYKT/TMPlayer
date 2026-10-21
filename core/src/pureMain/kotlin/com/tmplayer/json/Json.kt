@@ -161,6 +161,12 @@ class JSONObject() {
 
     override fun toString(): String = toElement().toString()
 
+    /** Laid out over lines, as org.json's toString(indent) writes a backup file. */
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    fun toString(indent: Int): String =
+        Json { prettyPrint = true; prettyPrintIndent = " ".repeat(indent.coerceAtLeast(1)) }
+            .encodeToString(KxObject.serializer(), toElement())
+
     override fun equals(other: Any?): Boolean = other is JSONObject && other.toElement() == toElement()
     override fun hashCode(): Int = toElement().hashCode()
 

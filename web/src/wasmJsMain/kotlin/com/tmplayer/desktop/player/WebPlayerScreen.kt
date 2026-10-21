@@ -41,7 +41,21 @@ import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.input.pointer.isShiftPressed
+import com.tmplayer.data.ChatRepository
 import com.tmplayer.data.EpisodeNeighbours
+import com.tmplayer.data.MediaName
+import com.tmplayer.data.Td
+import com.tmplayer.data.TrackChoice
+import com.tmplayer.i18n.Translator
+import com.tmplayer.player.PlaybackSpeed
+import com.tmplayer.player.SpeedMemory
+import com.tmplayer.player.SubtitleStyle
+import com.tmplayer.player.SyncDelays
+import com.tmplayer.player.TouchPrefs
+import com.tmplayer.player.TrackPreferences
+import com.tmplayer.player.TrackRules
+import com.tmplayer.player.VideoScale
 import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.ResumeRules
 import com.tmplayer.data.ResumeState
@@ -66,8 +80,9 @@ import kotlinx.coroutines.launch
  * the spinner, [ResumeNotice] after a resume, and [PlayerKeys] for the keyboard. The desktop's
  * PlayerScreen.kt around them leans on mpv, the cast client and the file system, so this is the
  * browser's smaller version of it, over [WebPlaybackEngine], for the beta's basic path: play,
- * seek, pick tracks, resume where the video was left. Episodes, bookmarks, the sleep timer and the
- * rest of the desktop's player come after the beta (docs/WEB.md).
+ * seek, pick tracks, resume where the video was left, play on to the next episode, with Settings'
+ * playback, subtitle and mouse choices read as the desktop reads them. Bookmarks, the sleep timer
+ * and the rest of the desktop's player come after the beta (docs/WEB.md).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -81,8 +96,18 @@ fun WebPlayerScreen(
     onClose: () -> Unit,
 ) {
     val s = LocalStrings.current
-    val item = request.item
+    // The video on screen: the one asked for, then the next episode when one plays on from it.
+    var item by remember(request) { mutableStateOf(request.item) }
     val engine = remember(item) { WebPlaybackEngine() }
+    val seriesKey = remember(item) { (item.fileName.ifBlank { item.title }).let { MediaName.parse(it).title.ifBlank { it } } }
+    val speedScopes = remember(item, seriesKey) { SpeedMemory.scopesOf(item, seriesKey) }
+    val touchPrefs by settings.touchPrefs.collectAsState(initial = TouchPrefs())
+    val desktopPrefs by prefs.state.collectAsState()
+    var episodes by remember(item) { mutableStateOf(Episodes(current = EpisodeNeighbours.tagOf(item))) }
+    var autoplayNext by remember { mutableStateOf(true) }
+    // The end of a video: the next episode counting down, or the end card.
+    var phase by remember(item) { mutableStateOf<Phase>(Phase.Playing) }
+    var speedBeforeHold by remember(item) { mutableStateOf<Float?>(null) }
     val status by engine.state.collectAsState()
     val tracks by engine.tracks.collectAsState()
     val failure by engine.failure.collectAsState()
@@ -118,8 +143,11 @@ fun WebPlayerScreen(
         controlsUp = true
     }
 
-    fun saveResume(leaving: Boolean) {
-        val st = engine.state.value
+    // For the video and engine that were playing, which a switch to the next episode has already
+    // replaced by the time the old engine is let go.
+    fun saveResume(leaving: Boolean, of: com.tmplayer.data.MediaItem? = null, from: WebPlaybackEngine? = null) {
+        val item = of ?: item
+        val st = (from ?: engine).state.value
         if (!st.opened || st.durationMs <= 0) return
         val position = st.positionMs
         val duration = st.durationMs
@@ -160,19 +188,92 @@ fun WebPlayerScreen(
         if (start > 0) resumedFrom = start
         openingStartMs = start
         val desktop = prefs.now
+        autoplayNext = runCatching { settings.autoplayNextNow() }.getOrDefault(true)
+        showRemaining = runCatching { settings.touchPrefsNow().showRemaining }.getOrDefault(false)
+        // Settings as the desktop's player opens with them: the file's saved tracks, then the
+        // series', then Settings' languages; the remembered speed, picture shape, sound and
+        // subtitle look, and this file's own subtitle offset.
+        val resumed = if (start > 0) runCatching { settings.resumeRecord(item.chatId, item.messageId)?.state }.getOrNull() else null
+        val trackPlan = TrackRules.plan(
+            resumed,
+            runCatching { settings.trackChoice(seriesKey) }.getOrDefault(TrackChoice()),
+            runCatching { settings.trackPreferencesNow() }.getOrDefault(TrackPreferences()),
+            Translator.messages.tag,
+        )
         engine.open(
             WebMedia(item),
             start,
-            OpenPrefs(volume = desktop.volume, muted = desktop.muted),
+            OpenPrefs(
+                audioLanguage = trackPlan.audioLanguage,
+                subtitles = trackPlan.subtitles,
+                speed = runCatching { settings.openingSpeed(resumed?.speed, speedScopes) }
+                    .getOrDefault(resumed?.speed ?: PlaybackSpeed.DEFAULT)
+                    .coerceIn(SeekMath.MIN_SPEED, SeekMath.MAX_SPEED),
+                scale = runCatching { VideoScale.from(settings.videoScaleNow()) }.getOrDefault(VideoScale.Fit),
+                volume = desktop.volume,
+                muted = desktop.muted,
+                volumeBoost = runCatching { settings.volumeBoostNow() }.getOrDefault(false),
+                nightMode = runCatching { settings.nightModeNow() }.getOrDefault(false),
+                subtitleStyle = runCatching { settings.subtitleStyleNow() }.getOrDefault(SubtitleStyle()),
+                delays = runCatching { settings.syncDelays(item.chatId, item.messageId) }.getOrDefault(SyncDelays()),
+                resume = resumed,
+            ),
         )
         focus.requestFocus()
     }
-    DisposableEffect(engine) {
-        onDispose {
-            saveResume(leaving = true)
-            engine.close()
-            if (fullscreen) videoFullscreen(false)
+    // The episodes either side, for the bar's buttons and Autoplay next: the chat searched for the
+    // show's name, as the desktop's TelegramPlayerMedia.episodes does.
+    LaunchedEffect(item) {
+        val playing = item
+        com.tmplayer.data.PlayQueue.stepsFor(playing)?.let {
+            episodes = it
+            return@LaunchedEffect
         }
+        val show = EpisodeNeighbours.showOf(playing) ?: return@LaunchedEffect
+        if (playing.chatId == 0L) return@LaunchedEffect
+        val found = runCatching {
+            val session = Td.awaitAuthorizedSession()
+            val repository = ChatRepository(session.client)
+            val topic = playing.topicId.takeIf { it != 0 }
+                ?: runCatching { repository.topicOf(playing.chatId, playing.messageId) }.getOrDefault(0)
+            EpisodeNeighbours.lookUp(playing, show) { query, cursors ->
+                runCatching { repository.mediaPage(playing.chatId, cursors, query = query, topicId = topic) }.getOrNull()
+            }
+        }.getOrNull()
+        if (found != null) episodes = found
+    }
+    // Subtitle style changed in Settings or the menu reaches the video playing.
+    LaunchedEffect(engine) {
+        settings.subtitleStyle.collect { style ->
+            if (style != engine.state.value.subtitleStyle) engine.setSubtitleStyle(style)
+        }
+    }
+    DisposableEffect(engine) {
+        val playing = item
+        val leaving = engine
+        onDispose {
+            saveResume(leaving = true, of = playing, from = leaving)
+            leaving.close()
+        }
+    }
+    val fullscreenNow by androidx.compose.runtime.rememberUpdatedState(fullscreen)
+    DisposableEffect(Unit) { onDispose { if (fullscreenNow) videoFullscreen(false) } }
+
+    // The end: the next episode after a short count when Autoplay next is on, else the end card.
+    LaunchedEffect(engine, status.ended) {
+        if (!status.ended || failure != null) return@LaunchedEffect
+        val next = episodes.next
+        if (next == null || !autoplayNext) {
+            phase = Phase.Finished
+            return@LaunchedEffect
+        }
+        for (second in AUTOPLAY_COUNTDOWN_SEC downTo 1) {
+            phase = Phase.Countdown(next, second)
+            delay(1_000)
+            // Cancel or Play now answered it.
+            if (phase != Phase.Countdown(next, second)) return@LaunchedEffect
+        }
+        item = next
     }
     // The place saved as it plays, so a closed tab or a crash loses a few seconds at most.
     LaunchedEffect(engine) {
@@ -187,7 +288,10 @@ fun WebPlayerScreen(
             controlsUp = true
             return@LaunchedEffect
         }
-        delay(CONTROLS_IDLE_MS)
+        // Settings, Playback: how long they stay; "Never" keeps them up.
+        val after = touchPrefs.controlsTimeoutMs
+        if (after <= 0) return@LaunchedEffect
+        delay(after)
         controlsUp = false
     }
     LaunchedEffect(fullscreen) { videoFullscreen(fullscreen) }
@@ -226,6 +330,36 @@ fun WebPlayerScreen(
     fun setSpeed(speed: Float) {
         engine.setSpeed(speed)
         showFlash(Flash.Kind.Text, SeekMath.speedLabel(speed))
+        // For the series, the chat or the topic, as the desktop keeps it: 1x forgets it.
+        val scopes = speedScopes
+        Background.scope.launch { runCatching { settings.rememberSpeed(scopes, speed) } }
+    }
+
+    fun setScale(scale: VideoScale) {
+        engine.setScale(scale)
+        showFlash(Flash.Kind.Text, scale.label)
+        Background.scope.launch { runCatching { settings.setVideoScale(scale.name) } }
+    }
+
+    /** Volume boost and Night mode from the menu: on the sound playing, and kept for every video. */
+    fun toggleVolumeBoost() {
+        val on = !status.volumeBoost
+        engine.setVolumeBoost(on)
+        showFlash(Flash.Kind.Text, if (on) s.playerVolumeBoostOn else s.playerVolumeBoostOff)
+        Background.scope.launch { runCatching { settings.setVolumeBoost(on) } }
+    }
+
+    fun toggleNightMode() {
+        val on = !status.nightMode
+        engine.setNightMode(on)
+        showFlash(Flash.Kind.Text, if (on) s.playerNightModeOn else s.playerNightModeOff)
+        Background.scope.launch { runCatching { settings.setNightMode(on) } }
+    }
+
+    fun switchTo(next: com.tmplayer.data.MediaItem) {
+        if (next.id == item.id) return
+        phase = Phase.Playing
+        item = next
     }
 
     fun dispatch(action: PlayerAction) {
@@ -249,7 +383,7 @@ fun WebPlayerScreen(
             PlayerAction.SpeedUp -> setSpeed(SeekMath.fineSpeed(status.speed, up = true))
             PlayerAction.SpeedDown -> setSpeed(SeekMath.fineSpeed(status.speed, up = false))
             PlayerAction.SpeedReset -> setSpeed(1f)
-            PlayerAction.CycleShape -> engine.setScale(status.scale.next())
+            PlayerAction.CycleShape -> setScale(status.scale.next())
             PlayerAction.Stats -> showDetails = !showDetails
             PlayerAction.ShortcutSheet -> showShortcuts = !showShortcuts
             PlayerAction.Back, PlayerAction.Quit -> onClose()
@@ -285,7 +419,15 @@ fun WebPlayerScreen(
                 .focusRequester(focus)
                 .focusable()
                 .onPointerEvent(PointerEventType.Move, PointerEventPass.Initial) { poke() }
-                .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { poke() },
+                .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { poke() }
+                // The wheel: volume, or a seek with Settings, Mouse's switch (Shift the other).
+                .onPointerEvent(PointerEventType.Scroll) { event ->
+                    val delta = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
+                    SeekMath.wheelAction(delta.x, delta.y, event.keyboardModifiers.isShiftPressed, desktopPrefs.wheelSeeks)?.let {
+                        poke()
+                        dispatch(it)
+                    }
+                },
         ) {
             VideoGestures(
                 onClick = {
@@ -296,6 +438,18 @@ fun WebPlayerScreen(
                 onRightClick = { at -> menu = MenuAt(MenuPage.Main, MenuAt.Anchor.Cursor, at) },
                 onMouseBack = onClose,
                 scope = scope,
+                // Holding the button plays fast at Settings, Mouse's speed, and lets go back.
+                onHold = { on ->
+                    val hold = touchPrefs.holdSpeed
+                    if (on && hold > 0f && status.playing && speedBeforeHold == null) {
+                        speedBeforeHold = status.speed
+                        engine.setSpeed(hold)
+                        showFlash(Flash.Kind.Text, "${TouchPrefs.holdLabel(hold)}  ▶▶")
+                    } else if (!on) {
+                        speedBeforeHold?.let { engine.setSpeed(it) }
+                        speedBeforeHold = null
+                    }
+                },
             )
             val title = remember(item) { com.tmplayer.data.SeriesShelf.episodeOf(item).title.ifBlank { item.title } }
             val episode = remember(item) { EpisodeNeighbours.tagOf(item) }
@@ -305,7 +459,7 @@ fun WebPlayerScreen(
                 status = status,
                 title = title,
                 subtitle = subtitle,
-                episodes = Episodes(current = episode),
+                episodes = episodes,
                 tracks = tracks,
                 downloaded = null,
                 showRemaining = showRemaining,
@@ -325,8 +479,12 @@ fun WebPlayerScreen(
                     engine.seekTo(it)
                     poke()
                 },
-                onEpisode = {},
-                onToggleRemaining = { showRemaining = !showRemaining },
+                onEpisode = ::switchTo,
+                onToggleRemaining = {
+                    showRemaining = !showRemaining
+                    val value = showRemaining
+                    Background.scope.launch { runCatching { settings.updateTouchPrefs { it.copy(showRemaining = value) } } }
+                },
                 onVolume = ::setVolume,
                 onToggleMute = ::toggleMute,
                 onToggleFullscreen = onToggleFullscreen,
@@ -345,9 +503,9 @@ fun WebPlayerScreen(
                             if (action.type == TrackType.Subtitle && action.track == null) showFlash(Flash.Kind.Text, s.playerSubtitlesOff)
                         }
                         is MenuAction.Speed -> setSpeed(action.speed)
-                        is MenuAction.Shape -> engine.setScale(action.scale)
-                        MenuAction.ToggleVolumeBoost -> engine.setVolumeBoost(!status.volumeBoost)
-                        MenuAction.ToggleNightMode -> engine.setNightMode(!status.nightMode)
+                        is MenuAction.Shape -> setScale(action.scale)
+                        MenuAction.ToggleVolumeBoost -> toggleVolumeBoost()
+                        MenuAction.ToggleNightMode -> toggleNightMode()
                         is MenuAction.SubtitleDelay -> engine.setSubtitleDelay(
                             if (action.direction == 0) 0L else status.subtitleDelayMs + action.direction * SUBTITLE_STEP_MS,
                         )
@@ -404,6 +562,24 @@ fun WebPlayerScreen(
                     )
                 }
             }
+            // The next episode's count, or the end card, as the desktop's player draws them.
+            if (failure == null) {
+                StatusSheet(
+                    phase = phase,
+                    title = title,
+                    subtitle = subtitle,
+                    onRetry = engine::retry,
+                    onBack = onClose,
+                    onWatchAgain = {
+                        phase = Phase.Playing
+                        engine.seekTo(0)
+                        engine.play()
+                    },
+                    onPlayNext = ::switchTo,
+                    onCancelNext = { phase = Phase.Finished },
+                    nextLabel = { episodes.labelFor(it) },
+                )
+            }
             if (showDetails) DetailsPanel(rows = { engine.details() }, onClose = { showDetails = false })
             if (showShortcuts) ShortcutSheet(onClose = { showShortcuts = false }, mac = OsInfo.isMac)
             failure?.let { kind -> FailureSheet(kind, onRetry = engine::retry, onClose = onClose) }
@@ -448,7 +624,7 @@ private fun androidx.compose.foundation.layout.BoxScope.FailureSheet(kind: Strin
 
 private const val GET_APP = "https://tmplayer.org/download/"
 private const val RESUME_TICK_MS = 5_000L
-private const val CONTROLS_IDLE_MS = 3_000L
+private const val AUTOPLAY_COUNTDOWN_SEC = 5
 private const val SUBTITLE_STEP_MS = 100L
 
 /** What the page's video wants ahead of the start point before it plays, as the card's buffer. */
