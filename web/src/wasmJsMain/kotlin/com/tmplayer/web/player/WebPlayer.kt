@@ -33,8 +33,8 @@ private external fun jsChoose(spec: String): String
 @JsFun("() => window.TmPlayer && window.TmPlayer.preload()")
 private external fun jsPreload()
 
-@JsFun("(id, offset, count) => window.TmTd && window.TmTd.warm(id, offset, count)")
-private external fun jsWarm(id: Int, offset: Double, count: Double)
+@JsFun("(id, size, head, tail) => window.TmTd && window.TmTd.warm(id, size, head, tail)")
+private external fun jsWarm(id: Int, size: Double, head: Double, tail: Double)
 
 /** What the player reports back: where the viewer got to, and what they chose. */
 sealed interface PlayerEvent {
@@ -76,7 +76,17 @@ object WebPlayer {
         return null
     }
 
-    fun spec(video: WebVideo, prefs: WebPrefs, startSec: Double, title: String, subtitle: String, chat: String, hasNext: Boolean, hasPrevious: Boolean): JsonObject =
+    fun spec(
+        video: WebVideo,
+        prefs: WebPrefs,
+        startSec: Double,
+        title: String,
+        subtitle: String,
+        chat: String,
+        hasNext: Boolean,
+        hasPrevious: Boolean,
+        next: WebVideo? = null,
+    ): JsonObject =
         buildJsonObject {
             put("key", video.key)
             put("title", title)
@@ -88,6 +98,12 @@ object WebPlayer {
             put("startSec", startSec)
             put("hasNext", hasNext)
             put("hasPrevious", hasPrevious)
+            next?.let { n ->
+                putJsonObject("nextWarm") {
+                    put("id", n.fileId)
+                    put("size", n.sizeBytes)
+                }
+            }
             putJsonObject("source") {
                 putJsonArray("ids") { add(video.fileId) }
                 putJsonArray("sizes") { add(video.sizeBytes) }
@@ -116,6 +132,9 @@ object WebPlayer {
 
     fun close() = jsClose()
 
+    private const val WARM_HEAD = 2.0 * 1024 * 1024
+    private const val WARM_TAIL = 1.0 * 1024 * 1024
+
     /** "native" or "movi": the engine [video] would start in. */
     fun engineFor(video: WebVideo): String = jsChoose(
         buildJsonObject {
@@ -134,8 +153,7 @@ object WebPlayer {
      * the decoder starts loading if the file will need it.
      */
     fun warm(video: WebVideo) {
-        val head = minOf(video.sizeBytes, 2L * 1024 * 1024)
-        jsWarm(video.fileId, 0.0, head.toDouble())
+        jsWarm(video.fileId, video.sizeBytes.toDouble(), WARM_HEAD, WARM_TAIL)
         if (engineFor(video) == "movi") jsPreload()
     }
 }

@@ -9,7 +9,8 @@
 //   TmTd.readBase64(fileId, priority)     Promise<string>: a small file downloaded whole, base64
 //   TmTd.readRange(fileId, offset, count) Promise<ArrayBuffer>: up to count bytes at offset
 //   TmTd.fileInfo(fileId)                 Promise<object>: TDLib's file object
-//   TmTd.warm(fileId, offset, count)      asks TDLib for a stretch ahead of time (card hover)
+//   TmTd.warm(fileId, size, head, tail)   fetches a file's head and tail ahead of a play
+//   TmTd.stop(fileId)                     stops fetching ahead once a video closes
 //   TmTd.forget(fileId)                   drops what TDLib holds of a file (cache trimming)
 //   TmTd.close()
 //
@@ -34,6 +35,12 @@
   const windows = new Map();
   const waiters = new Map();
   const listeners = new Set();
+  // The last few hundred streaming decisions, for the playback details panel and the tests.
+  const log = [];
+  function trace(what, fileId, a, b) {
+    if (log.length > 400) log.splice(0, 100);
+    log.push([Math.round(performance.now()), what, fileId, a, b]);
+  }
 
   function serial(fileId, job) {
     const before = queues.get(fileId) || Promise.resolve();
@@ -109,6 +116,7 @@
 
   async function pointAt(fileId, offset, size, priority) {
     const limit = size > 0 ? Math.min(WINDOW, size - offset) : WINDOW;
+    trace('point', fileId, offset, limit);
     windows.set(fileId, { start: offset, end: offset + limit });
     await call({
       '@type': 'downloadFile', file_id: fileId, priority: priority || 32,
@@ -140,6 +148,7 @@
       const started = Date.now();
       while (true) {
         have = await prefix(fileId, offset);
+        trace('prefix', fileId, offset, have);
         if (have >= want) break;
         if (!covered(fileId, offset, want)) await pointAt(fileId, offset, size, 32);
         const updated = await waitFile(fileId, 2000);
@@ -254,19 +263,35 @@
       return serial(fileId, () => readRangeNow(fileId, offset, count, false));
     },
 
-    // A stretch fetched ahead of a play (a card hovered or focused for a moment), so the first
-    // frame is already there: the head, and the tail where MP4 and MKV keep their index.
-    warm(fileId, offset, count) {
-      return serial(fileId, async () => {
+    // A video about to be played (a card held under the pointer or the focus for a moment, the
+    // next episode near the end of this one): its head, then its last megabyte, where MP4 and MKV
+    // often keep their index, so the first frame needs almost nothing more after the press.
+    warm(fileId, size, head, tail) {
+      // Not in the file's read queue: a warm-up must never hold up a play that starts meanwhile,
+      // and a read that arrives points TDLib at its own window, which replaces this one.
+      if (queues.has(fileId) || windows.has(fileId)) return Promise.resolve();
+      const job = async () => {
         try {
-          const have = await prefix(fileId, offset);
-          if (have >= count) return;
-          await call({
-            '@type': 'downloadFile', file_id: fileId, priority: 8,
-            offset: offset, limit: count, synchronous: false,
-          });
+          if ((await prefix(fileId, 0)) < head) {
+            await Promise.race([
+              call({ '@type': 'downloadFile', file_id: fileId, priority: 8, offset: 0, limit: head, synchronous: true }),
+              new Promise((r) => setTimeout(r, 8000)),
+            ]);
+          }
+          if (queues.has(fileId) || windows.has(fileId)) return;
+          if (size > head + tail && tail > 0 && (await prefix(fileId, size - tail)) < tail) {
+            await call({ '@type': 'downloadFile', file_id: fileId, priority: 8, offset: size - tail, limit: tail, synchronous: false });
+          }
         } catch (e) {}
-      });
+      };
+      return job();
+    },
+
+    // Playback of a file is over: TDLib stops fetching ahead for it at once, so the next video
+    // gets the whole connection.
+    stop(fileId) {
+      windows.delete(fileId);
+      return call({ '@type': 'cancelDownloadFile', file_id: fileId, only_if_pending: false }).catch(() => {});
     },
 
     forget(fileId) {
@@ -282,6 +307,10 @@
     close() {
       if (!client) return Promise.resolve();
       return call({ '@type': 'close' }).catch(() => {});
+    },
+
+    get log() {
+      return log;
     },
 
     get started() {

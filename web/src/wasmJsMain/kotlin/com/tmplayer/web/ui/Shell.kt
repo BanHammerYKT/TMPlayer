@@ -135,7 +135,7 @@ fun play(app: WebAppState, video: WebVideo, all: List<WebVideo>, chat: WebChat) 
     val start = app.resume.point(video.key)?.positionSec ?: 0.0
     val spec = WebPlayer.spec(
         video, app.prefs, start, video.title, chat.title, chat.title,
-        hasNext = next != null, hasPrevious = previous != null,
+        hasNext = next != null, hasPrevious = previous != null, next = next,
     )
     WebPlayer.open(spec, app.prefs) { event ->
         val now = Clock.System.now().toEpochMilliseconds()

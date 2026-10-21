@@ -577,10 +577,14 @@
       on('seeking', () => this.root.classList.add('tm-waiting'));
       on('seeked', () => this.root.classList.remove('tm-waiting'));
       on('canplay', () => this.root.classList.remove('tm-waiting'));
-      on('timeupdate', () => this.paintTime());
+      on('timeupdate', () => {
+        this.paintTime();
+        this.warmNext();
+      });
       on('progress', () => this.paintBuffered());
       on('durationchange', () => this.paintTime());
       on('loadedmetadata', () => {
+        if (engine.kind === 'movi') this.checkSmooth(engine);
         this.paintButtons();
         this.paintChapters();
         this.applyTrackPrefs();
@@ -636,6 +640,21 @@
       }
     }
 
+    /**
+     * A picture this device cannot decode in time (software HEVC 10 bit at 1080p and above, on a
+     * browser with no hardware decoder for it) is said plainly, with the app offered and the choice
+     * to try anyway, instead of a spinner that never ends.
+     */
+    async checkSmooth(engine) {
+      try {
+        if (!engine.el.canPlaySmoothly) return;
+        const a = await engine.el.canPlaySmoothly({ rate: this.prefs.speed || 1 });
+        if (this.engine !== engine || !a || a.smooth !== false) return;
+        const heavy = engine.software || (a.reasons || []).some((r) => /software|hardware/i.test(String(r)));
+        if (heavy) this.fail('heavy');
+      } catch (e) {}
+    }
+
     fail(kind) {
       this.root.classList.remove('tm-waiting');
       this.root.classList.add('tm-failed');
@@ -662,7 +681,19 @@
         actions.append(retry, back);
       } else {
         h.textContent = T('web.needs_app_title');
-        p.textContent = T('web.needs_app_codec');
+        p.textContent = kind === 'heavy' ? T('web.needs_app_too_heavy') : T('web.needs_app_codec');
+        if (kind === 'heavy') {
+          const anyway = document.createElement('button');
+          anyway.className = 'tm-btn';
+          anyway.type = 'button';
+          anyway.textContent = T('player.play_anyway');
+          anyway.addEventListener('click', () => {
+            this.root.classList.remove('tm-failed');
+            const m = this.media();
+            if (m) m.play().catch(() => {});
+          });
+          actions.append(anyway);
+        }
         const get = document.createElement('button');
         get.className = 'tm-btn tm-primary';
         get.type = 'button';
@@ -688,6 +719,17 @@
       const m = this.media();
       const d = m ? m.duration : 0;
       return isFinite(d) && d > 0 ? d : this.spec.durationSec || 0;
+    }
+
+    /** 30 seconds from the end, the next episode's head and tail come ahead, as reelbox does. */
+    warmNext() {
+      const n = this.spec.nextWarm;
+      if (!n || this.nextWarmed || !window.TmTd || !window.TmTd.warm) return;
+      const d = this.duration();
+      if (d > 0 && d - this.time() < 30) {
+        this.nextWarmed = true;
+        window.TmTd.warm(n.id, n.size, 2 * 1024 * 1024, 1024 * 1024);
+      }
     }
 
     report(type) {
@@ -1512,6 +1554,7 @@
       document.removeEventListener('visibilitychange', this.onVisibility);
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
       if (this.engine) this.engine.dispose();
+      if (window.TmTd && window.TmTd.stop) for (const id of this.spec.source.ids) window.TmTd.stop(id);
       if (this.graph) this.graph.ctx.close().catch(() => {});
       if (this.wakeLock) this.wakeLock.release().catch(() => {});
       if ('mediaSession' in navigator) {

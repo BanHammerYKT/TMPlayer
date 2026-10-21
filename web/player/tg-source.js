@@ -116,6 +116,7 @@
     async read(offset, length) {
       TgSource.stats.reads++;
       TgSource.stats.last = offset;
+      if (TgSource.stats.trace.length < 400) TgSource.stats.trace.push([Math.round(performance.now()), offset, length]);
       if (this.closed) return new ArrayBuffer(0);
       if (offset >= this.size) return new ArrayBuffer(0);
       length = Math.min(length, this.size - offset);
@@ -146,6 +147,6 @@
   }
 
   /** Counters for the tests and the playback details panel. */
-  TgSource.stats = { reads: 0, last: 0 };
+  TgSource.stats = { reads: 0, last: 0, trace: [] };
   window.TgSource = TgSource;
 })();
