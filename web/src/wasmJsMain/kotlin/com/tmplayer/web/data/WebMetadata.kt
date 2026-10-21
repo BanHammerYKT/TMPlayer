@@ -37,7 +37,11 @@ internal fun webOnlineMetadata(): OnlineMetadata = OnlineMetadata(
     store = WebMetaSettings(),
     cache = WebMetaCache(),
     appVersion = BuildInfo.VERSION,
-).also { metadata -> Background.scope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }
+).also { metadata ->
+    // No warmUp(): its bare requests answer 401 and 404 and show as errors in the console. The
+    // page opens the same two connections with preconnect hints instead (index.html).
+    Background.scope.launch { runCatching { metadata.cache.prune() } }
+}
 
 /** [MetaSettings] under one local storage key, the fields named as MetadataStore names them. */
 private class WebMetaSettings : MetaSettingsStore {
