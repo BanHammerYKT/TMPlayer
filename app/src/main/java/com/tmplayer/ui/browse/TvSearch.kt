@@ -22,7 +22,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridItemSpanScope
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -33,6 +38,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,7 +56,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tmplayer.data.AllChatsSearch
 import com.tmplayer.data.ChatBrief
@@ -83,8 +93,8 @@ import com.tmplayer.ui.components.SlowAnswerNotice
  * row under them offers the recent searches, or failing those, titles from the starred chats'
  * newest videos; once results are in it holds the filters. Then the chats whose names match, as
  * avatar cards, and the videos five across as posters, each one card however many chats it was
- * posted in. Under the grid a strip of fixed height says more about the poster the remote is on,
- * so moving through the grid never moves the grid.
+ * posted in. They all scroll as one list, which brings a focused poster in whole. Under it a strip
+ * of fixed height says more about the poster the remote is on.
  */
 @Composable
 internal fun TvSearchScreen(
@@ -118,7 +128,11 @@ internal fun TvSearchScreen(
     )
     val micFocus = remember { FocusRequester() }
     val fieldFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { if (voice != null) micFocus.requestFocus() else fieldFocus.requestFocus() } }
+    // A frame first: the field is an item of the results' list now, composed as the list is laid out.
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        runCatching { if (voice != null) micFocus.requestFocus() else fieldFocus.requestFocus() }
+    }
 
     val byUsername = rememberUsernameChat(text)
     val chatMatches = remember(chats, text, favourites, byUsername) {
@@ -131,165 +145,247 @@ internal fun TvSearchScreen(
     var focusedGroup by remember { mutableStateOf<ResultGroup?>(null) }
     val grid = com.tmplayer.ui.components.rememberAheadGridState()
 
-    Column(
-        Modifier.fillMaxSize().padding(
-            start = TV_START,
-            // Under the top bar, which names the page and carries the clock, the field leads.
-            top = 4.dp,
-            bottom = Tv.SafeV,
-        ),
-    ) {
-        Row(
-            Modifier.padding(end = Tv.FocusClearance),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            if (voice != null) MicOrb(onClick = voice, modifier = Modifier.focusRequester(micFocus))
-            TvSearchField(
-                value = text,
-                onValueChange = onText,
-                placeholder = s.searchFieldHint,
-                modifier = Modifier.weight(1f).focusRequester(fieldFocus),
-                onSubmit = { onSubmit(text) },
-                editRequests = keyboardRequests,
-            )
-            if (text.isNotEmpty()) {
-                TvPill(s.commonClear, TmIcons.Close) {
-                    runCatching { fieldFocus.requestFocus() }
-                    onText("")
-                }
-            }
-            offer?.let { found -> TvPill(found.label, TmIcons.Send) { LinkRequests.ask(found.link) } }
-        }
-        Spacer(Modifier.height(16.dp))
-
-        // Recent searches, else suggestions, before typing; the filters after.
-        if (text.isBlank()) {
-            val pills = recentSearches.take(GlobalSearch.RECENT_SHOWN).ifEmpty { suggestions }
-            if (pills.isNotEmpty()) {
-                Text(
-                    if (recentSearches.isNotEmpty()) s.browseRecentSearches else s.searchSuggestions,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Tone.muted,
-                )
-                Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = Tv.SafeH)) {
-                    items(pills, key = { it }) { pill ->
-                        TvPill(pill, if (recentSearches.isNotEmpty()) TmIcons.History else TmIcons.Search, plain = true) {
-                            onText(pill)
-                            onSubmit(pill)
-                        }
-                    }
-                }
-            }
-        } else if (state.groups.isNotEmpty() || !state.filters.isDefault || state.sort != SearchSort.BestMatch) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = Tv.SafeH)) {
-                items(SearchChatType.entries, key = { it.name }) { type ->
-                    TvPill(type.label, null, chosen = state.filters.chatType == type) { onFilters(state.filters.copy(chatType = type)) }
-                }
-                item(key = "quality") {
-                    // OK steps through the qualities, which on a remote is one press per choice.
-                    TvPill(state.filters.quality.label, TmIcons.FilterHorizontal, chosen = state.filters.quality != SearchQuality.Any) {
-                        val next = SearchQuality.entries[(state.filters.quality.ordinal + 1) % SearchQuality.entries.size]
-                        onFilters(state.filters.copy(quality = next))
-                    }
-                }
-                item(key = "sort") {
-                    TvPill(state.sort.label, TmIcons.Sort, chosen = state.sort != SearchSort.BestMatch) {
-                        onSort(SearchSort.entries[(state.sort.ordinal + 1) % SearchSort.entries.size])
-                    }
-                }
-                item(key = "small") {
-                    TvPill(s.searchFilterHideSmall, null, chosen = state.filters.hideSmall) { onFilters(state.filters.copy(hideSmall = !state.filters.hideSmall)) }
-                }
-                item(key = "archived") {
-                    TvPill(s.searchFilterIncludeArchived, TmIcons.Archive, chosen = state.filters.includeArchived) {
-                        onFilters(state.filters.copy(includeArchived = !state.filters.includeArchived))
-                    }
-                }
-            }
-        }
-
-        if (chatMatches.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(end = Tv.SafeH)) {
-                items(chatMatches, key = { it.id }) { chat -> ChatCard(chat, reduced) { onOpenChat(chat) } }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        searchStatus(state)?.let { status ->
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(status, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
-                if (state.error != null || state.offline) TvPill(s.commonRetry, TmIcons.Refresh, onClick = onRetry)
-            }
-        }
-
-        val shown = state.shown
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                text.isBlank() -> Unit
-                shown.isEmpty() && state.searching -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(COLUMNS),
-                    contentPadding = PaddingValues(end = Tv.SafeH, top = Tv.FocusClearance),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
-                ) {
-                    items(COLUMNS) { SearchResultSkeleton(posterWidth = 140.dp) }
-                    item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
-                        SlowAnswerNotice(key = state.query, onRetry = onRetry, modifier = Modifier.padding(top = 24.dp))
-                    }
-                }
-                shown.isEmpty() && !state.busy && state.error == null -> Column(Modifier.padding(top = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val hidden = state.hiddenBy
-                    // The empty pages' picture, never focusable: the remote stays on the keyboard
-                    // and the pills below, in the order they always had.
-                    com.tmplayer.ui.components.EmptyArt(
-                        if (hidden.isNotEmpty()) TmIcons.FilterHorizontal else TmIcons.SearchRemove,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                    if (hidden.isNotEmpty()) {
-                        hidden.forEach { Text(it.message(state), style = MaterialTheme.typography.titleMedium, color = Tone.text) }
-                        TvPill(s.searchClearFilters, TmIcons.Close) { onFilters(SearchFilters()) }
-                    } else {
-                        Text(s.searchNone(state.query.text), style = MaterialTheme.typography.titleMedium, color = Tone.text)
-                        Text(s.searchNoneDetail, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
-                        AllChatsSearch.fallbackQuery(state.query.server)?.let { word ->
-                            TvPill(s.searchSearchFor(word), TmIcons.Search) { onText(word); onSubmit(word) }
-                        }
-                    }
-                }
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(COLUMNS),
-                    state = grid,
-                    modifier = Modifier.keepTopInSight(grid),
-                    contentPadding = PaddingValues(end = Tv.SafeH, top = Tv.FocusClearance, bottom = Tv.FocusClearance),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                ) {
-                    items(shown, key = { it.key }) { group ->
-                        PosterCard(
-                            group = group,
-                            chats = briefs,
-                            fraction = group.copies.firstNotNullOfOrNull { progress(it) },
-                            reduced = reduced,
-                            onFocused = {
-                                focusedGroup = group
-                                // The next page well before the last row.
-                                if (shown.indexOf(group) >= shown.size - COLUMNS * 2) onLoadMore()
-                            },
-                            onClick = { onOpenGroup(group) },
+    // The field, the pills, the chats and the results scroll as one list, with the details strip
+    // fixed under it. They used to be a header over a grid of whatever height was left, which on
+    // a television (960 by 540 dp at 1080p and at 720p alike) was less than one poster: the row
+    // the remote was on stood cut in half above the strip. Now moving down into the results
+    // scrolls the header away, and up from the first row brings it back.
+    val shown = state.shown
+    val pills = recentSearches.take(GlobalSearch.RECENT_SHOWN).ifEmpty { suggestions }
+    val showFilters = text.isNotBlank() &&
+        (state.groups.isNotEmpty() || !state.filters.isDefault || state.sort != SearchSort.BestMatch)
+    val full: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+    Column(Modifier.fillMaxSize().padding(start = TV_START, bottom = Tv.SafeV)) {
+        WholeCardInView(grid) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(COLUMNS),
+                state = grid,
+                modifier = Modifier.weight(1f).fillMaxWidth().keepTopInSight(grid),
+                // Under the top bar, which names the page and carries the clock, the field leads.
+                contentPadding = PaddingValues(end = Tv.SafeH, top = 4.dp, bottom = CARD_CLEARANCE),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                item(span = full, key = "field") {
+                    Row(
+                        // The row reaches as far as it did over the old grid, past the results' margin.
+                        Modifier.bleedEnd(Tv.SafeH - Tv.FocusClearance),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        if (voice != null) MicOrb(onClick = voice, modifier = Modifier.focusRequester(micFocus))
+                        TvSearchField(
+                            value = text,
+                            onValueChange = onText,
+                            placeholder = s.searchFieldHint,
+                            modifier = Modifier.weight(1f).focusRequester(fieldFocus),
+                            onSubmit = { onSubmit(text) },
+                            editRequests = keyboardRequests,
                         )
+                        if (text.isNotEmpty()) {
+                            TvPill(s.commonClear, TmIcons.Close) {
+                                runCatching { fieldFocus.requestFocus() }
+                                onText("")
+                            }
+                        }
+                        offer?.let { found -> TvPill(found.label, TmIcons.Send) { LinkRequests.ask(found.link) } }
                     }
-                    if (state.loadingMore) {
-                        item(span = { GridItemSpan(maxLineSpan) }, key = "more") {
-                            Text(s.gridLoadingMore, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
+                }
+
+                // Recent searches, else suggestions, before typing; the filters after.
+                if (text.isBlank() && pills.isNotEmpty()) {
+                    item(span = full, key = "pills") {
+                        Column(Modifier.bleedEnd(Tv.SafeH)) {
+                            Text(
+                                if (recentSearches.isNotEmpty()) s.browseRecentSearches else s.searchSuggestions,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = Tone.muted,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(end = Tv.SafeH)) {
+                                items(pills, key = { it }) { pill ->
+                                    TvPill(pill, if (recentSearches.isNotEmpty()) TmIcons.History else TmIcons.Search, plain = true) {
+                                        onText(pill)
+                                        onSubmit(pill)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (showFilters) {
+                    item(span = full, key = "filters") {
+                        LazyRow(
+                            Modifier.bleedEnd(Tv.SafeH),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(end = Tv.SafeH),
+                        ) {
+                            items(SearchChatType.entries, key = { it.name }) { type ->
+                                TvPill(type.label, null, chosen = state.filters.chatType == type) { onFilters(state.filters.copy(chatType = type)) }
+                            }
+                            item(key = "quality") {
+                                // OK steps through the qualities, which on a remote is one press per choice.
+                                TvPill(state.filters.quality.label, TmIcons.FilterHorizontal, chosen = state.filters.quality != SearchQuality.Any) {
+                                    val next = SearchQuality.entries[(state.filters.quality.ordinal + 1) % SearchQuality.entries.size]
+                                    onFilters(state.filters.copy(quality = next))
+                                }
+                            }
+                            item(key = "sort") {
+                                TvPill(state.sort.label, TmIcons.Sort, chosen = state.sort != SearchSort.BestMatch) {
+                                    onSort(SearchSort.entries[(state.sort.ordinal + 1) % SearchSort.entries.size])
+                                }
+                            }
+                            item(key = "small") {
+                                TvPill(s.searchFilterHideSmall, null, chosen = state.filters.hideSmall) { onFilters(state.filters.copy(hideSmall = !state.filters.hideSmall)) }
+                            }
+                            item(key = "archived") {
+                                TvPill(s.searchFilterIncludeArchived, TmIcons.Archive, chosen = state.filters.includeArchived) {
+                                    onFilters(state.filters.copy(includeArchived = !state.filters.includeArchived))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (chatMatches.isNotEmpty()) {
+                    item(span = full, key = "chats") {
+                        LazyRow(
+                            Modifier.bleedEnd(Tv.SafeH),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            contentPadding = PaddingValues(end = Tv.SafeH),
+                        ) {
+                            items(chatMatches, key = { it.id }) { chat -> ChatCard(chat, reduced) { onOpenChat(chat) } }
+                        }
+                    }
+                }
+
+                searchStatus(state)?.let { status ->
+                    item(span = full, key = "status") {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(status, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
+                            if (state.error != null || state.offline) TvPill(s.commonRetry, TmIcons.Refresh, onClick = onRetry)
+                        }
+                    }
+                }
+
+                when {
+                    text.isBlank() -> Unit
+                    shown.isEmpty() && state.searching -> {
+                        items(COLUMNS, key = { "skeleton$it" }) { SearchResultSkeleton(posterWidth = 140.dp) }
+                        item(span = full, key = "slow") {
+                            SlowAnswerNotice(key = state.query, onRetry = onRetry, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                    shown.isEmpty() && !state.busy && state.error == null -> item(span = full, key = "empty") {
+                        Column(Modifier.padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            val hidden = state.hiddenBy
+                            // The empty pages' picture, never focusable: the remote stays on the keyboard
+                            // and the pills below, in the order they always had.
+                            com.tmplayer.ui.components.EmptyArt(
+                                if (hidden.isNotEmpty()) TmIcons.FilterHorizontal else TmIcons.SearchRemove,
+                                modifier = Modifier.padding(bottom = 8.dp),
+                            )
+                            if (hidden.isNotEmpty()) {
+                                hidden.forEach { Text(it.message(state), style = MaterialTheme.typography.titleMedium, color = Tone.text) }
+                                TvPill(s.searchClearFilters, TmIcons.Close) { onFilters(SearchFilters()) }
+                            } else {
+                                Text(s.searchNone(state.query.text), style = MaterialTheme.typography.titleMedium, color = Tone.text)
+                                Text(s.searchNoneDetail, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
+                                AllChatsSearch.fallbackQuery(state.query.server)?.let { word ->
+                                    TvPill(s.searchSearchFor(word), TmIcons.Search) { onText(word); onSubmit(word) }
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        items(shown, key = { it.key }) { group ->
+                            PosterCard(
+                                group = group,
+                                chats = briefs,
+                                fraction = group.copies.firstNotNullOfOrNull { progress(it) },
+                                reduced = reduced,
+                                onFocused = {
+                                    focusedGroup = group
+                                    // The next page well before the last row.
+                                    if (shown.indexOf(group) >= shown.size - COLUMNS * 2) onLoadMore()
+                                },
+                                onClick = { onOpenGroup(group) },
+                            )
+                        }
+                        if (state.loadingMore) {
+                            item(span = full, key = "more") {
+                                Text(s.gridLoadingMore, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
+                            }
                         }
                     }
                 }
             }
         }
-        // A fixed height, so the grid above never moves as the remote does.
+        // A fixed height, so the list above never moves as the remote does.
         DetailsStrip(focusedGroup?.takeIf { g -> shown.any { it.key == g.key } }, briefs)
+    }
+}
+
+/**
+ * Lays a row out [extra] wider than the cell it is in, the extra on the end side, so a row in the
+ * results' list keeps the reach it had before the list took a margin for its posters. The list
+ * draws into its own padding, so nothing is cut.
+ */
+private fun Modifier.bleedEnd(extra: Dp): Modifier = layout { measurable, constraints ->
+    if (!constraints.hasBoundedWidth) {
+        val placeable = measurable.measure(constraints)
+        return@layout layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+    }
+    val more = extra.roundToPx()
+    val placeable = measurable.measure(
+        constraints.copy(minWidth = constraints.minWidth + more, maxWidth = constraints.maxWidth + more),
+    )
+    layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(0, 0) }
+}
+
+/**
+ * Where the results' list scrolls for the remote: a poster already wholly in view moves nothing,
+ * and one that is not comes in just far enough to show all of it, its focus ring and its grown
+ * size included ([CARD_CLEARANCE]), at the top or the foot of the list. The television's own rule
+ * stands every focused item a third of the way down, which with the details strip under the
+ * list is where a poster's foot was cut. A poster taller than the list (a very large font) is
+ * shown from its top. Rows inside the list (the pills, the chats) ask with their width and keep
+ * the platform's rule.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun WholeCardInView(grid: LazyGridState, content: @Composable () -> Unit) {
+    val platform = LocalBringIntoViewSpec.current
+    val clearance = with(LocalDensity.current) { CARD_CLEARANCE.toPx() }
+    val spec = remember(grid, platform, clearance) {
+        object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+                val viewport = grid.layoutInfo.viewportSize.height.toFloat()
+                if (viewport <= 0f || containerSize != viewport) {
+                    return platform.calculateScrollDistance(offset, size, containerSize)
+                }
+                return WholeInView.distance(offset, size, containerSize, clearance)
+            }
+        }
+    }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
+}
+
+/** [WholeCardInView]'s arithmetic, apart from composition so a test can ask it directly. */
+internal object WholeInView {
+    /**
+     * How far to scroll (positive is down the list) so an item at [offset] of [size] stands wholly
+     * in a list of [container] with [clearance] above and below it: nothing when it already does.
+     */
+    fun distance(offset: Float, size: Float, container: Float, clearance: Float): Float {
+        val top = offset - clearance
+        val foot = offset + size + clearance
+        return when {
+            top >= 0f && foot <= container -> 0f
+            // Taller than the list, or above it: its top at the list's top.
+            foot - top > container || top < 0f -> top
+            // Below the list: its foot at the list's foot.
+            else -> foot - container
+        }
     }
 }
 
@@ -444,6 +540,9 @@ private const val COLUMNS = 5
 
 /** The details strip's height, fixed so the grid never jumps. */
 private val STRIP = 96.dp
+
+/** Room kept round a focused poster as the list brings it in: its grown size and its focus ring. */
+private val CARD_CLEARANCE = 16.dp
 
 /**
  * [TvSearchScreen] with what it needs gathered: the model's state, the recent searches (none

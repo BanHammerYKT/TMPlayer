@@ -160,6 +160,13 @@ class PlayerFeedback(private val root: FrameLayout, insertBelow: View?) {
         note.postDelayed(hideNote, holdMs)
     }
 
+    /** Puts the text pill away now, fading as it would by itself: a long note the viewer is done with. */
+    fun dismissMessage() {
+        if (note.visibility != View.VISIBLE) return
+        note.removeCallbacks(hideNote)
+        hideNote.run()
+    }
+
     // ---- an offer -----------------------------------------------------------------------------
 
     /**

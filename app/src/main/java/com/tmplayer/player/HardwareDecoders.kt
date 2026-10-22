@@ -1,0 +1,37 @@
+package com.tmplayer.player
+
+import android.content.Context
+import androidx.media3.common.Format
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import com.tmplayer.data.TelegramQualities
+import com.tmplayer.data.TelegramQuality
+
+/**
+ * Whether this device has a hardware decoder for a picture, as Media3's codec list tells hardware
+ * from software (by the codec's own flag from Android 10, by its name before that: Google's
+ * `OMX.google.` and `c2.android.` decoders are software). The format's profile, level and size
+ * are checked too, so HEVC 10-bit on a chip that decodes only 8-bit, or VP9 profile 2, counts as
+ * software. Media3 has already asked the same questions to pick a renderer, so the answers come
+ * from its cache. See [com.tmplayer.data.SoftwareDecode].
+ */
+@UnstableApi
+object HardwareDecoders {
+
+    fun has(context: Context, format: Format): Boolean = runCatching {
+        val mime = format.sampleMimeType ?: return false
+        MediaCodecUtil.getDecoderInfos(mime, false, false).any { info ->
+            info.hardwareAccelerated && !info.softwareOnly && info.isFormatSupported(context, format)
+        }
+    }.getOrDefault(false)
+
+    /** [has] for one of Telegram's copies, from its codec's name and its size. */
+    fun has(context: Context, copy: TelegramQuality): Boolean {
+        val mime = TelegramQualities.mimeOf(copy.codec) ?: return false
+        val format = Format.Builder()
+            .setSampleMimeType(mime)
+            .apply { if (copy.width > 0 && copy.height > 0) setWidth(copy.width).setHeight(copy.height) }
+            .build()
+        return has(context, format)
+    }
+}

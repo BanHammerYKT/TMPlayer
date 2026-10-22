@@ -137,6 +137,38 @@ class TelegramQualitiesTest {
         val big = Photo(false, null, arrayOf(PhotoSize("y", file(3, 1), 1280, 720, intArrayOf())))
         assertEquals(3, MediaMapper.coverSize(big)?.photo?.id)
     }
+
+    @Test
+    fun `a software heavy upload plays the tallest copy the hardware decodes, H264 first`() {
+        val hevc720 = TelegramQuality(21, 1280, 720, "h265", 800_000_000)
+        val av1720 = TelegramQuality(22, 1280, 720, "av1", 700_000_000)
+        val hardware: (TelegramQuality) -> Boolean = { it.codec != "av1" }
+        // H.264 before HEVC at the same height.
+        assertEquals(q720, TelegramQualities.forSoftwareDecode(listOf(q480, hevc720, q720), saveData = false, inHardware = hardware))
+        // An AV1 copy is no way out of software AV1.
+        assertEquals(q480, TelegramQualities.forSoftwareDecode(listOf(av1720, q480), saveData = false, inHardware = hardware))
+        // Nothing the hardware takes: nothing to switch to.
+        assertNull(TelegramQualities.forSoftwareDecode(listOf(av1720), saveData = false, inHardware = hardware))
+        assertNull(TelegramQualities.forSoftwareDecode(emptyList(), saveData = false, inHardware = hardware))
+    }
+
+    @Test
+    fun `save mobile data keeps the software copy at 720p or under while there is one`() {
+        val q1080 = TelegramQuality(30, 1920, 1080, "h264", 1_500_000_000)
+        assertEquals(q720, TelegramQualities.forSoftwareDecode(listOf(q1080, q720, q480), saveData = true) { true })
+        assertEquals(q1080, TelegramQualities.forSoftwareDecode(listOf(q1080, q720), saveData = false) { true })
+        // Only taller copies: the lightest rule does not apply here, the tallest the hardware takes plays.
+        assertEquals(q1080, TelegramQualities.forSoftwareDecode(listOf(q1080), saveData = true) { true })
+    }
+
+    @Test
+    fun `copy codecs map to the mime types the codec list knows`() {
+        assertEquals(SoftwareDecode.MIME_H264, TelegramQualities.mimeOf("h264"))
+        assertEquals(SoftwareDecode.MIME_HEVC, TelegramQualities.mimeOf("H265"))
+        assertEquals(SoftwareDecode.MIME_AV1, TelegramQualities.mimeOf("av1"))
+        assertEquals(SoftwareDecode.MIME_VP9, TelegramQualities.mimeOf("vp9"))
+        assertNull(TelegramQualities.mimeOf("theora"))
+    }
 }
 
 class PostStartTest {

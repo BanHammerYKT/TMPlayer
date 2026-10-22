@@ -424,6 +424,34 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** Why a lighter copy was picked by the player itself, said once it plays; null for none. */
     private var qualityPickedWhy: com.tmplayer.data.TelegramQualities.Why? = null
 
+    // ---- a picture this device decodes in software (see [SoftwareDecode]) ----------------------
+
+    /** Whether the copy playing was the viewer's choice ([QualityWish]), which the player never swaps by itself. */
+    private var qualityHandPicked = false
+
+    /** Whether Save mobile data was in force over mobile data as this video opened ([pickTelegramQuality]). */
+    private var saveDataAtOpen = false
+
+    /** Whether this video's picture was looked at for software decoding yet ([checkSoftwareDecode]). */
+    private var softwareChecked = false
+
+    /** Whether this player already went for a lighter copy over software decoding: never twice. */
+    private var softwareSwapTried = false
+
+    /** The once-per-video line that the picture decodes in software, waiting for the first frame. */
+    private var softwareNote: String? = null
+
+    /** Whether that line is on screen now, so the next key puts it away. */
+    private var softwareNoteUp = false
+
+    /** A television, or a device short of memory: where software decoding of a large picture stutters. */
+    private val weakDevice: Boolean by lazy {
+        com.tmplayer.data.SoftwareDecode.weak(
+            FormFactor.isTv(this),
+            runCatching { com.tmplayer.ui.onboarding.DeviceProbes.fit(this) }.getOrDefault(com.tmplayer.data.DeviceFit.Fine),
+        )
+    }
+
     /** The upload's id and size, whichever copy plays: what the place, a download and the copies speak of. */
     private fun uploadId(): Int = if (playingQuality != 0 && uploadFileId != 0) uploadFileId else fileId
     private fun uploadSize(): Long = if (playingQuality != 0 && uploadFileId != 0) uploadSizeBytes else fileSizeBytes
@@ -464,6 +492,93 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         showError(if (format.height >= UHD_HEIGHT) L.playerErrorUhd(format.height.toString()) else L.playerErrorFormat, retryable = false)
         return true
     }
+
+    /**
+     * Looks once at the picture Media3 chose and, when this device would decode it in software and
+     * too slowly ([SoftwareDecode.heavy]: AV1 on a TV stick with no AV1 silicon), either plays a
+     * lighter copy of Telegram's that the hardware takes, from the same moment, or (with no such
+     * copy) readies the once-per-video line that it may stutter, said on a television only.
+     *
+     * Returns true when the player is handing over to the lighter copy, so the rest of the track
+     * handling is not done for a player about to go. Never over the viewer's own choice of copy
+     * ([qualityHandPicked]), a copy already playing, a joined or downloaded video (whose file is
+     * the one there is), or while casting, where the TV decodes the picture.
+     */
+    private fun checkSoftwareDecode(tracks: Tracks): Boolean {
+        if (softwareChecked || isAudio || !weakDevice) return false
+        val group = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected } ?: return false
+        val format = (0 until group.length).firstOrNull { group.isTrackSelected(it) }?.let { group.getTrackFormat(it) } ?: return false
+        if (format.sampleMimeType?.startsWith("image/") == true) return false
+        softwareChecked = true
+        if (castUp()) return false
+        val heavy = com.tmplayer.data.SoftwareDecode.heavy(
+            format.sampleMimeType,
+            format.width,
+            format.height,
+            hardware = HardwareDecoders.has(this, format),
+            weak = true,
+        )
+        if (!heavy) return false
+        Log.i("TMPlayer", "Picture decodes in software here: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
+        val swappable = playingQuality == 0 && !qualityHandPicked && !softwareSwapTried &&
+            downloadedFile == null && joinedSource == null && hasMessage()
+        if (!swappable) {
+            noteSoftwareDecode(playing = false)
+            return false
+        }
+        val copies = postItem?.qualities?.takeIf { it.isNotEmpty() } ?: carriedQualities
+        if (copies.isNotEmpty()) {
+            if (swapForSoftware(copies)) return true
+            noteSoftwareDecode(playing = false)
+            return false
+        }
+        // The copies not known yet: the message is being read as the player opens ([readPost]),
+        // and the swap waits a moment for it, the upload playing meanwhile.
+        softwareSwapTried = true
+        itemScope.launch {
+            val later = kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }?.qualities.orEmpty()
+            if (later.isEmpty() || !swapForSoftware(later)) noteSoftwareDecode(playing = true)
+        }
+        return false
+    }
+
+    /**
+     * Plays the copy among [copies] that decodes in hardware, in place of an upload this device
+     * decodes too slowly; true when the hand-over started, false (with the line readied) when none
+     * does. The upload is remembered as heavy while the app runs, so the new player and any later
+     * open go straight to the copy ([pickTelegramQuality]), which also says why. The place carries
+     * over the way a switch of quality carries it, and the quality list still offers the upload.
+     */
+    private fun swapForSoftware(copies: List<com.tmplayer.data.TelegramQuality>): Boolean {
+        softwareSwapTried = true
+        if (handingOver || isFinishing || castUp()) return false
+        val pick = com.tmplayer.data.TelegramQualities.forSoftwareDecode(copies, saveDataAtOpen) { HardwareDecoders.has(this, it) }
+            ?: return false
+        Log.i("TMPlayer", "Playing Telegram's ${pick.height}p ${pick.codec} copy instead, which decodes in hardware")
+        com.tmplayer.data.SoftwareDecode.rememberHeavy(chatId, messageId)
+        player?.pause()
+        // The moment to carry on from: the player's, or the saved place it has not sought to yet.
+        val at = player?.currentPosition?.takeIf { it > 0 } ?: resumeMs
+        if (at > 0) BookmarkJump.request(chatId, messageId, at)
+        // The copies go along, so the new player need not read the message again to find them.
+        playEpisode(currentItem().copy(qualities = copies))
+        return true
+    }
+
+    /** Readies the line that the picture decodes in software, on a television, once per video; [playing] says it now. */
+    private fun noteSoftwareDecode(playing: Boolean) {
+        if (!FormFactor.isTv(this)) return
+        if (!com.tmplayer.data.SoftwareDecode.noteOnce(chatId, messageId)) return
+        if (playing && firstFrameReady) {
+            softwareNoteUp = true
+            feedback?.message(L.playerSoftwareDecodeNote, holdMs = SOFTWARE_NOTE_MS)
+        } else {
+            softwareNote = L.playerSoftwareDecodeNote
+        }
+    }
+
+    /** Whether a cast is connected or playing: the TV at the other end decodes the picture then. */
+    private fun castUp(): Boolean = cast?.connected == true || cast?.casting == true
 
     /** The last error Media3 reported, for "Copy details" on the failure sheet. */
     private var lastPlaybackError: PlaybackException? = null
@@ -1152,6 +1267,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         uploadFileId = 0
         uploadSizeBytes = 0
         qualityPickedWhy = null
+        qualityHandPicked = false
+        saveDataAtOpen = false
+        softwareSwapTried = false
+        softwareChecked = false
+        softwareNote = null
+        softwareNoteUp = false
         storyboardFrames?.let { board ->
             board.release()
             storyboardFrames = null
@@ -1887,17 +2008,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private suspend fun pickTelegramQuality() {
         if (!hasMessage() || joinedSource != null || downloadedFile != null || playingQuality != 0) return
         val wish = com.tmplayer.data.QualityWish.take(chatId, messageId)
+        qualityHandPicked = wish != null
         if (wish == 0) return
+        // An upload this player found it would decode in software too slowly ([checkSoftwareDecode]),
+        // opened again: straight to a copy the hardware takes, without starting the upload first.
+        // Not while casting, where the TV decodes it.
+        val softwareSwap = wish == null && weakDevice && !castUp() &&
+            com.tmplayer.data.SoftwareDecode.knownHeavy(chatId, messageId)
+        if (softwareSwap) softwareSwapTried = true
         // No copy chosen: nothing to read unless the player could pick one itself, which takes
         // Save mobile data in force or a line measured too slow. The usual open asks Telegram
         // nothing here, where it used to wait up to [POST_READ_MS] for the message.
         var saveData = false
         if (wish == null) {
-            if (runCatching { Td.localDownloadedBytes(fileId) }.getOrDefault(0L) > 0) return
             saveData = NetworkMonitor.metered.value && MeteredPolicy.saveMobileDataInForce(
                 runCatching { settings.saveMobileDataNow() }.getOrDefault(false),
                 FormFactor.isTv(this),
             )
+            saveDataAtOpen = saveData
+        }
+        if (wish == null && !softwareSwap) {
+            if (runCatching { Td.localDownloadedBytes(fileId) }.getOrDefault(0L) > 0) return
             val known = fileSizeBytes > 0 && durationSec > 0
             if (known && !com.tmplayer.data.TelegramQualities.mightChoose(fileSizeBytes, durationSec, saveData, com.tmplayer.player.LineSpeed.recent())) return
         }
@@ -1910,9 +2041,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val chosen = if (wish != null) {
             fresh.qualities.firstOrNull { it.height == wish }
         } else {
-            val upload = fresh.copy(fileId = fileId, sizeBytes = fileSizeBytes.takeIf { it > 0 } ?: fresh.sizeBytes, durationSec = durationSec.takeIf { it > 0 } ?: fresh.durationSec)
-            com.tmplayer.data.TelegramQualities.choose(upload, saveData, com.tmplayer.player.LineSpeed.recent())
-                ?.also { qualityPickedWhy = it.why }?.quality
+            // A copy the hardware takes first, for an upload known to be too much in software;
+            // else (or with none) the usual choice for the line and Save mobile data.
+            val software = if (softwareSwap) {
+                com.tmplayer.data.TelegramQualities.forSoftwareDecode(fresh.qualities, saveData) { HardwareDecoders.has(this, it) }
+                    ?.also { qualityPickedWhy = com.tmplayer.data.TelegramQualities.Why.Software }
+            } else {
+                null
+            }
+            software ?: run {
+                val upload = fresh.copy(fileId = fileId, sizeBytes = fileSizeBytes.takeIf { it > 0 } ?: fresh.sizeBytes, durationSec = durationSec.takeIf { it > 0 } ?: fresh.durationSec)
+                com.tmplayer.data.TelegramQualities.choose(upload, saveData, com.tmplayer.player.LineSpeed.recent())
+                    ?.also { qualityPickedWhy = it.why }?.quality
+            }
         } ?: return
         uploadFileId = fileId
         uploadSizeBytes = fileSizeBytes
@@ -1921,8 +2062,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         playingQuality = chosen.height
         qualityPickedWhy?.let { why ->
             val label = com.tmplayer.data.TelegramQualities.label(chosen.height)
-            val text = if (why == com.tmplayer.data.TelegramQualities.Why.SaveData) L.playerLighterPickedData(label) else L.playerLighterPickedSlow(label)
-            lifecycleScope.launch { showGestureFeedback(text) }
+            val text = when (why) {
+                com.tmplayer.data.TelegramQualities.Why.SaveData -> L.playerLighterPickedData(label)
+                com.tmplayer.data.TelegramQualities.Why.SlowLine -> L.playerLighterPickedSlow(label)
+                com.tmplayer.data.TelegramQualities.Why.Software -> L.playerLighterPickedSoftware(label)
+            }
+            // Long enough to read the longer line about software decoding.
+            val software = why == com.tmplayer.data.TelegramQualities.Why.Software
+            lifecycleScope.launch { if (software) feedback?.message(text, holdMs = SOFTWARE_NOTE_MS) else showGestureFeedback(text) }
         }
     }
 
@@ -2912,6 +3059,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         override fun onTracksChanged(tracks: Tracks) {
             logSubtitleTracks(tracks)
             if (pictureUnplayable(tracks)) return
+            if (checkSoftwareDecode(tracks)) return
             restoreResumeTracks(tracks)
             applySettingsSubtitles(tracks)
             rememberTracks(tracks)
@@ -2996,6 +3144,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     if (!piecesNoticeShown) {
                         piecesNoticeShown = true
                         piecesNotice?.let { feedback?.message(it, holdMs = PIECES_NOTICE_MS) }
+                    }
+                    // After the pieces' notice, which matters more, and only when that is not up.
+                    softwareNote?.let { note ->
+                        softwareNote = null
+                        if (piecesNotice == null) {
+                            softwareNoteUp = true
+                            feedback?.message(note, holdMs = SOFTWARE_NOTE_MS)
+                        }
                     }
                 }
                 // Already moved on from the credits; the file running out behind it changes nothing.
@@ -4196,6 +4352,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             }
         }
         if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        // The quiet line about software decoding goes with the next press, which still does what
+        // it does: the line asks nothing, so it never holds a key back.
+        if (softwareNoteUp) {
+            softwareNoteUp = false
+            feedback?.dismissMessage()
+        }
         val pickerOpen = TrackPickerFragment.isOpen(supportFragmentManager)
         if (pickerOpen) return super.dispatchKeyEvent(event)
 
@@ -7159,6 +7321,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         private const val EXTRA_OUTSIDE_APP_TASK = "outside_app_task"
         /** How long the note about a missing piece stays up as the video starts. */
         private const val PIECES_NOTICE_MS = 6_000L
+
+        /** How long the lines about software decoding stay, a sentence longer than a usual flash. */
+        private const val SOFTWARE_NOTE_MS = 7_000L
 
         /** How long the word that a file cannot be sought in stays up. */
         private const val SEEK_NOTICE_MS = 6_000L

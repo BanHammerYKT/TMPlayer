@@ -98,8 +98,12 @@ object TelegramQualities {
     fun rate(sizeBytes: Long, durationSec: Int): Long =
         if (sizeBytes <= 0 || durationSec <= 0) 0 else sizeBytes / durationSec
 
-    /** Why a lighter copy was picked for the viewer, for the line that says so. */
-    enum class Why { SaveData, SlowLine }
+    /**
+     * Why a lighter copy was picked for the viewer, for the line that says so. [Software]: the
+     * upload's format has no hardware decoder on this device, which plays it in software and
+     * cannot keep up ([SoftwareDecode]).
+     */
+    enum class Why { SaveData, SlowLine, Software }
 
     data class Choice(val quality: TelegramQuality, val why: Why)
 
@@ -140,6 +144,32 @@ object TelegramQualities {
             r > 0 && line >= r * HEADROOM
         }.maxByOrNull { it.height }
         return Choice(fits ?: lightest, Why.SlowLine)
+    }
+
+    /**
+     * The copy to play in place of an upload this device would decode in software and too slowly
+     * ([SoftwareDecode.heavy]), or null when none of [qualities] would do better: the tallest one
+     * [inHardware] says this device decodes in hardware, H.264 before another codec at the same
+     * height. With [saveData] (Save mobile data in force) only copies no taller than
+     * [SAVE_DATA_HEIGHT] are looked at while there are any, as [choose] would.
+     */
+    fun forSoftwareDecode(
+        qualities: List<TelegramQuality>,
+        saveData: Boolean,
+        inHardware: (TelegramQuality) -> Boolean,
+    ): TelegramQuality? {
+        val playable = qualities.filter { it.height > 0 && inHardware(it) }
+        val pool = if (saveData) playable.filter { it.height <= SAVE_DATA_HEIGHT }.ifEmpty { playable } else playable
+        return pool.sortedWith(compareByDescending<TelegramQuality> { it.height }.thenBy { codecRank(it.codec) }).firstOrNull()
+    }
+
+    /** Media3's sample MIME type for a copy's codec as TDLib names it, or null for one not known here. */
+    fun mimeOf(codec: String): String? = when (codec.lowercase()) {
+        "h264", "avc", "avc1" -> SoftwareDecode.MIME_H264
+        "h265", "hevc", "hvc1", "hev1" -> SoftwareDecode.MIME_HEVC
+        "av1", "av01" -> SoftwareDecode.MIME_AV1
+        "vp9", "vp09" -> SoftwareDecode.MIME_VP9
+        else -> null
     }
 
     /**
