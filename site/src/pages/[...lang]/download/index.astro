@@ -255,9 +255,21 @@ const trust = ['download.trust_free', 'download.trust_source', 'download.trust_a
         </div>
 
 
-        <div class="later">
-          <p>{t('download.no_iphone_or_ipad')}</p>
-        </div>
+        {/*
+          The web app (a beta, iPhone first) has no file to download, so it is not one of the tabs:
+          it sits under them for every device, and #web from other pages lands here.
+        */}
+        <section class="later web-app" id="web" aria-labelledby="web-h">
+          <div class="platform-head">
+            <span class="panel-icon icon-browse" aria-hidden="true"><Icon name="globe" /></span>
+            <div class="platform-title">
+              <h3 id="web-h">{t('download.web_title')}</h3>
+              <p class="platform-req">{t('download.web_req')}</p>
+            </div>
+          </div>
+          <p>{t('download.web_note')}</p>
+          <p class="web-app-go"><a class="btn btn-outline" href="https://web.tmplayer.org/" rel="noopener">{t('download.web_open')}</a></p>
+        </section>
 
         {/* The technical part, folded: checksums, the release notes and the older releases. */}
         <details class="code-fold dl-files">

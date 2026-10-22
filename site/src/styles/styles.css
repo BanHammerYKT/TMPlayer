@@ -1331,6 +1331,10 @@ html:not(.js) .js-only { display: none; }
 }
 .later p { margin: 0; font-size: 0.95rem; }
 .later strong { color: var(--on-surface); font-weight: 600; }
+/* The web app (a beta) under the device cards on the download page: no file, one link. */
+.web-app .platform-head { margin-bottom: 12px; }
+.web-app .platform-title h3 { margin: 0; }
+.web-app .web-app-go { margin-top: 14px; }
 
 /* ---------- Key table ----------
 
@@ -4235,6 +4239,7 @@ body:has(.hstage) .bg-blob { animation: none; }
 }
 .runs-in.reveal-wait.is-in .runs-group:nth-child(2) { transition-delay: 70ms; }
 .runs-in.reveal-wait.is-in .runs-group:nth-child(3) { transition-delay: 140ms; }
+.runs-in.reveal-wait.is-in .runs-group:nth-child(4) { transition-delay: 210ms; }
 
 /* The heading is simply there; the Chats screen slides in from the end side and the four answers
    follow, each icon settling as its line lands. At rest the screen still runs past the panel's

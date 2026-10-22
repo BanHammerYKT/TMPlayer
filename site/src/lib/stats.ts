@@ -17,8 +17,8 @@ interface GitHubRelease { draft: boolean; prerelease: boolean; assets: Asset[] }
 // The same files as APP_FILE in scripts/release-data.py.
 const APP_FILE = /^tmplayer(?!.*-source\.)(?:[-_.].*)?\.(apk|msi|dmg|appimage|deb|rpm|flatpak|zip|tar\.xz|tar\.gz)$/i;
 
-/** Android phones, Android TV, Fire TV, Windows, macOS and Linux: the site's own platform pages. */
-export const PLATFORMS = 6;
+/** Android phones, Android TV, Fire TV, Windows, macOS, Linux and the web app (a beta, since 2026-10-22). */
+export const PLATFORMS = 7;
 
 async function liveDownloads(): Promise<number | null> {
   const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };

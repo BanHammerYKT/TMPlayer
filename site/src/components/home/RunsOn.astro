@@ -2,7 +2,7 @@
 // Where it runs, in one quiet line under the hero: the first thing a visitor checks is whether
 // their own television, phone or computer is on the list. The platforms are grouped by the kind of
 // screen, an icon for each group and thin rules between them, and each name leads to the page
-// written for it. On a phone the three groups stack as three short centred rows.
+// written for it. On a phone the groups stack as short centred rows.
 import Icon from '../Icon.astro';
 import { text } from '../../i18n/t';
 import { l as link } from '../../i18n/links';
@@ -14,6 +14,7 @@ const groups = [
   { icon: 'tv-card', items: [{ name: t('home.platform_tv'), href: '/android-tv/', title: t('home.platform_tv_title') }, { name: t('home.platform_fire'), href: '/fire-tv/' }] },
   { icon: 'phone-panel', items: [{ name: t('home.platform_phone'), href: '/android/' }] },
   { icon: 'laptop-panel', items: [{ name: t('home.platform_windows'), href: '/desktop/' }, { name: t('home.platform_mac'), href: '/desktop/' }, { name: t('home.platform_linux'), href: '/desktop/' }] },
+  { icon: 'globe', items: [{ name: t('home.platform_web'), href: '/download/#web' }] },
 ];
 ---
 <section class="runs" aria-labelledby="runs-h">

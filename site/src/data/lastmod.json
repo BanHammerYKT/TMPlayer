@@ -1,7 +1,7 @@
 [
   {
     "path": "/",
-    "lastmod": "2026-10-20",
+    "lastmod": "2026-10-22",
     "changefreq": "weekly",
     "priority": "1.0",
     "images": [
@@ -69,7 +69,7 @@
   },
   {
     "path": "/features/",
-    "lastmod": "2026-10-20",
+    "lastmod": "2026-10-22",
     "changefreq": "monthly",
     "priority": "0.9",
     "images": [
@@ -181,7 +181,7 @@
   },
   {
     "path": "/download/",
-    "lastmod": "2026-10-20",
+    "lastmod": "2026-10-22",
     "changefreq": "weekly",
     "priority": "0.9"
   },
@@ -243,7 +243,7 @@
   },
   {
     "path": "/android/",
-    "lastmod": "2026-10-20",
+    "lastmod": "2026-10-22",
     "changefreq": "monthly",
     "priority": "0.8",
     "images": [
@@ -275,7 +275,7 @@
   },
   {
     "path": "/desktop/",
-    "lastmod": "2026-10-20",
+    "lastmod": "2026-10-22",
     "changefreq": "monthly",
     "priority": "0.8",
     "images": [
@@ -295,13 +295,13 @@
   },
   {
     "path": "/faq/",
-    "lastmod": "2026-10-20",
+    "lastmod": "2026-10-22",
     "changefreq": "monthly",
     "priority": "0.7"
   },
   {
     "path": "/privacy/",
-    "lastmod": "2026-10-19",
+    "lastmod": "2026-10-22",
     "changefreq": "monthly",
     "priority": "0.5"
   },

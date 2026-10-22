@@ -157,7 +157,7 @@ var tmT = (function () {
        there is no file of this system's to point it at. A Mac keeps it until the release says. */
     if (os !== 'macos' && !(os && document.getElementById(os))) { el.osBtn.hidden = true; }
     if (os === 'ios') {
-      el.osNote.textContent = tmT('os_note_ios_only', 'There is no iPhone or iPad version. The files below are for Android phones, Android TV and computers.');
+      el.osNote.textContent = tmT('os_note_ios_only', 'There is no iPhone or iPad app: open the web app (a beta) at web.tmplayer.org and add it to the home screen. The files below are for Android phones, Android TV and computers.');
       el.osNote.hidden = false;
       return;
     }
