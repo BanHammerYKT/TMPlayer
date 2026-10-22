@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.media.tv.TvContract
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tmplayer.MainActivity
@@ -63,6 +65,21 @@ object TvChannelsPublisher {
 
     private const val LOGO_SIZE = 256
     private const val ART_TIMEOUT_MS = 20_000L
+
+    /**
+     * Online lookups not already answered from the cache, and wide pictures fetched, that one
+     * publish may make. A 1 GB stick paid for a lookup and a backdrop per card, a row of them at
+     * a time, while the viewer was trying to start a video. The cards past it wear Telegram's
+     * thumbnail for now and are tried again, a few at a time, on the next refreshes.
+     */
+    private const val ONLINE_PER_RUN = 4
+
+    /**
+     * How long after the process starts a publish asks nothing of the network for pictures:
+     * the first half minute is when the app is opened and a video started, and both are slower
+     * with the launcher's cards fetching beside them. Only answers already cached are used then.
+     */
+    private const val START_QUIET_MS = 30_000L
 
     private val lock = Mutex()
 
@@ -225,8 +242,28 @@ object TvChannelsPublisher {
             }.orEmpty()
     }.getOrDefault(emptyMap())
 
+    /**
+     * What one publish may still ask of the network for pictures ([ONLINE_PER_RUN]), and whether
+     * the card being written had to go without what it wanted, so it is tried again later.
+     */
+    private class OnlineBudget(var left: Int, val quiet: Boolean) {
+        var deferred = false
+
+        fun take(): Boolean {
+            if (left <= 0) {
+                deferred = true
+                return false
+            }
+            left--
+            return true
+        }
+    }
+
     private suspend fun publishLocked(context: Context, programs: List<TvChannels.Program>, names: (Channel) -> String) {
         val channels = ownChannels(context)
+        val quiet = runCatching { SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() < START_QUIET_MS }
+            .getOrDefault(false)
+        val budget = OnlineBudget(if (quiet) 0 else ONLINE_PER_RUN, quiet)
         val byChannel = programs.groupBy { it.channel }
         val keptArt = HashSet<String>()
         for (channel in Channel.entries) {
@@ -244,12 +281,12 @@ object TvChannelsPublisher {
             val deleted = diff.delete.toHashSet()
             existing.values.filter { it.existing.rowId !in deleted }.mapNotNullTo(keptArt) { artName(context, it.art) }
             for (program in diff.insert) {
-                val values = values(context, channelId, program, keptArt)
+                val values = values(context, channelId, program, keptArt, budget)
                 runCatching { context.contentResolver.insert(TvContract.PreviewPrograms.CONTENT_URI, values) }
                     .onFailure { Log.w(TAG, "card not added", it) }
             }
             for ((id, program) in diff.update) {
-                val values = values(context, channelId, program, keptArt)
+                val values = values(context, channelId, program, keptArt, budget)
                 runCatching { context.contentResolver.update(TvContract.buildPreviewProgramUri(id), values, null, null) }
                     .onFailure { Log.w(TAG, "card not updated", it) }
             }
@@ -265,10 +302,14 @@ object TvChannelsPublisher {
         channelId: Long,
         program: TvChannels.Program,
         keptArt: MutableSet<String>,
+        budget: OnlineBudget,
     ): ContentValues {
-        val art = withTimeoutOrNull(ART_TIMEOUT_MS) { resolveArt(context, program.art) }
+        budget.deferred = false
+        val art = withTimeoutOrNull(ART_TIMEOUT_MS) { resolveArt(context, program.art, budget) }
         art?.let { keptArt += it.first }
-        val fingerprint = program.fingerprint + if (art == null) NO_ART else ""
+        // A card that settled for less than it wanted because the run's budget was spent is
+        // written as one without its picture, so a later refresh gives it the better one.
+        val fingerprint = program.fingerprint + if (art == null || budget.deferred) NO_ART else ""
         return ContentValues().apply {
             put(TvContract.PreviewPrograms.COLUMN_CHANNEL_ID, channelId)
             put(TvContract.PreviewPrograms.COLUMN_INTERNAL_PROVIDER_ID, program.internalId)
@@ -313,13 +354,23 @@ object TvChannelsPublisher {
     // ---- pictures -------------------------------------------------------------------------------
 
     /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without a picture. */
-    private suspend fun resolveArt(context: Context, art: TvChannels.Art): Pair<String, Int>? {
-        // The wide picture first, a better card than a frame from the file: the row on the
-        // launcher is a row of landscape cards, and a poster stands in only where none is known.
-        found(art)?.let { info ->
-            info.wideUrl?.let { url -> fetched(context, url, "w")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 } }
+    private suspend fun resolveArt(context: Context, art: TvChannels.Art, budget: OnlineBudget): Pair<String, Int>? {
+        found(art, budget)?.let { info ->
+            // Where a poster will do, the poster: a small picture Home has usually fetched
+            // already, where a backdrop is a wide download of its own for every card.
             if (art.posterWanted) {
-                info.posterUrl?.let { url -> fetched(context, url, "p")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_2_3 } }
+                info.posterUrl?.let { url ->
+                    if (budget.quiet) {
+                        budget.deferred = true
+                    } else {
+                        fetched(context, url, "p")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_2_3 }
+                    }
+                }
+            }
+            // Otherwise the wide picture (an episode's still, a show's backdrop), a better card
+            // than a frame from the file on a row of landscape cards; a few each run.
+            info.wideUrl?.let { url ->
+                if (budget.take()) fetched(context, url, "w")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
             }
         }
         fixtureArt?.invoke(art)?.let { file ->
@@ -331,10 +382,14 @@ object TvChannelsPublisher {
     }
 
     /** What the online lookups know of the film or show, when the viewer turned them on. */
-    private suspend fun found(art: TvChannels.Art): com.tmplayer.online.MetaInfo? {
+    private suspend fun found(art: TvChannels.Art, budget: OnlineBudget): com.tmplayer.online.MetaInfo? {
         val online = OnlineMetadata.current ?: return null
         if (!OnlineMetadata.enabled) return null
         val query = MetaQuery.of(art.name, art.caption.ifBlank { null })?.showOnly() ?: return null
+        // What Home has already learnt costs nothing; only a title not yet looked up spends the run's budget.
+        online.peek(query)?.let { known -> return (known as? MetaResult.Found)?.info }
+        runCatching { online.cachedMatch(query) }.getOrNull()?.let { return it }
+        if (!budget.take()) return null
         return (runCatching { online.lookup(query) }.getOrNull() as? MetaResult.Found)?.info
     }
 

@@ -40,6 +40,16 @@ private val DOWNMIX_STEREO = booleanPreferencesKey("downmix_stereo")
 private val VOLUME_BOOST = booleanPreferencesKey("volume_boost")
 private val NIGHT_MODE = booleanPreferencesKey("night_mode")
 private val EVEN_VOLUME = booleanPreferencesKey("even_volume")
+
+/** Defaults the platform sets at start, where one device differs from another. */
+object SettingsDefaults {
+    /**
+     * Even out volume until the viewer chooses: off on a television, where processing every
+     * sample of the sound costs a weak stick's cores while it decodes the picture.
+     */
+    @Volatile
+    var evenVolume: Boolean = true
+}
 private val RESUME_SYNC = booleanPreferencesKey("resume_sync")
 private val RESUME_SYNC_MESSAGE = longPreferencesKey("resume_sync_message")
 private val RESUME_SYNC_KEYS = stringPreferencesKey("resume_sync_keys")
@@ -734,14 +744,14 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
      * lifted towards the level of everything else, never past a cap and never clipped. On until
      * turned off, because a film 10 dB quieter than the video before it is the common case.
      */
-    val evenVolume: Flow<Boolean> = read { it[EVEN_VOLUME] ?: true }
+    val evenVolume: Flow<Boolean> = read { it[EVEN_VOLUME] ?: SettingsDefaults.evenVolume }
 
     suspend fun setEvenVolume(value: Boolean) {
         prefs.edit { it[EVEN_VOLUME] = value }
     }
 
     /** Read before the player is built, like [volumeBoostNow]. */
-    suspend fun evenVolumeNow(): Boolean = prefs.data.first()[EVEN_VOLUME] ?: true
+    suspend fun evenVolumeNow(): Boolean = prefs.data.first()[EVEN_VOLUME] ?: SettingsDefaults.evenVolume
 
     /**
      * Resume across devices ([ResumeSync]): Continue watching kept in a message in the viewer's

@@ -23,8 +23,13 @@ import com.tmplayer.data.Thumbnails
 @Composable
 private fun rememberAheadWindow(): LazyLayoutCacheWindow {
     val light = Thumbnails.light
-    return remember(light) {
-        if (light) LazyLayoutCacheWindow(aheadFraction = 0.5f, behindFraction = 0.25f)
+    val tv = com.tmplayer.ui.theme.Motion.television
+    return remember(light, tv) {
+        // A television composes a quarter of a screen ahead and nothing behind: a screen ahead
+        // composed three more rows of sixteen tiles each as Home opened, and their pictures and
+        // lookups queued in front of the ones on screen.
+        if (tv) LazyLayoutCacheWindow(aheadFraction = 0.25f, behindFraction = 0f)
+        else if (light) LazyLayoutCacheWindow(aheadFraction = 0.5f, behindFraction = 0.25f)
         else LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 0.5f)
     }
 }
@@ -48,14 +53,17 @@ fun rememberAheadGridState(initialFirstVisibleItemIndex: Int = 0, initialFirstVi
  * the newest one hidden off its start. A row the viewer has scrolled is left where they put it.
  */
 @Composable
-fun KeepAtStart(state: LazyListState) {
+fun KeepAtStart(state: LazyListState, moved: () -> Boolean = { false }) {
+    val movedNow = androidx.compose.runtime.rememberUpdatedState(moved)
     androidx.compose.runtime.LaunchedEffect(state) {
         var atStart = state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0
         androidx.compose.runtime.snapshotFlow {
             Triple(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset, state.isScrollInProgress)
         }.collect { (index, offset, scrolling) ->
             when {
-                scrolling -> atStart = false
+                // [moved]: a row that jumps to the remote's tile at once (a television's) scrolls
+                // within one frame, which this never sees as scrolling, and would send it back.
+                scrolling || movedNow.value() -> atStart = false
                 index == 0 && offset == 0 -> atStart = true
                 atStart -> state.scrollToItem(0)
             }

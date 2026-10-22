@@ -29,7 +29,9 @@ fun <T : Any> FadeOver(
     durationMs: Int = Motion.Slow,
     content: @Composable (T) -> Unit,
 ) {
-    val still = rememberReducedMotion() || Motion.reduced
+    // None on a television: the better picture replaces the preview at once, with no second
+    // picture drawn under it for the length of a fade.
+    val still = Motion.television || rememberReducedMotion() || Motion.reduced
     var top by remember { mutableStateOf(target) }
     var under by remember { mutableStateOf<T?>(null) }
     val alpha = remember { Animatable(1f) }

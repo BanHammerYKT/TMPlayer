@@ -151,21 +151,28 @@ internal fun TvFeaturedCarousel(
         val auto = count > 1 && !still
         var focusedIn by remember { mutableStateOf(false) }
         val paused = focusedIn || !active
-        val progress = remember { Animatable(0f) }
+        // The time a page has stood, kept as a number rather than animated: nothing draws it, and
+        // an animation woke the main thread every frame of the seven seconds.
+        val spent = remember { longArrayOf(0L) }
         var progressKey by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(currentKey, paused, auto, count) {
             // A new page starts its time from empty; a pause keeps it where it stopped.
             if (progressKey != currentKey) {
-                progress.snapTo(0f)
+                spent[0] = 0L
                 progressKey = currentKey
             }
             if (!auto || paused) return@LaunchedEffect
-            val left = (1f - progress.value).coerceIn(0f, 1f)
-            progress.animateTo(1f, tween((ADVANCE_MS * left).toInt(), easing = LinearEasing))
+            val began = System.currentTimeMillis()
+            try {
+                kotlinx.coroutines.delay((ADVANCE_MS - spent[0]).coerceAtLeast(0L))
+            } finally {
+                spent[0] += System.currentTimeMillis() - began
+            }
             go(index + 1)
         }
 
-        Crossfade(targetState = pick, animationSpec = Motion.standard(), label = "tvFeatured", modifier = Modifier.matchParentSize()) { shown ->
+        // A page turns at once on a television: no two pages drawn together for a fade.
+        Crossfade(targetState = pick, animationSpec = if (Motion.television) androidx.compose.animation.core.snap() else Motion.standard(), label = "tvFeatured", modifier = Modifier.matchParentSize()) { shown ->
             // The heading's words over any picture: a fade from the top, deeper than the heading,
             // under the page's own words.
             TvFeaturedArt(shown, chatTitle, start = start, headerFade = if (header != null) headerPx.toFloat() else 0f)
@@ -265,12 +272,16 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
         )
         // Over Play and Details: the title's logo where TMDB has one (the name in type until then
         // and otherwise), the facts line and two lines of the overview, as the desktop's page.
+        // Never higher than [TITLE_TOP_GAP] under the top bar: a tall logo over two lines of
+        // overview climbed to the bar's foot and read as part of it (user, 2026-10-23), where
+        // Netflix and Google TV keep the title block clear in the picture's lower part.
+        val barDp = with(LocalDensity.current) { headerFade.toDp() }
         Column(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth(TEXT_SHARE)
-                .padding(start = start, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(start = start, top = barDp + TITLE_TOP_GAP, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP),
+            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
         ) {
             com.tmplayer.ui.online.TitleArt(meta, maxWidth = TV_LOGO_MAX_WIDTH, maxHeight = TV_LOGO_MAX_HEIGHT) {
                 Text(
@@ -352,7 +363,7 @@ private fun TvFeaturedSkeleton(start: Dp, modifier: Modifier = Modifier) {
 }
 
 /** How tall the carousel is on a television under its heading: room below for the first row's titles. */
-internal val TV_FEATURED_HEIGHT = 260.dp
+internal val TV_FEATURED_HEIGHT = 284.dp
 
 /** How long a page is up before the carousel moves on. */
 private const val ADVANCE_MS = 7_000
@@ -371,7 +382,10 @@ private const val BAR_FADE_REACH = 1.7f
 
 /** The most a title logo takes over the television's carousel. */
 private val TV_LOGO_MAX_WIDTH = 340.dp
-private val TV_LOGO_MAX_HEIGHT = 80.dp
+private val TV_LOGO_MAX_HEIGHT = 72.dp
+
+/** The least room between the TV top bar and the carousel's title block. */
+private val TITLE_TOP_GAP = 32.dp
 
 /** The row of dots' own height: a 6 dp mark with room above and below. */
 private val TV_DOTS_HEIGHT = 22.dp

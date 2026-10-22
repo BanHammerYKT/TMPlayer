@@ -46,6 +46,9 @@ class App : Application() {
         super.onCreate()
         // First of all, so a crash anywhere below is written down for the next start to offer.
         CrashReports.watch(this)
+        // Before anything reads them: a television trades looks for speed (see [Motion.television]).
+        com.tmplayer.ui.theme.Motion.television = com.tmplayer.data.FormFactor.isTv(this)
+        com.tmplayer.data.SettingsDefaults.evenVolume = !com.tmplayer.data.FormFactor.isTv(this)
         // The shared code logs through a facade; on Android it goes to logcat as it always has.
         Logger.sink = AndroidLogSink
         // The clock Home's first paint is timed against (adb logcat -s tm-perf).
@@ -68,9 +71,15 @@ class App : Application() {
             }
         }
         // A card in focus or under the finger warms its stream, unless the file is whole here
-        // already (a download, the watch cache) or is pieces played joined.
+        // already (a download, the watch cache) or is pieces played joined. Not on a television:
+        // moving the focus along a row there started two video downloads ahead of every poster
+        // and thumbnail, and on the TV sticks and boxes the pictures stopped arriving (1.28.0).
+        // Pressing Play still warms its own video at once ([MainActivity]'s playNow).
+        val focusWarms = !com.tmplayer.data.FormFactor.isTv(this)
+        // The cards then leave out their focus watcher and timer altogether (warmUpOnIntent).
+        com.tmplayer.data.PlaybackWarmup.onIntent = focusWarms
         com.tmplayer.data.PlaybackWarmup.warmer = com.tmplayer.data.PlaybackWarmup.Warmer { item ->
-            if (item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
+            if (!focusWarms || item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
             backgroundScope.launch {
                 val local = runCatching { com.tmplayer.data.Td.localFileAvailability(item.fileId) }.getOrNull()
                 // From its saved place, if it has one: where Continue watching opens it.

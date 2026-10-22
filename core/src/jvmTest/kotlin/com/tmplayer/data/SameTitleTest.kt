@@ -112,4 +112,20 @@ class SameTitleTest {
         assertEquals(keys.distinct(), keys)
         assertTrue("film:khalifa|2026" in keys)
     }
+
+    @Test
+    fun `a row read on past its tiles folds the copies it finds into the tile already there`() {
+        val lead = video(1, 10, "Khalifa.2026.1080p.WEB-DL.mkv", date = 300)
+        val row = HomeRow.Across(HomeRow.Across.Kind.Videos, listOf(ShelfEntry.File(lead)), listOf(1L, 2L))
+        // The next pages bring the same film from another chat, smaller, and from the same chat at 720p.
+        val read = listOf(
+            video(2, 11, "Khalifa (2026) 720p.mkv", date = 200).copy(sizeBytes = 700 * SizeFilter.MB),
+            video(1, 12, "Khalifa.2026.2160p.mkv", date = 100).copy(sizeBytes = 9_000 * SizeFilter.MB),
+            video(2, 13, "Night.Train.2019.1080p.mkv", date = 50),
+        )
+        val shown = HomeRows.seeAll(row, read)!!
+        assertEquals(2, shown.size)
+        val film = (shown.first() as ShelfEntry.File).item
+        assertEquals(setOf(10L, 11L, 12L), film.versions.map { it.messageId }.toSet())
+    }
 }

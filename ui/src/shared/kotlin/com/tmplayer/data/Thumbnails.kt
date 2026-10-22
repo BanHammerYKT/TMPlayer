@@ -5,9 +5,11 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.unit.IntSize
-import dev.g000sha256.tdl.TdlResult
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -75,7 +77,9 @@ object Thumbnails {
     }
 
     /** A decode width under [light]: three fifths, and never below what a small tile needs. */
-    fun lighter(maxWidth: Int): Int = if (light) (maxWidth * 3 / 5).coerceAtLeast(LIGHT_MIN_WIDTH).coerceAtMost(maxWidth) else maxWidth
+    // A television always: its posters are drawn about 250 px wide, and each picture decoded
+    // larger was a bigger upload to a TV stick's GPU as a row moved (measured on a Mi TV, 1 GB).
+    fun lighter(maxWidth: Int): Int = if (light || com.tmplayer.ui.theme.Motion.television) (maxWidth * 3 / 5).coerceAtLeast(LIGHT_MIN_WIDTH).coerceAtMost(maxWidth) else maxWidth
 
     /** Hands the pictures back: all of them, or half when the system is only asking politely. */
     fun trim(everything: Boolean) {
@@ -93,6 +97,8 @@ object Thumbnails {
         val key = "mini:${data.size}:${data.contentHashCode()}"
         cache.get(key)?.let { return it }
         val raw = decodeImage(data) ?: return null
+        // Not on a television: the preview stretched with low filtering is soft already.
+        if (com.tmplayer.ui.theme.Motion.television) return raw.also { cache.put(key, it) }
         return (runCatching { MiniBlur.soften(raw) }.getOrNull() ?: raw).also { cache.put(key, it) }
     }
 
@@ -232,8 +238,16 @@ object Thumbnails {
      * sixty-four threads, which on a four core stick left the frames waiting behind them. Queued
      * here, the decode of a tile already scrolled away is dropped before it starts, since
      * [withContext] checks for cancellation as it is dispatched.
+     *
+     * Two at a time on a television: a stick has four weak cores, and three decoders left the UI
+     * and render threads one between them. Made on first use, after the app has said whether it
+     * is a television ([Motion.television]).
      */
-    private val decoding = Dispatchers.Default.limitedParallelism(DECODE_PARALLELISM)
+    private val decoding by lazy {
+        Dispatchers.Default.limitedParallelism(
+            if (com.tmplayer.ui.theme.Motion.television) DECODE_PARALLELISM_TV else DECODE_PARALLELISM,
+        )
+    }
 
     private suspend fun downloadThumbnail(fileId: Int): String? {
         val td = Td.awaitAuthorizedSession().client
@@ -244,31 +258,53 @@ object Thumbnails {
         val online = connectivity?.canTryInternet() ?: true
         if (!online && !Td.connected.value) return null
 
-        // Thumbnails are small and plentiful; low priority keeps them behind playback.
-        val started = td.downloadFile(
-            fileId = fileId,
-            priority = THUMBNAIL_PRIORITY,
-            offset = 0,
-            limit = 0,
-            synchronous = false,
-        )
-        if (started is TdlResult.Failure) return null
-
         // Cancelling the waiting coroutine does not stop TDLib fetching, which on a long scroll
         // leaves a queue of downloads for cards nobody can see competing with the video for the
         // same connection. So withdraw the request on the way out too.
+        //
+        // The updates are listened to before the download is asked for, and the file the request
+        // answers with is looked at first: a small picture often lands, or was already there, in
+        // the moment between the two, and an update missed there used to sit out the whole
+        // [DOWNLOAD_TIMEOUT_MS] with the card blank.
+        var failed = false
         val done = try {
             withTimeoutOrNull(DOWNLOAD_TIMEOUT_MS) {
-                td.fileUpdates
-                    .filter { it.file.id == fileId && it.file.local.isDownloadingCompleted }
-                    .first()
+                coroutineScope {
+                    val completion = async(start = CoroutineStart.UNDISPATCHED) {
+                        td.fileUpdates
+                            .filter { it.file.id == fileId && it.file.local.isDownloadingCompleted }
+                            .first()
+                            .file
+                    }
+                    // Thumbnails are small and plentiful; low priority keeps them behind playback.
+                    val started = td.downloadFile(
+                        fileId = fileId,
+                        priority = THUMBNAIL_PRIORITY,
+                        offset = 0,
+                        limit = 0,
+                        synchronous = false,
+                    ).valueOrNull
+                    when {
+                        started == null -> {
+                            failed = true
+                            completion.cancel()
+                            null
+                        }
+                        started.local.isDownloadingCompleted -> {
+                            completion.cancel()
+                            started
+                        }
+                        else -> completion.await()
+                    }
+                }
             }
         } catch (cancellation: CancellationException) {
             Td.cancelDownloadInBackground(fileId)
             throw cancellation
         }
+        if (failed) return null
         if (done == null) Td.cancelDownloadInBackground(fileId)
-        val path = done?.file?.local?.path ?: td.getFile(fileId).valueOrNull?.local?.path
+        val path = done?.local?.path?.takeIf { it.isNotEmpty() } ?: td.getFile(fileId).valueOrNull?.local?.path
         return path?.takeIf { it.isNotEmpty() }
     }
 
@@ -293,6 +329,7 @@ object Thumbnails {
     private const val LIGHT_MIN_WIDTH = 160
     private const val THUMBNAIL_PRIORITY = 4
     private const val DECODE_PARALLELISM = 3
+    private const val DECODE_PARALLELISM_TV = 2
     private const val DOWNLOAD_TIMEOUT_MS = 20_000L
 }
 

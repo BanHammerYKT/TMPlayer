@@ -112,6 +112,9 @@ sealed interface HomeRow {
         enum class Kind { Shows, Videos }
 
         override val key: String get() = "across-${kind.name.lowercase()}"
+
+        /** Its See all page reads on through [chatIds], past what the row shows. */
+        override val hasMore: Boolean get() = chatIds.isNotEmpty() && entries.isNotEmpty()
     }
 }
 
@@ -280,8 +283,11 @@ object HomeRows {
             // A copy of what is seen: the chat rows below still show these in their own chats.
             val across = arranged(pool, HashSet(seen), shownCopies, inContinue)
             // Films first among the videos, then the other videos, each newest first as they came.
+            // The film check once per tile, not once per comparison of the sort.
             val videos = across.filter { kindOf(it) == HomeRow.Across.Kind.Videos }
-                .sortedBy { if (it is ShelfEntry.File && SeriesShelf.isFilm(it.item)) 0 else 1 }
+                .map { it to (it is ShelfEntry.File && SeriesShelf.isFilm(it.item)) }
+                .sortedBy { (_, film) -> if (film) 0 else 1 }
+                .map { it.first }
                 .take(LIMIT)
             val shows = across.filter { kindOf(it) == HomeRow.Across.Kind.Shows }.take(LIMIT)
             if (videos.isNotEmpty()) add(HomeRow.Across(HomeRow.Across.Kind.Videos, videos, homeOrder))
@@ -367,7 +373,10 @@ object HomeRows {
         val byKey = arranged.associateBy { it.key }
         val first = entries.map { byKey[it.key] ?: it }
         val firstKeys = first.mapTo(HashSet()) { it.key }
-        return first + arranged.filterNot { it.key in firstKeys }
+        // Copies of one film across chats, or at another size, folded as the row folds them
+        // ([arranged]): without this the pages read on past the row listed every copy as a tile
+        // of its own. A copy folds into the tile already standing, so nothing on screen moves.
+        return SameTitle.dedupe(first + arranged.filterNot { it.key in firstKeys })
     }
 
     /**

@@ -458,10 +458,56 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private var resumeMs = 0L
 
     /** When the press that opened this video happened, from the intent ([EXTRA_PRESSED_AT]); 0 unknown. */
+    @Volatile
     private var pressedAt = 0L
 
     /** When this player was created, for the timing log when the press is not known. */
+    @Volatile
     private var openedAt = 0L
+
+    /**
+     * The opening's stages already written to the start log ([markStart]), one bit each. Atomic,
+     * because the first bytes are counted on Media3's loading thread.
+     */
+    private val startStages = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
+     * Writes one stage of this video's opening to the start log (`adb logcat -s PlayerStart`),
+     * once, as the time since the press (or since the player opened when the press is not known):
+     * the line a device pass reads to see where the seconds before the first frame go. Nothing
+     * once the first frame is up, so a seek or a retry later adds no lines.
+     */
+    private fun markStart(stage: String, bit: Int) {
+        val opened = openedAt
+        if (opened == 0L) return
+        while (true) {
+            val seen = startStages.get()
+            if (seen and bit != 0) return
+            if (startStages.compareAndSet(seen, seen or bit)) break
+        }
+        val pressed = pressedAt
+        val now = SystemClock.elapsedRealtime()
+        val since = if (pressed > 0) "press" else "open"
+        Log.i(START_TAG, "$stage at ${now - (if (pressed > 0) pressed else opened)} ms since $since (file $fileId)")
+    }
+
+    /**
+     * Completed once this video's first frame is up, or its opening has failed: the lookups that
+     * only feed the menus and the end of the video wait for it on a television ([afterOpening]).
+     */
+    private var openedGate = CompletableDeferred<Unit>()
+
+    /**
+     * On a television, waits until the picture is up (at most [OPENING_GATE_MS]) before the work
+     * that is not needed for it: the episode and copy searches, the skip times, the storyboard and
+     * the session's artwork. On a 1 GB stick with four small cores each of them is a TDLib search,
+     * a network lookup or an image encode competing with the stream, the demuxer and the decoder
+     * for the same CPU while the viewer waits. Elsewhere it returns at once, as before.
+     */
+    private suspend fun afterOpening() {
+        if (!FormFactor.isTv(this)) return
+        withTimeoutOrNull(OPENING_GATE_MS) { openedGate.await() }
+    }
 
     /** Whether this video's picture tracks were looked at yet ([pictureUnplayable]). */
     private var pictureChecked = false
@@ -617,6 +663,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         Log.i(START_TAG, "${fromPress}open to first frame ${now - openedAt} ms (file $fileId, resume $resumeMs ms, ${if (downloadedFile != null) "download" else "stream"})")
         openedAt = 0L
         pressedAt = 0L
+        openedGate.complete(Unit)
     }
 
     /**
@@ -692,6 +739,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         override fun onTransferStart(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
         override fun onBytesTransferred(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
             readBytes.addAndGet(bytesTransferred.toLong())
+            // One atomic read per call once logged, nothing more on the loading thread.
+            if (startStages.get() and STAGE_BYTES == 0) markStart("first bytes read", STAGE_BYTES)
         }
         override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
     }
@@ -1245,6 +1294,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         fileId = from.getIntExtra(EXTRA_FILE_ID, 0)
         pressedAt = from.getLongExtra(EXTRA_PRESSED_AT, 0L)
         openedAt = SystemClock.elapsedRealtime()
+        startStages.set(0)
+        openedGate.complete(Unit)
+        openedGate = CompletableDeferred()
+        // What starting this screen cost after the press: on a weak TV stick a part of the wait.
+        if (pressedAt > 0) Log.i(START_TAG, "player screen open at ${openedAt - pressedAt} ms since press (file $fileId)")
         // Read once: a later open of the same intent (a recreate) is not a press.
         from.removeExtra(EXTRA_PRESSED_AT)
         chatId = from.getLongExtra(EXTRA_CHAT_ID, 0)
@@ -1317,25 +1371,30 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         findCopies()
         findSkipTimes()
         // Telegram's lighter copies and storyboard (CP80), for the quality list and the scrub bar.
-        if (hasMessage()) itemScope.launch { Td.awaitAuthorizedSession(); readPost() }
+        if (hasMessage()) itemScope.launch { afterOpening(); Td.awaitAuthorizedSession(); readPost() }
 
         // Reading the saved position is a disk hit; do it off the main thread and seek once it
         // lands. Under "download the whole video first" there is no player to seek yet, so
         // [startPlayback] applies the same position as well; whichever arrives second sets it again.
         // A few seconds before the saved point, as Settings has it ([ResumeRewind]).
+        // The place saved on this device is read first and used at once: [startPlayback] waits
+        // only [RESUME_WAIT_MS] for it, and a read that misses that window prepares at 0, then
+        // seeks and restarts TDLib's download, which on a weak TV stick is seconds of buffering.
+        // The two slow sources, the other devices' places and the post's own start, are asked
+        // for alongside, after it, and move the video only when they say something else.
+        var bookmarked = false
         val resumeRead = itemScope.launch {
-            // Resume across devices, when on: the other devices' places in first, a couple of
-            // seconds at most, so a video half watched on the phone opens there on the TV.
-            com.tmplayer.data.ResumeSync.pullFor(settings)
             // A bookmark chosen on the detail page opens the video at its moment, once.
-            resumeMs = BookmarkJump.take(chatId, messageId)
+            val jump = BookmarkJump.take(chatId, messageId)
+            bookmarked = jump != null
+            resumeMs = jump
                 // Whichever copy of the video was played last: a switch of quality, or the 720p
                 // started on the phone and the 1080p opened on the television, carries on.
                 ?: runCatching { settings.resumeStartFor(currentItem()) }.getOrDefault(0L)
-            // Never watched here: the moment the poster chose to start at (CP80), if any.
+            // Never watched here: a link's moment, or the moment the poster chose to start at
+            // (CP80) when the post is already read. A post still on its way is [resumeLate]'s.
             if (resumeMs <= 0 && hasMessage()) {
-                val post = postItem ?: kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }
-                val start = com.tmplayer.data.PostStart.startMs(linkSec = startLinkSec, savedMs = 0, postSec = post?.startSec ?: 0, durationSec = durationSec)
+                val start = com.tmplayer.data.PostStart.startMs(linkSec = startLinkSec, savedMs = 0, postSec = postItem?.startSec ?: 0, durationSec = durationSec)
                 if (start > 0) {
                     player?.seekTo(start)
                     resumeMs = start
@@ -1344,9 +1403,34 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             }
             if (resumeMs > 0) {
                 player?.seekTo(resumeMs)
-                resumeNotice = L.playerResumingFrom(Translator.messages.formatter.clock(resumeMs))
-                renderStatusText()
-                offerStartOver()
+                showResumeFrom(resumeMs)
+            }
+        }
+        itemScope.launch {
+            resumeRead.join()
+            if (bookmarked) return@launch
+            val local = resumeMs
+            // Resume across devices, when on: the other devices' places in, a couple of seconds
+            // at most, so a video half watched on the phone opens there on the TV. Taken only when
+            // it is well away from the local place, so a sync that agrees costs no seek.
+            com.tmplayer.data.ResumeSync.pullFor(settings)
+            val synced = runCatching { settings.resumeStartFor(currentItem()) }.getOrDefault(0L)
+            if (synced > 0 && kotlin.math.abs(synced - local) > RESUME_SYNC_SLACK_MS) {
+                if (!movedSinceResume(local)) {
+                    player?.seekTo(synced)
+                    resumeMs = synced
+                    showResumeFrom(synced)
+                }
+                return@launch
+            }
+            // Never watched anywhere: the post's start, once the message is read.
+            if (local <= 0 && resumeMs <= 0 && synced <= 0 && hasMessage()) {
+                val post = postItem ?: kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }
+                val start = com.tmplayer.data.PostStart.startMs(linkSec = startLinkSec, savedMs = 0, postSec = post?.startSec ?: 0, durationSec = durationSec)
+                if (start > 0 && !movedSinceResume(0L)) {
+                    player?.seekTo(start)
+                    resumeMs = start
+                }
             }
         }
 
@@ -1359,6 +1443,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         itemScope.launch {
             val session = Td.awaitAuthorizedSession()
+            markStart("session ready", STAGE_SESSION)
             // The settings the player is built with, read side by side and alongside the file's
             // own decisions below, rather than one after another once those are made: each is a
             // read of the store, and fifteen in a row came before the first request.
@@ -1419,7 +1504,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     return@launch
                 }
                 if (!allowedOnThisConnection(availability)) return@launch
-                if (!makeRoomForThisVideo(availability)) return@launch
+                // The grid asked [RoomOnDisk] about this very file a moment ago, and asking again
+                // walks every cached video and can ask Telegram about each one: on a weak TV stick
+                // that is time added to every press of Play. Trusted once, and only for the file
+                // it was asked about; the next episode, autoplay and a change of copy ask again.
+                val roomDecidedFor = intent.getIntExtra(EXTRA_ROOM_DECIDED, 0)
+                intent.removeExtra(EXTRA_ROOM_DECIDED)
+                if (roomDecidedFor != fileId && !makeRoomForThisVideo(availability)) return@launch
                 // The head and the index on their way while the settings are read and the player
                 // is built ([StreamWarmup]); a no-op if the press already started it.
                 // From the saved place, read as [resumeRead] reads it, where the video resumes.
@@ -1465,6 +1556,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // then a seek away from it.
             if (resumeRead.isActive) withTimeoutOrNull(RESUME_WAIT_MS) { resumeRead.join() }
             if (!session.isCurrent()) return@launch
+            markStart("file and settings decided", STAGE_DECIDED)
             startPlayback(session.client)
         }
     }
@@ -1482,6 +1574,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val heapMb = manager.memoryClass
         return when {
             manager.isLowRamDevice || heapMb < LOW_HEAP_MB -> LOW_RAM_BUFFER_BYTES
+            // A TV stick or box reports a roomy heap but has 1 to 2 GB in all, shared with the
+            // decoder and the picture: 1.27.1's 20 MB played there, the 64 MB that followed lagged.
+            FormFactor.isTv(this) && heapMb < LARGE_HEAP_MB -> LOW_RAM_BUFFER_BYTES
             heapMb >= LARGE_HEAP_MB -> LARGE_BUFFER_BYTES
             else -> MID_BUFFER_BYTES
         }
@@ -1520,6 +1615,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** Builds the player, points it at the file, and puts a video surface in front of it. */
     private fun startPlayback(client: TdlClient) {
         val exo = buildPlayer(client).also { built ->
+            markStart("player built", STAGE_BUILT)
             built.addListener(playerListener)
             // A plain file for a download, which the default data source reads directly; the TDLib
             // stream for everything else.
@@ -1540,6 +1636,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             if (cast?.connected != true && cast?.casting != true) {
                 built.prepare()
                 built.playWhenReady = true
+                markStart("prepare asked", STAGE_PREPARED)
             }
         }
         player = exo
@@ -1901,6 +1998,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
         if (chatId == 0L || SeriesShelf.episodeOf(here).episode != null) return
         itemScope.launch {
+            afterOpening()
             val session = Td.awaitAuthorizedSession()
             val title = SeriesShelf.episodeOf(here).title.ifBlank { return@launch }
             val found = runCatching { ChatRepository(session.client).mediaPage(chatId, query = title).items }.getOrNull().orEmpty()
@@ -2573,6 +2671,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         // Sized by the memory the system gives the app ([targetBufferBytes]): small on a 1 GB
         // stick, where a generous buffer is what gets the app killed, generous elsewhere.
+        val bufferBytes = targetBufferBytes()
+        // The back buffer is held inside the same byte budget as the buffer ahead, from the
+        // keyframe before it, so on a 20 MB budget ten seconds behind (more with a long GOP) of a
+        // high rate file left a few seconds ahead, or none, and the picture stalled with the line
+        // fine. There the back buffer is cut to a few seconds: a longer jump back reads the bytes
+        // off the disk, where the stream already put them.
+        val backBufferMs = if (bufferBytes <= LOW_RAM_BUFFER_BYTES) LOW_RAM_BACK_BUFFER_MS else BACK_BUFFER_MS
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(BUFFER_MIN_MS, BUFFER_MAX_MS, BUFFER_PLAYBACK_MS, BUFFER_REBUFFER_MS)
             // The same figures again for what Media3 calls local playback. Since 1.9.0 a file://
@@ -2587,13 +2692,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 BUFFER_PLAYBACK_MS,
                 BUFFER_REBUFFER_MS,
             )
-            .setTargetBufferBytes(targetBufferBytes())
+            .setTargetBufferBytes(bufferBytes)
             .setPrioritizeTimeOverSizeThresholds(false)
             // A few seconds of what has already played, kept behind the position. Without it a
             // short back-seek falls outside the buffer, which puts the read outside TDLib's
             // download window and restarts the download from there. Deliberately short, and from
             // the last keyframe, because this is memory on a 1 GB stick.
-            .setBackBuffer(BACK_BUFFER_MS, /* retainBackBufferFromKeyframe = */ true)
+            .setBackBuffer(backBufferMs, /* retainBackBufferFromKeyframe = */ true)
             .build()
 
         val plan = trackPlan
@@ -2655,6 +2760,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // before the target up to it, seconds of waiting on a long GOP. Only a frame step and
             // the A-B repeat seek exactly ([exactSeekTo]).
             .setSeekParameters(SeekParameters.CLOSEST_SYNC)
+            // On a television the playback thread wakes when a renderer next has something to
+            // do (the next frame due, the audio buffer running down) instead of every 10 ms. It
+            // was the busiest thread in the app while a video played on the 1 GB stick, about 13%
+            // of a core, with the UI idle. A renderer that cannot say keeps the 10 ms. Left as it
+            // was on phones and tablets, where nothing measured asked for it.
+            .experimentalSetDynamicSchedulingEnabled(FormFactor.isTv(this))
             .build()
             .apply {
                 setAudioAttributes(movieAudioAttributes, /* handleAudioFocus = */ true)
@@ -3057,6 +3168,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
          * a phone, and the file's defaults on a series being watched for the first time.
          */
         override fun onTracksChanged(tracks: Tracks) {
+            if (!tracks.isEmpty) markStart("tracks known", STAGE_TRACKS)
             logSubtitleTracks(tracks)
             if (pictureUnplayable(tracks)) return
             if (checkSoftwareDecode(tracks)) return
@@ -3127,6 +3239,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                         seekStartedAt = 0L
                     }
                     recoveryAttempts = 0
+                    markStart("ready to play", STAGE_READY)
+                    // Sound alone has no first frame: ready is its picture.
+                    openedGate.complete(Unit)
                     firstFrameReady = true
                     noteSeekIndex()
                     readChapters()
@@ -3578,6 +3693,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         itemScope.launch {
             if (chatId == 0L) return@launch
+            afterOpening()
             val session = Td.awaitAuthorizedSession()
             val repository = ChatRepository(session.client)
             // In a group with topics the next episode is looked for in this video's own topic, or
@@ -4014,11 +4130,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 inPictureInPicture || intent.getBooleanExtra(EXTRA_OUTSIDE_APP_TASK, false),
             ),
         )
+        // This screen lingers until the next one is drawn, and its player with it: still reading
+        // the stream, still holding the decoders. A TV stick's hardware decoder may serve only one
+        // player at a time, and its line and its cores are the new video's now. Stopped here,
+        // which releases the decoders and the reads on the playback thread without the wait a
+        // release would cost this one; the place is kept, so the saves on the way out still find
+        // it, and [onDestroy] releases the rest as before.
+        player?.let { exo ->
+            saveResumePosition(leaving = true)
+            // A stopped player has no tracks to report, so the later saves on the way out would
+            // write the place without them: this one is the last.
+            savedForHandOver = true
+            exo.stop()
+        }
         finish()
     }
 
     /** Set by [playEpisode], so the episode handing over to the next does not open the app too. */
     private var handingOver = false
+
+    /** Set once [playEpisode] has written the place and stopped the player: nothing later saves. */
+    private var savedForHandOver = false
 
     /**
      * An episode started from the corner window lands in the window's own task, not the app's,
@@ -5549,6 +5681,22 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         App.backgroundScope.launch { runCatching { store.rememberSpeed(scopes, value) } }
     }
 
+    /** Puts the "Resuming from" line up for [atMs] and offers the phone's way back to the start. */
+    private fun showResumeFrom(atMs: Long) {
+        resumeNotice = L.playerResumingFrom(Translator.messages.formatter.clock(atMs))
+        renderStatusText()
+        offerStartOver()
+    }
+
+    /**
+     * Whether the viewer has taken the video somewhere else since it opened at [fromMs], in which
+     * case a late answer about where to resume must leave it there.
+     */
+    private fun movedSinceResume(fromMs: Long): Boolean {
+        val at = player?.currentPosition ?: return false
+        return kotlin.math.abs(at - fromMs) > RESUME_SYNC_SLACK_MS
+    }
+
     /**
      * The phone's way back to the start of a video that opened where it was left: a line over the
      * picture with "Start over", for a few seconds. It needs both the saved position and a picture,
@@ -5871,6 +6019,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun findSkipTimes() {
         val metadata = OnlineMetadata.current ?: return
         itemScope.launch {
+            afterOpening()
             var seconds = durationSec
             if (seconds <= 0) {
                 withTimeoutOrNull(SKIP_TIMES_WAIT_MS) {
@@ -6264,15 +6413,17 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 loaderHost?.thumbnail = frame
             }
             val full = frame.asAndroidBitmap()
-            // The notification's and the lock screen's picture too.
-            sessionArtwork = withContext(Dispatchers.Default) { artworkOf(full) }
-            refreshSessionMetadata()
             statusPoster?.setImageBitmap(full)
             // Where there was a minithumbnail the backdrop keeps it: stretching a real thumbnail
             // across 1080p is a soft, ugly photograph, while stretching a forty-pixel one is a
             // blur. Where there was not, a soft backdrop still beats a flat sheet.
             if (mini == null) statusArt?.setImageBitmap(full)
             revealArtwork()
+            // The notification's and the lock screen's picture too: an image encode, which a
+            // television leaves until the video is up ([afterOpening]).
+            afterOpening()
+            sessionArtwork = withContext(Dispatchers.Default) { artworkOf(full) }
+            refreshSessionMetadata()
         }
     }
 
@@ -6595,6 +6746,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      *   certain to fail again is worse than offering none.
      */
     private fun showError(message: String, retryable: Boolean = true, freeUp: Boolean = false) {
+        // The opening is over, if not the way it was meant to be: the waiting lookups go ahead.
+        openedGate.complete(Unit)
         // Out of sight the sheet waits for the viewer, and the notification says it is there.
         stopUnseen()
         failedRetryable = retryable
@@ -7102,7 +7255,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     }
 
     override fun onDestroy() {
-        loopHandler.removeCallbacks(loopWatch)
+        // Every runnable on this handler, the undo chip's expiry among them: a delayed one holds
+        // the whole activity until it fires.
+        loopHandler.removeCallbacksAndMessages(null)
         stopArtDrift()
         saveResumePosition(leaving = true)
         // After the write above, which took the TV's place while the cast was still up.
@@ -7197,6 +7352,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * last tenth of a film is still being watched.
      */
     private fun saveResumePosition(leaving: Boolean = false) {
+        if (savedForHandOver) return
         val exo = player ?: return
         // While the video is on a TV, the TV's place is the one to keep.
         val castAt = cast?.positionMs
@@ -7333,8 +7489,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         /** The log tag of the start and seek timings. */
         private const val START_TAG = "PlayerStart"
 
+        /** The opening's stages, one bit each, for [markStart]. */
+        private const val STAGE_SESSION = 1
+        private const val STAGE_DECIDED = 2
+        private const val STAGE_BUILT = 4
+        private const val STAGE_PREPARED = 8
+        private const val STAGE_BYTES = 16
+        private const val STAGE_TRACKS = 32
+        private const val STAGE_READY = 64
+
+        /** The longest a television holds the lookups back for a picture that is slow to come. */
+        private const val OPENING_GATE_MS = 15_000L
+
         /** How long the player waits for a saved position still being read before it starts anyway. */
         private const val RESUME_WAIT_MS = 400L
+
+        /**
+         * How far another device's place, or a late post start, has to be from where the video
+         * opened before the player seeks to it, and how far the viewer has to have moved for it
+         * to be left alone. A seek restarts TDLib's download, so a near agreement is not worth one.
+         */
+        private const val RESUME_SYNC_SLACK_MS = 10_000L
         private const val EXTRA_CHAT_ID = "chat_id"
         private const val EXTRA_MESSAGE_ID = "message_id"
         private const val EXTRA_TITLE = "title"
@@ -7345,6 +7520,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** A t.me link's `?t=` in seconds (CP80), for a player opened from a link. */
         const val EXTRA_LINK_START_SEC = "link_start_sec"
+
+        /**
+         * The file id the screen that started the player already checked for room ([RoomOnDisk]),
+         * so the player does not measure the disk a second time for the same press.
+         */
+        const val EXTRA_ROOM_DECIDED = "room_decided"
         private const val EXTRA_SIZE = "size"
         private const val EXTRA_DURATION = "duration"
         private const val EXTRA_CHAT_TITLE = "chat_title"
@@ -7417,6 +7598,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** Enough for the back-seek a thumb makes when it missed a line of dialogue. */
         private const val BACK_BUFFER_MS = 10_000
+
+        /** The back buffer under [LOW_RAM_BUFFER_BYTES]: see [buildPlayer]. */
+        private const val LOW_RAM_BACK_BUFFER_MS = 3_000
         private const val END_GUARD_MS = 1_000L
         /** What a held finger runs the picture at, the same figure every player uses for it. */
         /** The phone's top bar height, which the corner chips sit under. */

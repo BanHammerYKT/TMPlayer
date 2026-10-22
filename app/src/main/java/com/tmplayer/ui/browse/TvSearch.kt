@@ -155,6 +155,9 @@ internal fun TvSearchScreen(
     val showFilters = text.isNotBlank() &&
         (state.groups.isNotEmpty() || !state.filters.isDefault || state.sort != SearchSort.BestMatch)
     val full: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+    // The states every result tile reads, collected once for the page rather than per tile.
+    val tileShared = com.tmplayer.ui.components.rememberTileShared()
+    androidx.compose.runtime.CompositionLocalProvider(com.tmplayer.ui.components.LocalTileShared provides tileShared) {
     Column(Modifier.fillMaxSize().padding(start = TV_START, bottom = Tv.SafeV)) {
         WholeCardInView(grid) {
             LazyVerticalGrid(
@@ -322,6 +325,7 @@ internal fun TvSearchScreen(
         }
         // A fixed height, so the list above never moves as the remote does.
         DetailsStrip(focusedGroup?.takeIf { g -> shown.any { it.key == g.key } }, briefs)
+    }
     }
 }
 

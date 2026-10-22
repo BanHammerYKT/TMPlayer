@@ -430,7 +430,7 @@ private fun StackedLayout(page: DetailPage, holds: Holds, width: Dp, height: Dp)
 private fun TitleBlock(page: DetailPage, holds: Holds) {
     val item = page.item
     val meta = page.meta
-    val parsed = remember(item) { MediaName.parse(item.nameForParsing, item.caption) }
+    val parsed = remember(item) { item.parsedName }
     // A match's own title, in the UI language; else the name as read, its joiners made spaces.
     val heading = meta?.title?.takeIf { it.isNotBlank() }
         ?: parsed.title.ifBlank { item.title }.let { if (' ' in it) it else it.replace(JOINERS, " ") }
@@ -475,7 +475,7 @@ private fun TitleBlock(page: DetailPage, holds: Holds) {
 @Composable
 private fun FactsBlock(page: DetailPage, holds: Holds) {
     val s = LocalStrings.current
-    val parsedYear = remember(page.item) { MediaName.parse(page.item.nameForParsing, page.item.caption).year }
+    val parsedYear = remember(page.item) { page.item.parsedName.year }
     // The match's year joins the facts line only when it was there on the first frame; one that
     // comes later opens the genres line instead, in its held place, so the facts never re-wrap.
     val matchYear = page.meta?.year.takeIf { parsedYear == null }
@@ -588,7 +588,7 @@ private fun Actions(
         if (tv) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 hero(Modifier)
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
             }
         } else if (!primaryFullWidth) {
             // A phone on its side: the round buttons in Play's row, after it, wrapping only when
@@ -596,7 +596,7 @@ private fun Actions(
             // first at the start, so a trailer arriving later never moves it.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 hero(Modifier)
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
             }
         } else {
             hero(Modifier.fillMaxWidth())
@@ -605,7 +605,7 @@ private fun Actions(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, if (headlineOnly) Alignment.CenterHorizontally else Alignment.Start),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
             }
         }
         trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) }
@@ -657,7 +657,7 @@ private fun MoreActions(page: DetailPage) {
         horizontalArrangement = Arrangement.spacedBy(if (tv) 12.dp else 4.dp, if (tv) Alignment.Start else Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(if (tv) 12.dp else 8.dp),
     ) {
-        rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress) }
+        rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled) }
     }
 }
 

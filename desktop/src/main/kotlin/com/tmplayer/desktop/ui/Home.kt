@@ -514,7 +514,8 @@ private fun RowHeading(title: String, count: String?, side: Dp, onSeeAll: (() ->
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (onSeeAll != null) SeeAllLink(if (count != null) "${s.homeSeeAll}  ·  $count" else s.homeSeeAll, onSeeAll)
+        // The words alone, no count (user, 2026-10-22: "just a see all button").
+        if (onSeeAll != null) SeeAllLink(s.homeSeeAll, onSeeAll)
     }
 }
 

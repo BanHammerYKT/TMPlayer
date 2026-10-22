@@ -55,9 +55,13 @@ import java.io.RandomAccessFile
  */
 object StreamWarmup {
 
-    /** The platform's say: false in Low storage mode or with "Save mobile data" on a metered line. */
+    /**
+     * The platform's say: false in Low storage mode or with "Save mobile data" on a metered line.
+     * False until the platform has read its settings, so nothing is warmed in
+     * Low storage mode in the moments before they arrive.
+     */
     @Volatile
-    var allowed: () -> Boolean = { true }
+    var allowed: () -> Boolean = { false }
 
     /** How much of the start to bring: what the demuxer reads before the first frame. */
     const val HEAD_BYTES = 1L * 1024 * 1024

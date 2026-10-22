@@ -3,6 +3,7 @@ package com.tmplayer.ui.components
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -14,6 +15,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -79,13 +85,20 @@ fun MediaArt(
     // in the app, so it has to be the scheme's own step above the surface and not a fixed grey.
     // The frame's own shape, measured rather than assumed: the same art fills 16:9 tiles, square
     // avatars and circles, and the rule below is about the picture against the frame it is in.
+    // Where no blur is drawn (a television, Lighter pictures) the picture is drawn by hand and
+    // measures its frame as it draws ([DrawnPicture]). The frame is then never written here, which
+    // composed every tile's picture a second time once its size was known.
+    val drawn = Motion.television || Thumbnails.light
     var frame by remember { mutableStateOf(0f) }
     val miniBitmap = mini?.bitmap
     val shown: Any? = full ?: miniBitmap ?: if (mini == null) null else Missing
     Box(
         modifier
-            .background(Tone.surface)
-            .onSizeChanged { if (it.height > 0) frame = it.width.toFloat() / it.height },
+            // A picture drawn by hand fills the frame edge to edge (cropped, or letterboxed over
+            // its own crop), so the surface under it is left out: on a television that was one
+            // more fill of every tile on screen, every frame.
+            .then(if (drawn && shown is ImageBitmap) Modifier else Modifier.background(Tone.surface))
+            .then(if (drawn) Modifier else Modifier.onSizeChanged { if (it.height > 0) frame = it.width.toFloat() / it.height }),
         contentAlignment = Alignment.Center,
     ) {
         // Nothing at all until the preview is decoded, and then no fade for the first picture: the
@@ -94,7 +107,7 @@ fun MediaArt(
         // A preview fading up from the surface under every tile of a scrolling grid is a flicker.
         if (shown != null) FadeOver(shown, Modifier.fillMaxSize()) { step ->
             when (step) {
-                is ImageBitmap -> Picture(step, miniBitmap, frame)
+                is ImageBitmap -> if (drawn) DrawnPicture(step, miniBitmap) else Picture(step, miniBitmap, frame)
                 Missing -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     when {
                         fallback != null -> fallback()
@@ -122,7 +135,8 @@ private fun Picture(bitmap: ImageBitmap, mini: ImageBitmap?, frame: Float) {
                 contentScale = ContentScale.Crop,
                 filterQuality = FilterQuality.Low,
                 // Lighter pictures (CP68) skip the blur: the stretched preview is soft enough.
-                modifier = if (Thumbnails.light) Modifier.fillMaxSize() else Modifier.fillMaxSize().blur(LETTERBOX_BLUR),
+                // So does a television, where a blur pass per tile costs frames.
+                modifier = if (Thumbnails.light || com.tmplayer.ui.theme.Motion.television) Modifier.fillMaxSize() else Modifier.fillMaxSize().blur(LETTERBOX_BLUR),
             )
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = LETTERBOX_DIM)))
             Image(
@@ -144,6 +158,61 @@ private fun Picture(bitmap: ImageBitmap, mini: ImageBitmap?, frame: Float) {
             modifier = Modifier.fillMaxSize(),
         )
     }
+}
+
+/**
+ * [Picture] without the blur, drawn in one node that reads its frame's shape as it draws: the
+ * same crop, or the same whole picture over a dimmed crop of the preview, with nothing composed
+ * again when the size is known. One node per tile in place of three is also less to lay out.
+ */
+@Composable
+private fun DrawnPicture(bitmap: ImageBitmap, mini: ImageBitmap?) {
+    val filter = Thumbnails.drawFilter
+    Spacer(
+        Modifier.fillMaxSize().drawWithCache {
+            val frame = if (size.height > 0f) size.width / size.height else 0f
+            val boxed = letterboxes(bitmap.width, bitmap.height, frame)
+            val back = mini ?: bitmap
+            onDrawBehind {
+                if (boxed) {
+                    drawCropped(back, FilterQuality.Low)
+                    drawRect(Color.Black.copy(alpha = LETTERBOX_DIM))
+                    drawFitted(bitmap, filter)
+                } else {
+                    drawCropped(bitmap, filter)
+                }
+            }
+        },
+    )
+}
+
+/** [image] scaled to fill the frame and centred, the overflow cut off: [ContentScale.Crop]. */
+private fun DrawScope.drawCropped(image: ImageBitmap, filter: FilterQuality) {
+    if (image.width <= 0 || image.height <= 0 || size.width <= 0f || size.height <= 0f) return
+    val scale = maxOf(size.width / image.width, size.height / image.height)
+    val srcW = (size.width / scale).roundToInt().coerceIn(1, image.width)
+    val srcH = (size.height / scale).roundToInt().coerceIn(1, image.height)
+    drawImage(
+        image,
+        srcOffset = IntOffset((image.width - srcW) / 2, (image.height - srcH) / 2),
+        srcSize = IntSize(srcW, srcH),
+        dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),
+        filterQuality = filter,
+    )
+}
+
+/** [image] whole in the frame, centred: [ContentScale.Fit]. */
+private fun DrawScope.drawFitted(image: ImageBitmap, filter: FilterQuality) {
+    if (image.width <= 0 || image.height <= 0 || size.width <= 0f || size.height <= 0f) return
+    val scale = minOf(size.width / image.width, size.height / image.height)
+    val w = (image.width * scale).roundToInt()
+    val h = (image.height * scale).roundToInt()
+    drawImage(
+        image,
+        dstOffset = IntOffset(((size.width - w) / 2f).roundToInt(), ((size.height - h) / 2f).roundToInt()),
+        dstSize = IntSize(w, h),
+        filterQuality = filter,
+    )
 }
 
 /** The inline preview once it has been decoded, [bitmap] null when it would not decode. */

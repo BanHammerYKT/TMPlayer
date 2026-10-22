@@ -394,6 +394,11 @@ class MainActivity : ComponentActivity() {
         com.tmplayer.ui.components.PlayPress.end()
     }
 
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInputAt = android.os.SystemClock.elapsedRealtime()
+    }
+
     override fun onResume() {
         super.onResume()
         // Back from the player (or never left): no press of Play is still on its way.
@@ -490,6 +495,11 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** When the last key or touch reached the app, for Home's auto-refresh to stop when idle. */
+        @Volatile
+        var lastInputAt = 0L
+            private set
+
         /** Which screen a launch is asking for, when it is asking for one. */
         const val EXTRA_OPEN = "com.tmplayer.extra.OPEN"
 
@@ -593,6 +603,13 @@ private fun Root() {
     // behind a screen's edge or during a transition is true black under Pure black too.
     val ground = Tone.background
     LaunchedEffect(ground, activity) {
+        // None on a television: the shell's root paints the same ground over the whole window on
+        // every frame (the box round the loader below), so the window's own was a second
+        // full-screen fill under it, which a TV stick's GPU paid for on each frame of every press.
+        if (activity != null && FormFactor.isTv(activity)) {
+            activity.window?.setBackgroundDrawable(null)
+            return@LaunchedEffect
+        }
         activity?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(ground.toArgb()))
     }
 
@@ -785,7 +802,12 @@ private fun Root() {
         factory = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }, cached = true) as T
+                HomeViewModel(
+                    sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() },
+                    cached = true,
+                    // Home's refetches wait while a video plays (see HomeViewModel's busy).
+                    busy = { com.tmplayer.data.WatchCache.anyPlaying() },
+                ) as T
         },
     )
     // Home keeps what it fetched, badges included, so its Cached badges are read off the disk again
@@ -803,7 +825,11 @@ private fun Root() {
         homeViewModel.refreshIfStale()
         while (true) {
             delay(HomeViewModel.AUTO_REFRESH_MS)
-            homeViewModel.refreshInPlace()
+            // Only while someone is using it: a TV left on Home refreshed every few minutes for
+            // hours, rebuilding every row each time. Untouched, Home waits for the next press or
+            // for coming back to the front ([refreshIfStale]).
+            val idle = android.os.SystemClock.elapsedRealtime() - MainActivity.lastInputAt
+            if (idle < HomeViewModel.AUTO_REFRESH_MS) homeViewModel.refreshInPlace()
         }
     }
     val accountHeader by chatsViewModel.accountHeader.collectAsStateWithLifecycle()
@@ -1120,7 +1146,11 @@ private fun Root() {
                 // a series honest. This only has to leave the record alone for a kept download.
                 if (!kept) scope.launch { settings.rememberCachedVideo(item, chatTitle) }
                 com.tmplayer.ui.components.PlayPress.open()
-                context.startActivity(PlayerActivity.intent(context, item, chatTitle))
+                // The room was decided just above, so the player need not measure it again.
+                context.startActivity(
+                    PlayerActivity.intent(context, item, chatTitle)
+                        .putExtra(PlayerActivity.EXTRA_ROOM_DECIDED, item.fileId),
+                )
             }
 
             when (plan) {

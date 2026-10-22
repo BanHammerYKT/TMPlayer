@@ -1,5 +1,6 @@
 package com.tmplayer.ui.browse
 
+import com.tmplayer.ui.theme.tileFootScrim
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -56,7 +57,7 @@ fun ContinueCardArt(record: ResumeRecord, item: MediaItem, modifier: Modifier = 
                 GeneratedCover(cover, Modifier.fillMaxSize(), showTitle = false)
             }
         }
-        Box(Modifier.fillMaxSize().background(Scrims.tileFoot))
+        Box(Modifier.fillMaxSize().tileFootScrim())
         if (record.remainingMs > 0) {
             TileBadge(
                 s.browseTimeLeft(s.formatter.duration(record.remainingMs / 1000)),

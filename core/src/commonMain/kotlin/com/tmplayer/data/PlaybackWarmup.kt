@@ -19,6 +19,14 @@ object PlaybackWarmup {
     @Volatile
     var warmer: Warmer? = null
 
+    /**
+     * False where focus or a pointer resting on a card warms nothing (a television, see the
+     * app's warmer): the cards then carry no warm-up modifier at all, rather than a focus watcher
+     * and a timer per tile whose hint is thrown away.
+     */
+    @Volatile
+    var onIntent: Boolean = true
+
     @Volatile
     private var last: Pair<String, Long>? = null
 

@@ -564,8 +564,11 @@ internal fun BrowseScreen(
                                     query = ""
                                 },
                                 onOpenChat = { id -> data.chats.firstOrNull { it.id == id }?.let(onOpenChat) },
-                                // Only while Home found no chat with videos of its own to fill itself from.
-                                noFavourites = favorites.isEmpty() && homeRows.none { it is HomeRow.Chat || it is HomeRow.Across },
+                                // Never: Home fills itself from the chats with videos (2026-10-21), so
+                                // "add chats to your favourites" no longer says how to fill it, and it
+                                // flashed up while the rows were still being built. An account with no
+                                // videos at all gets the first run's tip instead.
+                                noFavourites = false,
                                 onOpenSection = { onPickTab(it); query = "" },
                                 onOpenWatchLater = openLater,
                                 onLaterArtWanted = onHomeLaterArtWanted,

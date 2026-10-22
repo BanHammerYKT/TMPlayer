@@ -382,6 +382,12 @@ fun MediaGridScreen(
     }
     // Whatever the remote is standing on, for the name strip along the bottom.
     var standingOn by remember { mutableStateOf<MediaItem?>(null) }
+    // It changes on every move of the remote, so the grid's own Box reads only whether there is
+    // one (for the chips' clearance) and the strip reads which one in its own scope below: a
+    // read here recomposed the whole grid on every step.
+    val standing by remember { derivedStateOf { standingOn != null } }
+    // The states every tile reads, collected once for the grid ([LocalTileShared]).
+    val tileShared = com.tmplayer.ui.components.rememberTileShared()
     val connectionOffset = if (connectionNotice == ConnectionNotice.Hidden) 0.dp else 56.dp
     var reconnectPending by remember(chatId) { mutableStateOf(false) }
     var reportTarget by remember { mutableStateOf<SponsoredItem?>(null) }
@@ -537,6 +543,7 @@ fun MediaGridScreen(
     val laidOut = remember { arrayOf(layout) }
 
     val listing: @Composable () -> Unit = {
+      CompositionLocalProvider(com.tmplayer.ui.components.LocalTileShared provides tileShared) {
         StateScaffold(
             state,
             onRetry = viewModel::load,
@@ -577,6 +584,9 @@ fun MediaGridScreen(
             val shelfBefore = remember(chatId) { ShelfMemo.match(chatId, shelfInputs) }
             val arrangedShelf by produceState(shelfBefore, list.items, watchProgress, grouping, layout, order, corrections, watchedVideos, shownFilter) {
                 value = withContext(Dispatchers.Default) {
+                    // Each tile's online question read here, off the main thread, where the tiles
+                    // would otherwise each read it as they scroll in ([MediaItem.metaQuery]).
+                    if (com.tmplayer.online.OnlineMetadata.current != null) list.items.forEach { it.metaQuery }
                     arrangeShelf(list.items, watchProgress, grouping, layout, order, watchedVideos.keys, corrections, shownFilter)
                 }.also { ShelfMemo.keep(chatId, shelfInputs, it) }
             }
@@ -995,7 +1005,7 @@ fun MediaGridScreen(
                                 // Tv.SafeV is overscan clearance and means nothing on a phone,
                                 // where the gesture bar is the real obstacle.
                                 bottom = (if (touch) navigationBarPadding() else Tv.SafeV) +
-                                    (if (standingOn != null) 46.dp else 0.dp) +
+                                    (if (standing) 46.dp else 0.dp) +
                                     connectionOffset,
                             ),
                     ) {
@@ -1026,7 +1036,7 @@ fun MediaGridScreen(
                             .align(Alignment.BottomCenter)
                             .padding(
                                 bottom = (if (touch) navigationBarPadding() else Tv.SafeV) +
-                                    (if (standingOn != null) 46.dp else 0.dp) +
+                                    (if (standing) 46.dp else 0.dp) +
                                     connectionOffset,
                             ),
                     ) {
@@ -1041,14 +1051,12 @@ fun MediaGridScreen(
                     }
                 }
 
-                standingOn?.let { item ->
-                    FullName(
-                        name = item.title,
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(end = Tv.SafeH, bottom = Tv.SafeV + connectionOffset),
-                    )
-                }
+                StandingOnName(
+                    { standingOn },
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = Tv.SafeH, bottom = Tv.SafeV + connectionOffset),
+                )
             }
 
             // Switching arrangement rebuilds the list, taking the focused card with it, so the
@@ -1087,6 +1095,7 @@ fun MediaGridScreen(
             }
             }
         }
+      }
     }
 
     // Null while every ticked video comes from a chat that restricts saving content.
@@ -2133,7 +2142,8 @@ internal fun MediaCard(
     /** The line of facts in place of the file's own (Home's New episodes row: the chat, quality and size). */
     meta: (@Composable (ink: Color) -> Unit)? = null,
 ) {
-    val renamed = com.tmplayer.data.VideoCorrections.state.collectAsState().value[item.id]?.title
+    // This video's correction alone, from the screen's one collector ([LocalTileShared]).
+    val renamed = com.tmplayer.ui.components.rememberCorrection(item.id)?.title
     val named = if (poster) remember(item, renamed) { SeriesShelf.posterTitle(item) } else tileTitle(item)
     VideoTile(
         title = title ?: named,
@@ -2205,19 +2215,23 @@ internal fun VideoTile(
             pressed && touch -> Motion.PressScale
             else -> 1f
         },
-        animationSpec = Motion.standard(if (touch) PRESS_MS else Motion.Fast),
+        // At once on a television: grown over a few frames, every press drew the row again for
+        // each of them, which a TV stick's GPU felt more than anything else on Home.
+        animationSpec = if (touch) Motion.standard(PRESS_MS) else androidx.compose.animation.core.snap(),
         label = "tileScale",
     )
-    val ring by animateColorAsState(
-        targetValue = if (focused) Tone.accent else Color.Transparent,
-        animationSpec = Motion.standard(Motion.Fast),
-        label = "tileRing",
-    )
-    val ink by animateColorAsState(
-        targetValue = if (focused) Tone.text else Tone.muted,
-        animationSpec = Motion.standard(Motion.Fast),
-        label = "tileInk",
-    )
+    // On a television the ring and the words change at once: animated, the tile and its lines
+    // were composed again on every frame of each focus move, the tile left and the tile reached.
+    val ring = if (!touch) {
+        if (focused) Tone.accent else Color.Transparent
+    } else {
+        animateColorAsState(if (focused) Tone.accent else Color.Transparent, Motion.standard(Motion.Fast), label = "tileRing").value
+    }
+    val ink = if (!touch) {
+        if (focused) Tone.text else Tone.muted
+    } else {
+        animateColorAsState(if (focused) Tone.text else Tone.muted, Motion.standard(Motion.Fast), label = "tileInk").value
+    }
     val shape = RoundedCornerShape(Corner.Medium)
     Column(
         modifier
@@ -2241,13 +2255,18 @@ internal fun VideoTile(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(if (poster) 2f / 3f else 16f / 9f)
+                // The grow and the rounded corners in one layer: a scale layer with a clip layer
+                // inside it was two render nodes a tile, every tile on screen, every frame.
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
+                    this.shape = shape
+                    clip = true
                 }
-                .clip(shape)
                 .then(if (touch) Modifier.indication(interactions, LocalIndication.current) else Modifier)
-                .border(Focus.Ring, ring, shape)
+                // On a television the ring is drawn only round the focused tile: a transparent
+                // ring was still a rounded stroke drawn on every tile in view.
+                .then(if (touch || focused) Modifier.border(Focus.Ring, ring, shape) else Modifier)
                 .selectionEdge(selected, shape),
             content = art,
         )
@@ -2594,8 +2613,17 @@ private fun MediaArt(
     val inset = if (compact) 4.dp else TileBadgeInset
     Box(modifier) {
         if (poster) {
-            val meta = com.tmplayer.ui.online.rememberMeta(item, showOnly = true)
-            PosterArt(item.miniThumbnail, item.thumbnailFileId, cover, meta?.posterUrl, Modifier.fillMaxSize(), compactCover = compact)
+            // Whether the answer is still on its way too: a television holds the thumbnail back for it.
+            val meta = com.tmplayer.ui.online.rememberMetaState(item, showOnly = true)
+            PosterArt(
+                item.miniThumbnail,
+                item.thumbnailFileId,
+                cover,
+                meta.value?.posterUrl,
+                Modifier.fillMaxSize(),
+                compactCover = compact,
+                posterPending = meta.pending,
+            )
         } else {
             // On Home, the show's or the film's own picture over the frame once a match arrives.
             com.tmplayer.ui.online.OnlineArt(item, Modifier.fillMaxSize()) {
@@ -2612,7 +2640,8 @@ private fun MediaArt(
         // What the download queue is doing with this video, if anything. Read through
         // [derivedStateOf] so a grid of forty tiles does not all recompose once a second because
         // one of them is counting bytes: only the tile whose own entry changed is invalidated.
-        val queue = OfflineDownloads.active.collectAsStateWithLifecycle()
+        // The screen's one collector where it has one ([com.tmplayer.ui.components.LocalTileShared]).
+        val queue = com.tmplayer.ui.components.rememberDownloadQueue()
         val coming by remember(item.fileId) {
             androidx.compose.runtime.derivedStateOf { queue.value[item.fileId] }
         }
@@ -2695,13 +2724,23 @@ private fun MediaArt(
 }
 
 /**
+ * The full name of the video the remote stands on, along the bottom of the grid. [standingOn] is
+ * read here, in this scope alone, since it changes with every move of the remote.
+ */
+@Composable
+private fun StandingOnName(standingOn: () -> MediaItem?, modifier: Modifier) {
+    val item = standingOn() ?: return
+    FullName(name = item.title, modifier = modifier)
+}
+
+/**
  * The name a tile goes by: see [SeriesShelf.tileTitle]. The release name with its tags stays in
  * the detail panel, the list arrangement and the TV's name strip, which are for reading it whole.
  */
 @Composable
 private fun tileTitle(item: MediaItem): String {
-    // A rename redraws the tile it names.
-    val renamed = com.tmplayer.data.VideoCorrections.state.collectAsState().value[item.id]?.title
+    // A rename redraws the tile it names, and only that tile.
+    val renamed = com.tmplayer.ui.components.rememberCorrection(item.id)?.title
     return remember(item, renamed) { SeriesShelf.tileTitle(item) }
 }
 
@@ -2760,7 +2799,7 @@ private fun MetaLine(
     poster: Boolean = false,
 ) {
     val s = LocalStrings.current
-    val year = if (poster) remember(item) { MediaName.parse(item.nameForParsing, item.caption).year } else null
+    val year = if (poster) remember(item) { item.parsedName.year } else null
     val duration = s.formatter.duration(item.durationSec.toLong())
     // A tile standing for several copies says how many rather than one copy's size.
     val size = if (item.versions.size > 1) s.detailVersions(item.versions.size) else com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(item.sizeBytes))

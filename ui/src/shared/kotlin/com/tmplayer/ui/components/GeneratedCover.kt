@@ -1,5 +1,6 @@
 package com.tmplayer.ui.components
 
+import com.tmplayer.ui.theme.tileFootScrim
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -105,7 +106,7 @@ fun GeneratedCover(
             }
         }
         if (showTitle && cover.title.isNotBlank()) {
-            Box(Modifier.fillMaxSize().background(Scrims.tileFoot))
+            Box(Modifier.fillMaxSize().tileFootScrim())
             Text(
                 cover.title,
                 style = (if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium)

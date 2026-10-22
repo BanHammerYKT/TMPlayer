@@ -1,5 +1,6 @@
 package com.tmplayer.ui.components
 
+import com.tmplayer.ui.theme.tileFootScrim
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -59,6 +60,11 @@ fun PosterArt(
     posterUrl: String?,
     modifier: Modifier = Modifier,
     compactCover: Boolean = false,
+    /**
+     * True while the lookup that may give [posterUrl] is still on its way. A television waits for
+     * it before fetching the thumbnail, which a poster would only hide.
+     */
+    posterPending: Boolean = false,
 ) {
     // The inline preview first, off the composition thread, then the thumbnail when it arrives.
     // Decoding: nothing drawn yet, so the colour cover is not flashed for a frame under a preview
@@ -67,18 +73,30 @@ fun PosterArt(
         value = withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) } ?: NoPreview
     }
     var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
-    LaunchedEffect(thumbnailFileId, posterUrl) {
+    // On a television the poster alone is fetched whenever there is one: the thumbnail's download
+    // and decode under it cost a stick as much again for a picture nobody sees. The preview holds
+    // the card meanwhile, and the thumbnail is fetched only when the poster cannot be had.
+    val tv = Motion.television
+    var posterFailed by remember(posterUrl) { mutableStateOf(false) }
+    LaunchedEffect(thumbnailFileId, posterUrl, posterPending, posterFailed) {
         if (full != null) return@LaunchedEffect
         // The provider's poster comes first: when it is on this device already, it is what the
         // card shows, and the video's own thumbnail is not fetched from Telegram at all.
         val online = com.tmplayer.online.OnlineMetadata.current
+        if (tv && online != null && !posterFailed && (posterUrl != null || posterPending)) return@LaunchedEffect
         if (posterUrl != null && online != null && withContext(Dispatchers.IO) { online.hasImage(posterUrl) }) return@LaunchedEffect
         full = Thumbnails.full(thumbnailFileId)
     }
     val picture: Any? = full ?: mini
-    Box(modifier.background(Tone.surface)) {
+    // On a television, once the online poster is fully drawn it covers the card edge to edge: the
+    // surface and the preview under it are then left out, rather than drawn (and kept decoded)
+    // for nothing on every frame. Known at once for a poster already in memory.
+    var covered by remember(posterUrl) {
+        mutableStateOf(tv && posterUrl != null && Thumbnails.peekSharp(posterUrl, POSTER_WIDTH, POSTER_WIDTH) != null)
+    }
+    Box(if (covered) modifier else modifier.background(Tone.surface)) {
         // Each better picture fades in over the one before ([FadeOver]), never through the surface.
-        if (picture != null) FadeOver(picture, Modifier.fillMaxSize()) { shown ->
+        if (picture != null && !covered) FadeOver(picture, Modifier.fillMaxSize()) { shown ->
             when {
                 shown !is ImageBitmap -> GeneratedCover(cover, Modifier.fillMaxSize(), compact = compactCover)
                 shown.height >= shown.width -> Image(
@@ -91,7 +109,13 @@ fun PosterArt(
                 else -> WidePicture(shown, miniThumbnail, thumbnailFileId)
             }
         }
-        MetaPicture(posterUrl, Modifier.fillMaxSize(), maxWidth = POSTER_WIDTH)
+        MetaPicture(
+            posterUrl,
+            Modifier.fillMaxSize(),
+            maxWidth = POSTER_WIDTH,
+            onShown = if (tv) ({ covered = true }) else null,
+            onFailed = if (tv) ({ posterFailed = true }) else null,
+        )
     }
 }
 
@@ -119,7 +143,7 @@ private fun WidePicture(picture: ImageBitmap, miniThumbnail: ByteArray?, thumbna
             modifier = Modifier.fillMaxSize(),
         )
         // The foot darkened as on every tile, for the progress line and a badge there.
-        Box(Modifier.fillMaxSize().background(Scrims.tileFoot))
+        Box(Modifier.fillMaxSize().tileFootScrim())
     }
 }
 

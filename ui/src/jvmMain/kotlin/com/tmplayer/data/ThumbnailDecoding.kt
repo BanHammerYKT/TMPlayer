@@ -7,6 +7,20 @@ import java.io.File
 
 // The desktop's half of [Thumbnails]: Skia decodes the JPEGs TDLib hands over.
 
+/** An opaque picture from [argb], one Int per pixel, row by row ([MiniBlur]). */
+internal fun imageFromPixels(argb: IntArray, width: Int, height: Int): ImageBitmap {
+    val bytes = ByteArray(argb.size * 4)
+    for (i in argb.indices) {
+        val p = argb[i]
+        bytes[i * 4] = (p shr 16).toByte()
+        bytes[i * 4 + 1] = (p shr 8).toByte()
+        bytes[i * 4 + 2] = p.toByte()
+        bytes[i * 4 + 3] = 0xFF.toByte()
+    }
+    val info = org.jetbrains.skia.ImageInfo(width, height, org.jetbrains.skia.ColorType.RGBA_8888, org.jetbrains.skia.ColorAlphaType.OPAQUE)
+    return Image.makeRaster(info, bytes, width * 4).toComposeImageBitmap()
+}
+
 internal fun decodeImage(data: ByteArray): ImageBitmap? =
     runCatching { Image.makeFromEncoded(data).toComposeImageBitmap() }.getOrNull()
 

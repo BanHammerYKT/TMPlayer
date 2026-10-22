@@ -32,7 +32,12 @@ object SameTitle {
         val renamed = correction?.title
         if (renamed == null && item.fileName.isBlank() && item.caption.isBlank()) return null
         if (renamed == null && item.caption.isBlank() && MediaText.isGenericName(item.fileName)) return null
-        val name = if (renamed != null) MediaName.parse(renamed) else MediaName.parse(item.fileName, item.caption)
+        val name = when {
+            renamed != null -> MediaName.parse(renamed)
+            // Read once per item where it reads the same name ([MediaItem.parsedName]).
+            item.nameForParsing == item.fileName -> item.parsedName
+            else -> MediaName.parse(item.fileName, item.caption)
+        }
         if (name.isSeries || name.extra != null) return null
         val title = SeriesShelf.keyOf(name.title).ifEmpty { return null }
         val year = name.year ?: if (renamed == null) captionYear(item.caption, title) else null
@@ -69,7 +74,7 @@ object SameTitle {
      */
     fun onlineKey(item: MediaItem): String? {
         val online = OnlineMetadata.current ?: return null
-        val query = MetaQuery.of(item.nameForParsing, item.caption) ?: return null
+        val query = item.metaQuery ?: return null
         val found = runCatching { online.peek(query) }.getOrNull() as? MetaResult.Found ?: return null
         val info = found.info
         val kind = if (info.kind == MetaKind.Show) "show" else "film"

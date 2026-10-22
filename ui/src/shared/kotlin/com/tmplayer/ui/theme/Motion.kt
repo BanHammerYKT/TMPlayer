@@ -53,6 +53,14 @@ object Motion {
     @Volatile
     var reduced: Boolean = false
 
+    /**
+     * Set by the app on a television: the picture effects that cost a TV stick's GPU or a second
+     * download each (the poster's small blurred copy, the carousel's slow push-in) stay off there.
+     * The TV sticks and boxes lagged and stopped loading pictures under them in 1.28.0.
+     */
+    @Volatile
+    var television: Boolean = false
+
     /** A tween of [durationMillis] on [Standard], or none at all under [reduced]. */
     fun <T> standard(durationMillis: Int = Normal): TweenSpec<T> =
         tween(if (reduced) 0 else durationMillis, easing = Standard)

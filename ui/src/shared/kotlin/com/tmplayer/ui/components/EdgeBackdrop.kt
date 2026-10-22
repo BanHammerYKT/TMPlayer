@@ -77,8 +77,10 @@ fun EdgeBackdrop(
         // coming in "looks good, add it to the others"): from whole to [DRIFT_SCALE] over
         // [DRIFT_MS], once, from the edge the picture stands at, then still. Nothing that runs by
         // itself for long, so an idle carousel costs no frames once it settles; none at all with
-        // reduced motion.
-        val still = rememberReducedMotion() || Motion.reduced
+        // reduced motion. None on a television either: the zoomed picture sits in an offscreen
+        // layer with its fades, redrawn whole every frame, and the push outlasted a TV page's
+        // seven seconds, so a stick's GPU never rested on Home (1.28.0).
+        val still = rememberReducedMotion() || Motion.reduced || Motion.television
         val drift = remember(source) { androidx.compose.animation.core.Animatable(1f) }
         androidx.compose.runtime.LaunchedEffect(source, art?.picture != null, still) {
             if (still || art?.picture == null) {
@@ -90,7 +92,8 @@ fun EdgeBackdrop(
         val pictured by androidx.compose.runtime.rememberUpdatedState(onPictured)
         androidx.compose.runtime.LaunchedEffect(art != null) { if (art != null) pictured?.invoke() }
         // From nothing as well as between steps, so the first picture fades in rather than popping.
-        Crossfade(targetState = art, animationSpec = Motion.standard(), modifier = Modifier.fillMaxSize(), label = "edgeBackdrop") { step ->
+        // At once on a television: no two backdrops drawn together for a fade.
+        Crossfade(targetState = art, animationSpec = if (Motion.television) androidx.compose.animation.core.snap() else Motion.standard(), modifier = Modifier.fillMaxSize(), label = "edgeBackdrop") { step ->
             if (step == null) return@Crossfade
             Box(Modifier.fillMaxSize()) {
                 // Until the sharp picture is in, the inline preview stands in its place, blurry but
@@ -137,7 +140,7 @@ fun EdgeBackdrop(
                         contentScale = ContentScale.Crop,
                         alignment = Alignment.TopCenter,
                         filterQuality = Thumbnails.drawFilter,
-                        modifier = if (step.blurred) {
+                        modifier = if (step.blurred && !Motion.television) {
                             place.then(Modifier.blur(STAND_IN_BLUR))
                         } else {
                             place.graphicsLayer {

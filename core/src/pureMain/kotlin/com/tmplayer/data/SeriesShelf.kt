@@ -431,7 +431,7 @@ object SeriesShelf {
             renamed != null -> renamed
             item.versions.size > 1 || item.parts.size > 1 || item.isJoined -> filmTitle(item)
             item.fileName.isBlank() || MediaText.isGenericName(item.fileName) -> item.title
-            else -> MediaName.tileTitle(item.fileName, item.caption) ?: item.title
+            else -> item.fileTileTitle ?: item.title
         }
         val extra = item.extra ?: return title
         return L.messages.gridExtraTitle(title, extraLabel(extra))
@@ -457,7 +457,9 @@ object SeriesShelf {
         if (item.versions.size > 1 || item.parts.size > 1) return true
         val renamed = VideoCorrections.current[item.id]?.title
         if (renamed == null && (item.fileName.isBlank() || MediaText.isGenericName(item.fileName))) return false
-        val name = if (renamed != null) MediaName.parse(renamed) else MediaName.parse(item.fileName, item.caption)
+        // The item's own reading where the name is its file's: Home sorts and folds by this, and
+        // reading the name afresh each time held a TV stick's main thread (1.28.0).
+        val name = if (renamed != null) MediaName.parse(renamed) else item.parsedName
         return !name.isSeries && name.extra == null && name.year != null && name.title.isNotBlank()
     }
 

@@ -190,6 +190,19 @@ data class MediaItem(
         MediaName.parse(nameForParsing, caption)
     }
 
+    /**
+     * The online lookup's question for this item, worked out once: Home's folding and search's
+     * merging ask for it per item on every build.
+     */
+    val metaQuery: com.tmplayer.online.MetaQuery? by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        com.tmplayer.online.MetaQuery.of(nameForParsing, caption)
+    }
+
+    /** [MediaName.tileTitle] of the file's name, read once: search screens every item by it per letter. */
+    val fileTileTitle: String? by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        MediaName.tileTitle(fileName, caption)
+    }
+
     /** The same without the caption, for a caption the chat puts under every post. */
     val parsedNameAlone: ParsedName by lazy(LazyThreadSafetyMode.PUBLICATION) {
         if (caption.isBlank()) parsedName else MediaName.parse(nameForParsing)

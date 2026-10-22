@@ -488,7 +488,7 @@ class OnlineMetadata(
     suspend fun skipTimes(item: com.tmplayer.data.MediaItem): List<SkipSegment> {
         val settings = store.now
         if (!settings.enabled || !settings.skipTimes) return emptyList()
-        val query = MetaQuery.of(item.nameForParsing, item.caption) ?: return emptyList()
+        val query = item.metaQuery ?: return emptyList()
         val info = (lookup(query) as? MetaResult.Found)?.info ?: return emptyList()
         val show = info.kind == MetaKind.Show
         if (show && query.episode == null) return emptyList()
@@ -852,7 +852,7 @@ class OnlineMetadata(
         val asked = HashMap<String, MetaInfo?>()
         val best = LinkedHashMap<String, Pair<KnownTitle, Int>>()
         for (item in items) {
-            val full = MetaQuery.of(item.nameForParsing, item.caption) ?: continue
+            val full = item.metaQuery ?: continue
             val show = full.showOnly()
             val cacheKey = show.cacheKey(lang)
             val info = if (cacheKey in asked) asked[cacheKey] else cachedMatch(show).also { asked[cacheKey] = it }

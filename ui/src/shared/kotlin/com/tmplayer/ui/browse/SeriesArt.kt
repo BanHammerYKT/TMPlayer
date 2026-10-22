@@ -1,5 +1,6 @@
 package com.tmplayer.ui.browse
 
+import com.tmplayer.ui.theme.tileFootScrim
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,12 +71,17 @@ fun SeriesArt(
      * [NewBadge] in the top end corner, unless the caller's own [badge] has it.
      */
     fresh: Boolean = false,
+    /**
+     * False inside a frame that already rounds the art's corners (a video tile's): a second clip
+     * to the same shape was one more layer per tile for nothing.
+     */
+    clip: Boolean = true,
 ) {
     val s = LocalStrings.current
     val cover = series.cover
     val meta = rememberMeta(cover, showOnly = true)
     val generated = remember(cover.chatId, series.title) { CoverArt.of(cover).copy(title = series.title, number = null) }
-    Box(modifier.aspectRatio(if (poster) 2f / 3f else 16f / 9f).clip(RoundedCornerShape(Corner.Medium))) {
+    Box(modifier.aspectRatio(if (poster) 2f / 3f else 16f / 9f).then(if (clip) Modifier.clip(RoundedCornerShape(Corner.Medium)) else Modifier)) {
         if (poster) {
             // The show's own poster where the providers know it, else the newest episode's frame.
             val nameless = remember(generated) { generated.copy(title = "") }
@@ -87,7 +93,7 @@ fun SeriesArt(
             // The backdrop only: without one, the newest episode's frame stays.
             MetaPicture(meta?.backdropUrl, Modifier.fillMaxSize())
         }
-        Box(Modifier.fillMaxSize().background(Scrims.tileFoot))
+        Box(Modifier.fillMaxSize().tileFootScrim())
         val fraction = if (progress.total == 0) 0f else progress.watched.toFloat() / progress.total
         val inset = if (compact) 6.dp else 8.dp
         Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
@@ -99,8 +105,8 @@ fun SeriesArt(
                 modifier = Modifier
                     .padding(start = inset, bottom = if (fraction > 0f) 6.dp else inset)
                     .heightIn(min = EPISODES_PILL)
-                    .clip(CircleShape)
-                    .background(TileBadgeFill)
+                    // A rounded fill, not a clip layer per tile; see TileBadge.
+                    .background(TileBadgeFill, CircleShape)
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
             if (fraction > 0f) ProgressLine(fraction, inset = inset)
@@ -130,8 +136,7 @@ fun NewBadge(compact: Boolean, modifier: Modifier = Modifier) {
         maxLines = 1,
         modifier = modifier
             .heightIn(min = if (compact) TileBadgeHeight - 2.dp else TileBadgeHeight)
-            .clip(CircleShape)
-            .background(Tone.accent)
+            .background(Tone.accent, CircleShape)
             .padding(horizontal = 8.dp, vertical = 2.dp),
     )
 }

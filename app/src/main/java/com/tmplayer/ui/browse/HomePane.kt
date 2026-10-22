@@ -54,6 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -201,7 +204,7 @@ internal fun HomePane(
     // (and its picture) with it, and the loader lifting before that let Home jump down.
     LaunchedEffect(carousel) {
         if (carousel) return@LaunchedEffect
-        kotlinx.coroutines.delay(NO_CAROUSEL_SETTLE_MS)
+        kotlinx.coroutines.delay(if (touch) NO_CAROUSEL_SETTLE_MS else NO_CAROUSEL_SETTLE_TV_MS)
         HomeFirstPaint.markReady()
     }
     val listed = if (recent != null) rows.filterNot { it === recent } else rows
@@ -209,6 +212,11 @@ internal fun HomePane(
     val scope = rememberCoroutineScope()
     // Kept across a turn of the phone: the show is looked up again in the rows once they are back.
     val opened = rememberOpenSeries { key, chatId -> HomeLaunch.find(key, chatId, rows) }
+    // Movies' or Shows' See all page, by the row's key, so a turn of the phone keeps it open.
+    var seeAllKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    val seeAllRow = seeAllKey?.let { key -> rows.firstOrNull { it.key == key } as? HomeRow.Across }
+    // The row whose tiles the remote goes back to once its page closes.
+    var returnTo by remember { mutableStateOf<String?>(null) }
     val listState = com.tmplayer.ui.components.rememberAheadListState()
     // Home pressed again on the bar: back to the top, the featured carousel whole.
     ScrollToTopOnReselect(TouchDestination.Home) { animate -> listState.toTop(animate) }
@@ -228,6 +236,36 @@ internal fun HomePane(
     // Not before this window has focus: the launcher is still on top while the app comes up, and a
     // page opened then never got the remote's focus on its Play button.
     val windowFocused = LocalWindowInfo.current.isWindowFocused
+    // Where the remote stands on Home, for putting it back after the player (see [HomeFocusMemory]).
+    val shellLifecycle = LocalLifecycleOwner.current.lifecycle
+    val shellState by shellLifecycle.currentStateFlow.collectAsState()
+    val windowFocusedNow by androidx.compose.runtime.rememberUpdatedState(windowFocused)
+    // The row (by key) or the carousel the remote is in right now, null when it is elsewhere.
+    val focusedSpot = remember { arrayOfNulls<String>(1) }
+    // Whether the remote has been in Home in this composition, so the first "no focus" report a
+    // freshly built Home makes is not taken for the remote leaving it.
+    val homeHad = remember { booleanArrayOf(false) }
+    // Set once the remote has been put back after the player, which the first row's own focus
+    // grab below then leaves alone.
+    val restored = remember { booleanArrayOf(false) }
+    // Each row's tiles, by row key, for putting the remote back into the row it was in.
+    val rowFocus = remember { HashMap<String, FocusRequester>() }
+    if (!touch) {
+        androidx.compose.runtime.DisposableEffect(shellLifecycle) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                // The player (another activity) covering the shell, with the remote on Home.
+                if (event == Lifecycle.Event.ON_STOP && HomeFocusMemory.spot != null) HomeFocusMemory.away = true
+            }
+            shellLifecycle.addObserver(observer)
+            onDispose {
+                shellLifecycle.removeObserver(observer)
+                // Home left for another page while the app is in use: nothing to put back. Gone
+                // because the activity is being destroyed behind the player, it is kept for the
+                // Home built when the viewer comes back.
+                if (shellLifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) HomeFocusMemory.forget()
+            }
+        }
+    }
     LaunchedEffect(showAsk, rows, windowFocused) {
         val ask = showAsk ?: return@LaunchedEffect
         if (!windowFocused) return@LaunchedEffect
@@ -305,11 +343,39 @@ internal fun HomePane(
         val barPx = with(density) { TV_BAR_HEIGHT.toPx() }
         val calm = remember(barPx) { calmVertical(barPx) }
         val platformSpec = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
+        // The states every tile reads, collected once for Home rather than per tile ([LocalTileShared]).
+        val tileShared = com.tmplayer.ui.components.rememberTileShared()
         CompositionLocalProvider(
             LocalOnlineArt provides true,
+            com.tmplayer.ui.components.LocalTileShared provides tileShared,
             androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides if (!touch) calm else platformSpec,
         ) {
-          Column(Modifier.fillMaxSize()) {
+          // While a See all page stands over Home, the remote cannot move into the rows under it.
+          val pageOpen by androidx.compose.runtime.rememberUpdatedState(seeAllRow != null)
+          Column(
+              Modifier
+                  .fillMaxSize()
+                  .then(
+                      if (touch) {
+                          Modifier
+                      } else {
+                          Modifier.onFocusChanged { state ->
+                              if (state.hasFocus) {
+                                  homeHad[0] = true
+                              } else if (homeHad[0]) {
+                                  homeHad[0] = false
+                                  focusedSpot[0] = null
+                                  // Moved off Home by the viewer (the top bar, a page over it):
+                                  // nothing to put back. Lost because the player covered the
+                                  // window, the place is kept.
+                                  if (shellLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) && windowFocusedNow) HomeFocusMemory.forget()
+                              }
+                          }
+                      },
+                  )
+                  .focusProperties { onEnter = { if (pageOpen) cancelFocusChange() } }
+                  .focusGroup(),
+          ) {
             if (!touch && !headerOnArt) tvHeader?.invoke(false)
             LazyColumn(
                 state = listState,
@@ -357,6 +423,14 @@ internal fun HomePane(
                             },
                             header = tvHeader?.let { heading -> { heading(true) } },
                             playFocus = tvPlayFocus,
+                            modifier = Modifier.onFocusChanged { state ->
+                                if (state.hasFocus) {
+                                    focusedSpot[0] = FEATURED_KEY
+                                    HomeFocusMemory.spot = FEATURED_KEY
+                                } else if (focusedSpot[0] == FEATURED_KEY) {
+                                    focusedSpot[0] = null
+                                }
+                            },
                         )
                     } else item(key = FEATURED_KEY, contentType = FEATURED_KEY) {
                       Box {
@@ -397,7 +471,8 @@ internal fun HomePane(
                         is HomeRow.Continue -> onSeeContinue
                         is HomeRow.WatchLater -> onSeeWatchLater
                         is HomeRow.Chat -> { { onOpenChat(row.chatId) } }
-                        is HomeRow.NewEpisodes, is HomeRow.Recent, is HomeRow.Across -> null
+                        is HomeRow.Across -> { { seeAllKey = row.key } }
+                        is HomeRow.NewEpisodes, is HomeRow.Recent -> null
                     }?.takeIf { row.hasMore }
                     val countLabel = if (row.totalAtLeast) s.homeSeeAllCountAtLeast(row.total) else s.homeSeeAllCount(row.total)
                     // On a television "See all" sits on the heading, where it can be seen, but it only
@@ -421,6 +496,26 @@ internal fun HomePane(
                     }
                     // On a television the first row under the carousel keeps the carousel whole
                     // over it, as Home opens, rather than scrolling it half away for focus room.
+                    // This row's tiles, for the remote to be put back into: back from its See all
+                    // page, or from the player.
+                    val tilesFocus = remember { FocusRequester() }
+                    if (!touch) androidx.compose.runtime.DisposableEffect(row.key) {
+                        rowFocus[row.key] = tilesFocus
+                        onDispose { if (rowFocus[row.key] === tilesFocus) rowFocus.remove(row.key) }
+                    }
+                    val rowSpot = if (touch) {
+                        Modifier
+                    } else {
+                        Modifier.onFocusChanged { state ->
+                            if (state.hasFocus) {
+                                focusedSpot[0] = row.key
+                                HomeFocusMemory.spot = row.key
+                            } else if (focusedSpot[0] == row.key) {
+                                focusedSpot[0] = null
+                            }
+                        }
+                    }
+                    val rowTiles = upToSeeAll.focusRequester(tilesFocus)
                     val keepCarousel = if (!touch && carousel && isFirst) {
                         Modifier.onFocusChanged { state ->
                             if (state.hasFocus) scope.launch {
@@ -431,7 +526,7 @@ internal fun HomePane(
                     } else {
                         Modifier
                     }
-                    Column(keepCarousel) {
+                    Column(keepCarousel.then(rowSpot)) {
                         RowHeading(
                             title,
                             start = start,
@@ -447,7 +542,7 @@ internal fun HomePane(
                             return@Column
                         }
                         when (row) {
-                            is HomeRow.Continue -> TileRow(start, end, upToSeeAll) {
+                            is HomeRow.Continue -> TileRow(start, end, rowTiles) {
                                 items(row.records, key = { "r-${it.chatId}_${it.messageId}" }) { record ->
                                     val key = SettingsStore.progressKey(record.chatId, record.messageId)
                                     LaunchedEffect(key) { onArtWanted(record) }
@@ -470,7 +565,7 @@ internal fun HomePane(
                                     }
                                 }
                             }
-                            is HomeRow.WatchLater -> TileRow(start, end, upToSeeAll) {
+                            is HomeRow.WatchLater -> TileRow(start, end, rowTiles) {
                                 items(row.records, key = { "l-${it.key}" }) { record ->
                                     LaunchedEffect(record.key) { onLaterArtWanted(record) }
                                     val item = art[record.key] ?: remember(record) { record.toMediaItem() }
@@ -487,7 +582,7 @@ internal fun HomePane(
                                     )
                                 }
                             }
-                            is HomeRow.NewEpisodes -> TileRow(start, end, upToSeeAll) {
+                            is HomeRow.NewEpisodes -> TileRow(start, end, rowTiles) {
                                 items(row.episodes, key = { "n-${it.item.id}" }) { episode ->
                                     val item = episode.item
                                     val chat = chatTitle(item.chatId)
@@ -509,8 +604,8 @@ internal fun HomePane(
                                     )
                                 }
                             }
-                            is HomeRow.Chat -> ShelfRows(row.entries, watch, touch, isFirst, first, { row.title }, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
-                            is HomeRow.Recent -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
+                            is HomeRow.Chat -> ShelfRows(row.entries, watch, touch, isFirst, first, { row.title }, onPlay, onHoldMedia, start, end, rowTiles) { opened.open(it) }
+                            is HomeRow.Recent -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, rowTiles) { opened.open(it) }
                             is HomeRow.Across -> {
                                 // Read on through Home's chats once the row is scrolled near its
                                 // end: the next tiles land after the last, nothing before it moves.
@@ -521,7 +616,14 @@ internal fun HomePane(
                                     val reading = feed ?: feedOf(row).also { feed = it }
                                     reading?.loadMore()
                                 }
-                                ShelfRows(fed?.entries ?: row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll, paging) { opened.open(it) }
+                                // Back from its See all page, the remote lands on this row again.
+                                if (!touch) LaunchedEffect(returnTo) {
+                                    if (returnTo != row.key) return@LaunchedEffect
+                                    withFrameNanos {}
+                                    runCatching { tilesFocus.requestFocus() }
+                                    returnTo = null
+                                }
+                                ShelfRows(fed?.entries ?: row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, rowTiles, paging) { opened.open(it) }
                             }
                         }
                     }
@@ -562,6 +664,9 @@ internal fun HomePane(
     val firstKey = listed.firstOrNull()?.key
     val firstReady = listed.firstOrNull()?.isLoaded == true
     LaunchedEffect(firstKey, firstReady) {
+        // Back from the player the remote goes back where it was (below), and a row arriving
+        // above afterwards (Continue watching after a first play) does not move it.
+        if (!touch && (HomeFocusMemory.away || (restored[0] && focusedSpot[0] != null))) return@LaunchedEffect
         if (!touch && firstReady && mayTakeFocus()) {
             runCatching { first.requestFocus() }
             // The focused row asks to be brought into view with room round it, which scrolled the
@@ -573,6 +678,69 @@ internal fun HomePane(
         }
     }
 
+    // Back from the player (or anything else that covered the app) the remote goes back to the
+    // carousel's Play or the row it was on. The player is another activity: the shell's view lost
+    // the focus behind it, or was built again from scratch where the system had destroyed it, and
+    // either way the remote came back to the first thing on screen, the top bar's Home tab.
+    // Held for a few frames, so whatever else takes the focus as the shell comes back (the
+    // window's own first focus) is put right.
+    val shellResumed = shellState.isAtLeast(Lifecycle.State.RESUMED)
+    if (!touch) LaunchedEffect(shellResumed, windowFocused, firstReady) {
+        if (!shellResumed || !windowFocused || !firstReady || !HomeFocusMemory.away) return@LaunchedEffect
+        HomeFocusMemory.away = false
+        val spot = HomeFocusMemory.spot ?: return@LaunchedEffect
+        restored[0] = true
+        // The carousel's lazy index is 0; the rows follow it.
+        suspend fun putBack(): Boolean {
+            if (spot == FEATURED_KEY) {
+                val play = tvPlayFocus ?: return false
+                if (!carousel) return false
+                if (listState.firstVisibleItemIndex != 0) listState.scrollToItem(0)
+                return runCatching { play.requestFocus() }.isSuccess
+            }
+            val at = listed.indexOfFirst { it.key == spot }
+            if (at < 0) return false
+            val index = at + if (carousel) 1 else 0
+            if (listState.layoutInfo.visibleItemsInfo.none { it.index == index }) {
+                listState.scrollToItem(index)
+                withFrameNanos { }
+            }
+            val tiles = rowFocus[spot] ?: return false
+            return runCatching { tiles.requestFocus() }.isSuccess
+        }
+        var settled = 0
+        for (frame in 0 until RESTORE_FRAMES) {
+            withFrameNanos { }
+            if (focusedSpot[0] == spot) {
+                if (++settled >= RESTORE_SETTLED_FRAMES) break
+                continue
+            }
+            settled = 0
+            if (!putBack()) break
+        }
+        // The place is gone (the row emptied or the carousel left): the first row, as Home opens.
+        if (focusedSpot[0] == null) runCatching { first.requestFocus() }
+    }
+
+    seeAllRow?.let { row ->
+        AcrossSeeAll(
+            row = row,
+            title = homeRowTitle(row, LocalStrings.current),
+            feed = remember(row.key) { feedOf(row) },
+            watch = watch,
+            start = start,
+            end = end,
+            bottom = bottom,
+            chatTitle = chatTitle,
+            onPlay = onPlay,
+            onHold = onHoldMedia,
+            onOpenSeries = { opened.open(it) },
+            onClose = {
+                returnTo = row.key
+                seeAllKey = null
+            },
+        )
+    }
     opened.series?.let { series ->
         SeriesOpened(
             series = series,
@@ -653,36 +821,152 @@ private fun LazyListScope.entries(
     items(entries, key = { it.key }, contentType = { if (poster) "poster-${it::class.simpleName}" else it::class }) { entry ->
         val focus = if (entry === lead) Modifier.focusRequester(first) else Modifier
         val width = if (poster) posterWidth(touch) else wideWidth(touch)
-        val modifier = Modifier.width(width).then(focus)
-        when (entry) {
-            is ShelfEntry.File -> MediaCard(
-                item = entry.item,
-                watched = watch.point(entry.item),
-                finished = watch.finished(entry.item),
-                onClick = { onPlay(entry.item, chatTitle(entry.item.chatId)) },
-                onLongClick = { onHold(entry.item, chatTitle(entry.item.chatId)) },
-                onFocused = {},
+        ShelfTile(entry, poster, watch, touch, chatTitle, onPlay, onHold, onOpenSeries, Modifier.width(width).then(focus))
+    }
+}
+
+/**
+ * Movies' or Shows' See all on a phone and a television: the row's tiles as a grid, read on
+ * through Home's chats as it nears its end ([com.tmplayer.ui.browse.RowFeed], the same reading
+ * the row itself pages with). Back, or the arrow on a phone, goes back to Home.
+ */
+@Composable
+private fun AcrossSeeAll(
+    row: HomeRow.Across,
+    title: String,
+    feed: com.tmplayer.ui.browse.RowFeed?,
+    watch: SeriesWatch,
+    start: Dp,
+    end: Dp,
+    bottom: Dp,
+    chatTitle: (Long) -> String,
+    onPlay: (MediaItem, String) -> Unit,
+    onHold: (MediaItem, String) -> Unit,
+    onOpenSeries: (Series) -> Unit,
+    onClose: () -> Unit,
+) {
+    val s = LocalStrings.current
+    val touch = isTouch()
+    com.tmplayer.ui.nav.BackHandler { onClose() }
+    val fed = feed?.state?.collectAsState()?.value
+    LaunchedEffect(feed, row) { feed?.reshape(row) }
+    val entries = fed?.entries ?: row.entries
+    val poster = remember(entries) { SeriesShelf.posterKeys(entries).isNotEmpty() }
+    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    if (feed != null) {
+        com.tmplayer.ui.components.LoadMoreAhead(grid, enabled = fed == null || fed.wants(scrolling = grid.isScrollInProgress)) { feed.loadMore() }
+    }
+    // The remote lands on the first tile as the page opens.
+    val firstTile = remember { FocusRequester() }
+    if (!touch) LaunchedEffect(Unit) {
+        withFrameNanos {}
+        runCatching { firstTile.requestFocus() }
+    }
+    val gap = if (touch) TILE_GAP_TOUCH else TILE_GAP_TV
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Tone.background)
+            // Taps and the remote stop here: nothing reaches Home under the page.
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+            .then(if (touch) Modifier.statusBarsPadding() else Modifier.padding(top = TV_BAR_HEIGHT)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = if (touch) 4.dp else start, end = end).heightIn(min = 56.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (touch) {
+                androidx.compose.material3.IconButton(onClick = onClose) {
+                    androidx.compose.material3.Icon(TmIcons.ArrowBack, contentDescription = s.commonBack, tint = Tone.text)
+                }
+                M3Text(
+                    title,
+                    style = M3MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = Tone.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 4.dp),
+                )
+            } else {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = Tone.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(if (poster) posterWidth(touch) else wideWidth(touch)),
+            state = grid,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = start,
+                end = end,
+                top = if (touch) 4.dp else Tv.FocusClearance,
+                bottom = bottom + if (touch) 24.dp else Tv.FocusClearance,
+            ),
+            horizontalArrangement = Arrangement.spacedBy(gap),
+            verticalArrangement = Arrangement.spacedBy(if (touch) 16.dp else gap + Tv.FocusClearance),
+        ) {
+            items(entries.size, key = { entries[it].key }) { index ->
+                val entry = entries[index]
+                val focus = if (index == 0) Modifier.focusRequester(firstTile) else Modifier
+                ShelfTile(entry, poster, watch, touch, chatTitle, onPlay, onHold, onOpenSeries, Modifier.fillMaxWidth().then(focus))
+            }
+            if (fed != null && (fed.loading || fed.failure != null)) {
+                item(key = "more-foot", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                    com.tmplayer.ui.components.PageFoot(fed.loading, fed.failure, onRetry = { feed.loadMore() }) {
+                        PlaceholderTile(if (poster) posterWidth(touch) else wideWidth(touch), touch, poster)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** One of a shelf's tiles: a video's card, or a show's that opens its page. */
+@Composable
+private fun ShelfTile(
+    entry: ShelfEntry,
+    poster: Boolean,
+    watch: SeriesWatch,
+    touch: Boolean,
+    chatTitle: (Long) -> String,
+    onPlay: (MediaItem, String) -> Unit,
+    onHold: (MediaItem, String) -> Unit,
+    onOpenSeries: (Series) -> Unit,
+    modifier: Modifier,
+) {
+    when (entry) {
+        is ShelfEntry.File -> MediaCard(
+            item = entry.item,
+            watched = watch.point(entry.item),
+            finished = watch.finished(entry.item),
+            onClick = { onPlay(entry.item, chatTitle(entry.item.chatId)) },
+            onLongClick = { onHold(entry.item, chatTitle(entry.item.chatId)) },
+            onFocused = {},
+            dense = touch,
+            poster = poster,
+            // Its first bytes asked for while the card is in focus or under the finger.
+            modifier = modifier,
+        )
+        is ShelfEntry.Show -> {
+            val progress = remember(entry.series, watch) { watch.progress(entry.series) }
+            // A show's card warms the episode its page would play.
+            val next = remember(progress, watch) {
+                (progress.next ?: entry.series.episodes.firstOrNull())?.let { watch.pick(it, progress) }
+            }
+            SeriesCard(
+                series = entry.series,
+                progress = progress,
+                fresh = remember(entry.series, watch) { watch.newEpisodes(entry.series) > 0 },
+                onClick = { onOpenSeries(entry.series) },
                 dense = touch,
                 poster = poster,
-                // Its first bytes asked for while the card is in focus or under the finger.
-                modifier = modifier,
+                modifier = modifier.warmUpOnIntent(next),
             )
-            is ShelfEntry.Show -> {
-                val progress = remember(entry.series, watch) { watch.progress(entry.series) }
-                // A show's card warms the episode its page would play.
-                val next = remember(progress, watch) {
-                    (progress.next ?: entry.series.episodes.firstOrNull())?.let { watch.pick(it, progress) }
-                }
-                    SeriesCard(
-                        series = entry.series,
-                        progress = progress,
-                        fresh = remember(entry.series, watch) { watch.newEpisodes(entry.series) > 0 },
-                        onClick = { onOpenSeries(entry.series) },
-                        dense = touch,
-                        poster = poster,
-                        modifier = modifier.warmUpOnIntent(next),
-                    )
-            }
         }
     }
 }
@@ -696,16 +980,50 @@ private fun TileRow(
     row: androidx.compose.foundation.lazy.LazyListState = com.tmplayer.ui.components.rememberAheadListState(),
     content: LazyListScope.() -> Unit,
 ) {
-    com.tmplayer.ui.components.KeepAtStart(row)
+    // The remote's tile, by index, on a television (see below); -1 until the row has had focus.
+    val at = remember { intArrayOf(-1) }
+    com.tmplayer.ui.components.KeepAtStart(row) { at[0] > 0 }
     if (!isTouch()) {
         // On a television the tiles fade out over the margins rather than being cut off at the
         // rail, and the tile the remote moves to stays inside them.
-        // The remote's tile stands at one place, the start of the row, and the row slides under it.
-        AnchoredAtStart(start) {
+        // The remote's tile stands at one place, the start of the row, and the row moves under it
+        // in one step: Left and Right move the focus here and the row jumps to the new tile.
+        // Slid there, each press drew about nine frames, and a TV stick's GPU took some 40 ms over
+        // each, so a press held the screen for a third of a second (measured on a Mi TV, 1 GB).
+        val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+        val rtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
+        val scope = rememberCoroutineScope()
+        val inside = remember { booleanArrayOf(false) }
+        val stepping = Modifier
+            .onFocusChanged { state ->
+                // Coming back into the row lands on the tile it was left on: put that tile back
+                // at the start, in case the row moved meanwhile (new videos at its front).
+                if (state.hasFocus && !inside[0]) {
+                    if (at[0] < 0) at[0] = row.firstVisibleItemIndex
+                    else if (row.firstVisibleItemIndex != at[0]) scope.launch { row.scrollToItem(at[0].coerceAtMost((row.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))) }
+                }
+                inside[0] = state.hasFocus
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val right = event.key == Key.DirectionRight
+                if (!right && event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
+                val forward = right != rtl
+                if (at[0] < 0) at[0] = row.firstVisibleItemIndex
+                val target = at[0] + if (forward) 1 else -1
+                if (target < 0 || target >= row.layoutInfo.totalItemsCount) return@onPreviewKeyEvent false
+                if (!focusManager.moveFocus(if (right) androidx.compose.ui.focus.FocusDirection.Right else androidx.compose.ui.focus.FocusDirection.Left)) {
+                    return@onPreviewKeyEvent false
+                }
+                at[0] = target
+                scope.launch { row.scrollToItem(target) }
+                true
+            }
+        AnchoredAtStart(start, instant = true) {
             LazyRow(
                 state = row,
                 // Coming back down into a row lands on the tile it was left on, not whichever is nearest.
-                modifier = modifier.fillMaxWidth().focusRestorer().edgeFade(row, start, end),
+                modifier = modifier.then(stepping).fillMaxWidth().focusRestorer().edgeFade(row, start, end, ground = Tone.background),
                 // Room above and below for a focused tile to grow into without being clipped by the row.
                 contentPadding = PaddingValues(start = start, end = end, top = Tv.FocusClearance, bottom = Tv.FocusClearance),
                 horizontalArrangement = Arrangement.spacedBy(TILE_GAP_TV),
@@ -793,10 +1111,9 @@ private fun RowHeading(
             )
         }
         if (seeAll != null && !touch) {
-            // The count beside the words, as the desktop has it, so the row says how much more
-            // there is before anyone presses anything.
+            // The words alone, no count (user, 2026-10-22: "just a see all button").
             SeeAllLink(
-                label = "${s.homeSeeAll}  ·  $count",
+                label = s.homeSeeAll,
                 onClick = seeAll,
                 modifier = Modifier
                     .focusProperties { canFocus = armed }
@@ -864,11 +1181,18 @@ private fun posterWidth(touch: Boolean): Dp = POSTER_WIDTH
 
 private val POSTER_WIDTH = 126.dp
 
-/** Any other video's 16:9 card. A television's fits [Tv.FocusClearance] when it grows. */
-private fun wideWidth(touch: Boolean): Dp = if (touch) 200.dp else 208.dp
+/**
+ * Any other video's 16:9 card. A television's fits [Tv.FocusClearance] when it grows, and is about
+ * the size Netflix and Google TV give a landscape card: five or so across rather than four
+ * (user, 2026-10-23: the cards made everything look big and showed too little).
+ */
+private fun wideWidth(touch: Boolean): Dp = if (touch) 200.dp else 176.dp
 
-/** A Continue watching card, a little wider, as it carries its name on the art. */
-private fun continueWidth(touch: Boolean): Dp = if (touch) 247.dp else 256.dp
+/**
+ * A Continue watching card, a little wider, as it carries its name on the art. On a television four
+ * or so across, so the first row under the carousel fits whole on the first screen.
+ */
+private fun continueWidth(touch: Boolean): Dp = if (touch) 247.dp else 208.dp
 
 private const val PLACEHOLDER_TILES = 5
 
@@ -940,11 +1264,13 @@ private const val RANK_WAIT_MS = 1_200L
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun AnchoredAtStart(start: Dp, content: @Composable () -> Unit) {
+private fun AnchoredAtStart(start: Dp, instant: Boolean = false, content: @Composable () -> Unit) {
     val startPx = with(LocalDensity.current) { start.toPx() }
-    val spec = remember(startPx) {
+    val spec = remember(startPx, instant) {
         object : androidx.compose.foundation.gestures.BringIntoViewSpec {
-            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = offset - startPx
+            // [instant]: the row scrolls itself, at once, so focus asks for no slide of its own.
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+                if (instant) 0f else offset - startPx
         }
     }
     CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides spec, content = content)
@@ -953,6 +1279,9 @@ private fun AnchoredAtStart(start: Dp, content: @Composable () -> Unit) {
 
 /** How long Home without a carousel waits for one to turn up before the cold start's loader lifts. */
 private const val NO_CAROUSEL_SETTLE_MS = 1_500L
+
+/** The same on a television, where getting to the rows fast matters more than a jump the focus hides. */
+private const val NO_CAROUSEL_SETTLE_TV_MS = 300L
 
 
 /**
@@ -1031,6 +1360,29 @@ private fun calmVertical(barPx: Float) = object : androidx.compose.foundation.ge
         }
     }
 }
+
+/**
+ * Where the remote stood on the television's Home: the carousel ([FEATURED_KEY]) or a row's key.
+ * For the process rather than the screen, since the system may destroy the shell behind the
+ * player and build Home again when the viewer comes back. [away] is set as the player (or
+ * anything else) covers the app with the remote on Home, and cleared once it has been put back.
+ */
+internal object HomeFocusMemory {
+    @Volatile var spot: String? = null
+    @Volatile var away: Boolean = false
+
+    /** The remote left Home on purpose: nothing to put back. */
+    fun forget() {
+        spot = null
+        away = false
+    }
+}
+
+/** How many frames after coming back the remote's place on Home is held against other claims. */
+private const val RESTORE_FRAMES = 12
+
+/** Frames in a row the remote has to stay put for its place to count as restored. */
+private const val RESTORE_SETTLED_FRAMES = 3
 
 /** The list key of the name over Home's rows when there is no carousel. */
 private const val BRAND_KEY = "brand"

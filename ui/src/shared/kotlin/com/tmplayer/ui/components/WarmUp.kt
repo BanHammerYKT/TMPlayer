@@ -20,9 +20,10 @@ import kotlinx.coroutines.delay
  * Tells [PlaybackWarmup] that [item] is about to be played: after [PlaybackWarmup.DWELL_MS] of
  * focus (a television's remote, a keyboard) or of the pointer resting on it (the desktop), and at
  * once when a finger or a button comes down on it, before the press is even a click. Nothing is
- * consumed, so the card's own click, long press and focus handling are untouched. Null does nothing.
+ * consumed, so the card's own click, long press and focus handling are untouched. Null does nothing,
+ * and so does a device whose warmer ignores these hints ([PlaybackWarmup.onIntent]).
  */
-fun Modifier.warmUpOnIntent(item: MediaItem?): Modifier = if (item == null) this else composed {
+fun Modifier.warmUpOnIntent(item: MediaItem?): Modifier = if (item == null || !PlaybackWarmup.onIntent) this else composed {
     val current by rememberUpdatedState(item)
     var dwelling by remember { mutableStateOf(false) }
     LaunchedEffect(dwelling) {
