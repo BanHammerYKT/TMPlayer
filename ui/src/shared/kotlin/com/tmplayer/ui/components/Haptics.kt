@@ -102,6 +102,24 @@ object Haptics {
      * this is not a television, and the device has a vibrator. The system's own "Touch feedback"
      * setting is honoured on top of this by the platform, which drops the buzz when it is off.
      */
+    /** VibrationEffect's predefined ids, here as numbers so the rules stay testable off Android. */
+    const val EFFECT_CLICK = 0
+    const val EFFECT_TICK = 2
+    const val EFFECT_HEAVY_CLICK = 5
+
+    /**
+     * The vibrator's predefined effect for [event] (API 29 and up), or null for nothing: a press,
+     * a confirm and a switch turned on click, the lighter moments tick, and a hold or a refusal
+     * is the heavy click, so a refusal never feels like a success.
+     */
+    fun predefined(event: Haptic): Int? = when (event) {
+        Haptic.Tap, Haptic.Confirm, Haptic.ToggleOn -> EFFECT_CLICK
+        Haptic.KeyTap, Haptic.Tick, Haptic.FrequentTick, Haptic.ToggleOff, Haptic.GestureStart -> EFFECT_TICK
+        Haptic.LongPress, Haptic.Reject -> EFFECT_HEAVY_CLICK
+        // Letting go after a drag: nothing, as before R; a second buzz on release is noise.
+        Haptic.GestureEnd -> null
+    }
+
     fun allowed(enabled: Boolean, television: Boolean, hasVibrator: Boolean): Boolean =
         enabled && !television && hasVibrator
 }

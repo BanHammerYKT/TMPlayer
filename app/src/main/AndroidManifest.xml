@@ -12,6 +12,9 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!-- Taps, ticks and holds felt in the hand: played on the vibrator itself, since some phones
+         (Xiaomi's HyperOS) drop a view's haptic feedback without a word. Granted at install. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />

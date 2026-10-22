@@ -43,9 +43,7 @@ import java.io.File
  * the strip. At 1080p and 720p (both 960 by 540 dp), a 720p stick at 1:1, and right to left.
  * Drawn to PNGs under `build/device-test/review/` too.
  */
-@RunWith(RobolectricTestRunner::class)
-@GraphicsMode(GraphicsMode.Mode.NATIVE)
-class TvSearchRenderTest {
+abstract class TvSearchWalk {
 
     @After
     fun tearDown() {
@@ -162,23 +160,56 @@ class TvSearchRenderTest {
 
     private fun idle() = repeat(20) { shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100)) }
 
-    @Test
-    @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-television-night-xhdpi")
-    fun television1080() = run("tv-search-1080.png")
+    protected fun run(out: String) = walk(out)
 
-    @Test
-    @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-television-night-tvdpi")
-    fun television720() = run("tv-search-720.png")
+}
 
+/**
+ * One more screen of the TV Search walk ([TvSearchWalk]), in a class of its own so it runs in a fresh process: a
+ * second remote walk in the same process found the frames no longer coming and never reached the
+ * posters (the same render test frame stall CP101 describes).
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class TvSearchTelevision720AtOneToOneRenderTest : TvSearchWalk() {
     @Test
     @Config(sdk = [35], qualifiers = "w1280dp-h720dp-land-television-night-mdpi")
     fun television720AtOneToOne() = run("tv-search-720-mdpi.png")
+}
 
+/**
+ * One more screen of the TV Search walk ([TvSearchWalk]), in a class of its own so it runs in a fresh process: a
+ * second remote walk in the same process found the frames no longer coming and never reached the
+ * posters (the same render test frame stall CP101 describes).
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class TvSearchTelevisionRtlRenderTest : TvSearchWalk() {
     @Test
     @Config(sdk = [35], qualifiers = "ar-ldrtl-w960dp-h540dp-land-television-night-xhdpi")
     fun televisionRtl() = run("tv-search-rtl.png")
+}
 
-    private fun run(out: String) = walk(out)
+/**
+ * One more screen of the TV Search walk ([TvSearchWalk]), in a class of its own so it runs in a fresh process: a
+ * second remote walk in the same process found the frames no longer coming and never reached the
+ * posters (the same render test frame stall CP101 describes).
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class TvSearchTelevision1080RenderTest : TvSearchWalk() {
+    @Test
+    @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-television-night-xhdpi")
+    fun television1080() = run("tv-search-1080.png")
+}
+
+/** The TV Search walk at 720p, and the rule for how far a poster scrolls in. */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class TvSearchRenderTest : TvSearchWalk() {
+    @Test
+    @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-television-night-tvdpi")
+    fun television720() = run("tv-search-720.png")
 
     @Test
     fun `a poster comes in just far enough to stand whole, and one in view stays`() {
