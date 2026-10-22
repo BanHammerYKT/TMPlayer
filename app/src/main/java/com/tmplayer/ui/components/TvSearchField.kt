@@ -132,9 +132,10 @@ fun TvSearchField(
         Spacer(Modifier.width(14.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
             if (editing) {
+                val held = com.tmplayer.ui.components.rememberHeldText(value)
                 BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
+                    value = held.value,
+                    onValueChange = { held.edit(it, onValueChange) },
                     singleLine = true,
                     // BasicTextField does not read LocalContentColor: without an explicit colour
                     // it paints black, which is invisible on this background.

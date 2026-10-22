@@ -43,6 +43,9 @@ import java.io.File
  * the strip. At 1080p and 720p (both 960 by 540 dp), a 720p stick at 1:1, and right to left.
  * Drawn to PNGs under `build/device-test/review/` too.
  */
+/** The details strip under the TV list, in dp. */
+private const val STRIP_DP = 96f
+
 abstract class TvSearchWalk {
 
     @After
@@ -221,9 +224,5 @@ class TvSearchRenderTest : TvSearchWalk() {
         assertEquals(-66f, WholeInView.distance(offset = -50f, size = 200f, container = 330f, clearance = 16f))
         // Taller than the list: shown from its top.
         assertEquals(84f, WholeInView.distance(offset = 100f, size = 400f, container = 330f, clearance = 16f))
-    }
-
-    private companion object {
-        const val STRIP_DP = 96f
     }
 }

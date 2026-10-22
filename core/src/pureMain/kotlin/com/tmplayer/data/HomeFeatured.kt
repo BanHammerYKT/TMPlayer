@@ -28,7 +28,9 @@ data class FeaturedPick(val entry: ShelfEntry) {
  *
  * - Different means different: copies of one film (a 720p and a 1080p, in one chat or two) are one
  *   page, as [SeriesShelf.sameVideoKey] keys them, and a show is one page however many of its
- *   episodes arrived, whether they came folded into a show or as a lone episode.
+ *   episodes arrived, whether they came folded into a show or as a lone episode. Copies the
+ *   names do not tie together are one page too when they share an online match or a film's name
+ *   and year ([SameTitle]), the best copy leading.
  * - Never an extra: a trailer, a teaser or a sample is not something to put across the top of Home.
  * - Only films and shows. A clip, a recording or a lecture never makes a page, even when that
  *   leaves the carousel short or empty: across the top of Home it reads as a featured title, and
@@ -44,17 +46,32 @@ object HomeFeatured {
     const val LIMIT = 5
 
     /** The newest [limit] different films and shows in [entries] (see [HomeFeatured]). */
-    fun pick(entries: List<ShelfEntry>, limit: Int = LIMIT): List<FeaturedPick> {
+    fun pick(
+        entries: List<ShelfEntry>,
+        limit: Int = LIMIT,
+        online: (MediaItem) -> String? = SameTitle::onlineKey,
+    ): List<FeaturedPick> {
         if (limit <= 0) return emptyList()
         val seen = HashSet<String>()
-        return entries
+        val newestFirst = entries.sortedWith(
+            compareByDescending<ShelfEntry> { FeaturedPick(it).date }.thenByDescending { FeaturedPick(it).item.messageId },
+        )
+        // Copies the shelf did not fold (another chat, another name, the same online match) as one
+        // page, led by the best copy, where the newest of them stood.
+        return SameTitle.dedupe(newestFirst, online)
             .map(::FeaturedPick)
-            .sortedWith(compareByDescending<FeaturedPick> { it.date }.thenByDescending { it.item.messageId })
-            .filter { pick ->
-                val (key, isTitled) = identity(pick) ?: return@filter false
-                isTitled && seen.add(key)
-            }
+            .filter { pick -> fresh(pick, seen, online) }
             .take(limit)
+    }
+
+    /** Whether [pick] is a film or show not yet in [seen], by any key it goes by; its keys are added when it is. */
+    private fun fresh(pick: FeaturedPick, seen: MutableSet<String>, online: (MediaItem) -> String?): Boolean {
+        val (key, isTitled) = identity(pick) ?: return false
+        if (!isTitled) return false
+        val keys = listOf(key) + SameTitle.keysOf(pick.entry, online)
+        if (keys.any { it in seen }) return false
+        seen += keys
+        return true
     }
 
     /**
@@ -72,13 +89,13 @@ object HomeFeatured {
         limit: Int = LIMIT,
         resumeShare: Int = RESUME_SHARE,
         online: (FeaturedPick) -> Boolean = { false },
+        matched: (MediaItem) -> String? = SameTitle::onlineKey,
     ): List<FeaturedPick> {
         if (limit <= 0) return emptyList()
         val seen = HashSet<String>()
         fun usable(pick: FeaturedPick): Boolean {
             if (!hasArt(pick.item) && !online(pick)) return false
-            val (key, isTitled) = identity(pick) ?: return false
-            return isTitled && seen.add(key)
+            return fresh(pick, seen, matched)
         }
         val fresh = ArrayDeque(recent)
         val going = ArrayDeque(resume.map { FeaturedPick(ShelfEntry.File(it)) })

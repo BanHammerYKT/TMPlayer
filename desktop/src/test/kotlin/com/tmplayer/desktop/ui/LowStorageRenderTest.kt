@@ -129,7 +129,7 @@ class LowStorageRenderTest {
 
     @Test
     fun `the Settings switch says what each state costs`() = runComposeUiTest {
-        setContent { TmMaterialTheme(dark = true) { Box(Modifier.size(1280.dp, 3200.dp)) { SettingsPage(shell, "2.0.0", initialCategory = SettingsCategory.Playback) } } }
+        setContent { TmMaterialTheme(dark = true) { Box(Modifier.size(1280.dp, 3200.dp)) { SettingsPage(shell, "2.0.0", initialCategory = SettingsCategory.Storage) } } }
         waitForIdle()
         onNodeWithText(L.settingsLowStorage).performScrollTo().assertExists()
         onNodeWithText(L.settingsLowStorageOff).assertExists()

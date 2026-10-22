@@ -124,6 +124,12 @@ interface SearchIdentity {
     /** The copies of one video, the one to lead with first. */
     fun copyOrder(copies: List<MediaItem>): List<MediaItem>
 
+    /**
+     * The film or show [item] was matched to online, when that is already known ([SameTitle.onlineKey]):
+     * two results with one match are one card, whatever their file names say.
+     */
+    fun onlineKey(item: MediaItem): String? = SameTitle.onlineKey(item)
+
     companion object {
         val Default: SearchIdentity = object : SearchIdentity {
             override fun sameVideo(a: MediaItem, b: MediaItem): Boolean {
@@ -148,7 +154,8 @@ interface SearchIdentity {
 
 /**
  * One result card: every copy of one video the search found, across all the chats it was posted
- * in, or one show's episodes in one chat.
+ * in, or one show's episodes across every chat they are in (user, 2026-10-22: a show is listed
+ * once, never once per chat).
  *
  * [copies] are in [GlobalSearch.copyOrder], so the first is the one a tap plays and the card shows.
  */
@@ -156,7 +163,7 @@ interface SearchIdentity {
 data class ResultGroup(
     val key: String,
     val copies: List<MediaItem>,
-    /** The show's name, for a group of episodes of one show in one chat; null for a video. */
+    /** The show's name, for a group of episodes of one show; null for a video. */
     val show: String? = null,
     /** A trailer, a sample or a short clip of something longer: listed, never folded into the video. */
     val extra: Boolean = false,
@@ -298,41 +305,92 @@ object GlobalSearch {
         val fresh = page.filter { seen.add(it.id) }
         if (fresh.isEmpty()) return existing
 
-        class Building(val key: String, val copies: MutableList<MediaItem>, val show: String?, val extra: Boolean, val before: Int)
-        val building = existing.map { Building(it.key, it.copies.toMutableList(), it.show, it.extra, it.copies.size) }.toMutableList()
+        class Building(val key: String, val copies: MutableList<MediaItem>, val show: String?, val extra: Boolean, val old: ResultGroup?)
+        val building = existing.map { Building(it.key, it.copies.toMutableList(), it.show, it.extra, it) }.toMutableList()
         val byKey = building.associateByTo(HashMap()) { it.key }
         val buckets = HashMap<String, MutableList<Building>>()
+        // One film or show by its online match, and one film by its name and year ([SameTitle]):
+        // what the file names alone do not tie together.
+        val byOnline = HashMap<String, Building>()
+        val byFilm = HashMap<String, Building>()
         fun bucketOf(item: MediaItem, extra: Boolean) = identity.bucket(item)?.let { (if (extra) "x|" else "v|") + it }
+        fun note(group: Building, item: MediaItem) {
+            if (group.extra) return
+            // A show's card is where its match leads, ahead of a lone file matched to it.
+            val online = identity.onlineKey(item)
+            if (online != null) {
+                if (group.show != null) byOnline[online] = group else byOnline.getOrPut(online) { group }
+            }
+            val film = if (group.show == null) SameTitle.filmKey(item) else null
+            if (film != null) byFilm.getOrPut(film) { group }
+        }
         building.filter { it.show == null }.forEach { group -> bucketOf(group.copies.first(), group.extra)?.let { buckets.getOrPut(it) { mutableListOf() } += group } }
+        building.forEach { group -> group.copies.forEach { note(group, it) } }
 
-        for (item in fresh) {
+        /** The show [item] belongs to without being an episode of it: a season pack, or a file matched to it online. */
+        fun showFor(item: MediaItem): Building? {
+            identity.onlineKey(item)?.let { key -> byOnline[key]?.takeIf { it.show != null }?.let { return it } }
+            val name = SeriesShelf.episodeOf(item)
+            if (!name.isSeries && name.year != null) return null
+            val title = SeriesShelf.keyOf(name.title).ifEmpty { return null }
+            return byKey["show:$title"]
+        }
+
+        // Episodes first, so a season pack or a file matched to the show finds the show's card.
+        val (episodes, others) = fresh.partition { !identity.isExtra(it) && showOf(it) != null }
+        for (item in episodes + others) {
             val extra = identity.isExtra(item)
             val show = if (extra) null else showOf(item)
             if (show != null) {
-                val key = "show:${item.chatId}:${SeriesShelf.keyOf(show)}"
-                val group = byKey.getOrPut(key) { Building(key, mutableListOf(), show, false, 0).also { building += it } }
+                // One card per show, whichever chats its episodes are in.
+                val key = "show:${SeriesShelf.keyOf(show)}"
+                val group = byKey.getOrPut(key) { Building(key, mutableListOf(), show, false, null).also { building += it } }
                 group.copies += item
+                note(group, item)
                 continue
+            }
+            if (!extra) {
+                val owner = showFor(item)
+                    ?: identity.onlineKey(item)?.let { byOnline[it] }
+                    ?: SameTitle.filmKey(item)?.let { byFilm[it] }?.takeIf { group -> group.copies.any { SameTitle.sameLength(it, item) } }
+                if (owner != null) {
+                    owner.copies += item
+                    note(owner, item)
+                    continue
+                }
             }
             val bucket = bucketOf(item, extra)
             val match = bucket?.let { buckets[it] }?.firstOrNull { group -> group.copies.any { identity.sameVideo(it, item) } }
             if (match != null) {
                 match.copies += item
+                note(match, item)
             } else {
                 val key = (if (extra) EXTRA else "video:") + item.id
-                val group = Building(key, mutableListOf(item), null, extra, 0)
+                val group = Building(key, mutableListOf(item), null, extra, null)
                 building += group
                 byKey[key] = group
                 if (bucket != null) buckets.getOrPut(bucket) { mutableListOf() } += group
+                note(group, item)
             }
         }
 
-        val built = building.mapIndexed { index, group ->
-            val old = existing.getOrNull(index)
-            if (old != null && group.copies.size == group.before) old else ResultGroup(group.key, identity.copyOrder(group.copies), group.show, group.extra)
+        // A video card from an earlier page that turns out to be the show's (matched online, or a
+        // season pack under its name) joins the show's card now that there is one.
+        val gone = HashSet<Building>()
+        for (group in building) {
+            if (group.show != null || group.extra) continue
+            val owner = group.copies.firstNotNullOfOrNull { showFor(it) } ?: continue
+            owner.copies += group.copies
+            gone += group
         }
-        val kept = built.take(existing.size)
-        val appended = built.drop(existing.size)
+        building.removeAll(gone)
+
+        val built = building.map { group ->
+            val old = group.old
+            if (old != null && group.copies.size == old.copies.size) old else ResultGroup(group.key, identity.copyOrder(group.copies), group.show, group.extra)
+        }
+        val kept = built.filterIndexed { index, _ -> building[index].old != null }
+        val appended = built.filterIndexed { index, _ -> building[index].old == null }
         val all = if (sort == SearchSort.BestMatch) kept + rank(appended, query) else order(kept + appended, query, sort)
         return all.take(MAX_GROUPS)
     }

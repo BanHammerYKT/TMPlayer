@@ -693,6 +693,21 @@ class MediaListViewModel(
     private var sponsoredJob: Job? = null
     private var recordJob: Job? = null
 
+    /** A search typed and waiting for the typing to rest: see [type]. */
+    private var typeJob: Job? = null
+
+    /** Set by [load] when it asked Telegram rather than drawing a kept listing. */
+    private var askedTelegram = false
+
+    private val _searching = MutableStateFlow(false)
+
+    /**
+     * A search of this chat is on its way while the listing from before stays up, for a small
+     * spinner in the search field. Not set while the typing settles ([type]), nor for a listing
+     * drawn from what was kept, so it never spins without a question asked.
+     */
+    val searching: StateFlow<Boolean> = _searching.asStateFlow()
+
     /**
      * Set by [showHidden]: the viewer asked to see what the size limits hid, for this chat and for
      * as long as it stays open. The limits in Settings are not touched.
@@ -926,12 +941,47 @@ class MediaListViewModel(
         return split.kept
     }
 
-    /** Re-runs the listing against [text]; blank means "everything in this chat". */
+    /**
+     * The search field changed: [search] once the typing has rested for [SearchSettle.MS], the
+     * last text only. Cleared, it lists the chat again at once. One letter is not asked for while
+     * typing (it matches half the chat); the search key still asks for it.
+     */
+    fun type(text: String) {
+        typeJob?.cancel()
+        val clean = text.trim()
+        if (clean.isEmpty()) {
+            search("")
+            return
+        }
+        if (clean == query || !com.tmplayer.data.GlobalSearch.searchable(clean)) return
+        typeJob = viewModelScope.launch {
+            delay(com.tmplayer.data.SearchSettle.MS)
+            search(clean)
+        }
+    }
+
+    /**
+     * Re-runs the listing against [text] at once (the search key, a recent search, voice); blank
+     * means "everything in this chat". The same words as now are not asked again. What is listed
+     * stays up until the answer replaces it, so the grid never flashes to a skeleton between
+     * searches.
+     */
     fun search(text: String) {
-        if (text == query) return
-        query = text
+        typeJob?.cancel()
+        val clean = text.trim()
+        if (clean == query) return
+        query = clean
         recordJob?.cancel()
-        load(preserveContent = false)
+        _searching.value = false
+        askedTelegram = false
+        // A failure keeps the old listing only when it is the same listing: a search's own
+        // failure says so, rather than leaving the last words' results under the new ones.
+        load(preserveContent = true, keepOnFailure = false)
+        val job = pageJob
+        if (askedTelegram && job != null && job.isActive && _state.value is UiState.Content) {
+            _searching.value = true
+            job.invokeOnCompletion { if (pageJob === job) _searching.value = false }
+        }
     }
 
     /** The "Show hidden videos" beside "N videos hidden by the size limits", and All sizes in the menu. */
@@ -996,7 +1046,7 @@ class MediaListViewModel(
      * it is older than [PageQueries.GRID_STALE_MS] (stale while revalidate): no skeleton, and the
      * pages scrolled through last time are all there.
      */
-    private fun load(preserveContent: Boolean, force: Boolean = false) {
+    private fun load(preserveContent: Boolean, force: Boolean = false, keepOnFailure: Boolean = true) {
         _topics.value?.let { bar -> if (bar.selected != topicId) _topics.value = bar.copy(selected = topicId) }
         val key = gridKey()
         val kept = if (force) null else cache.peek<ChatGrid>(key, PageQueries.GRID_STALE_MS)
@@ -1006,6 +1056,7 @@ class MediaListViewModel(
             showKept(key, kept.data, revalidate = kept.stale)
             return
         }
+        askedTelegram = true
         val previous = if (preserveContent) (_state.value as? UiState.Content)?.value else null
         val previousCursors = cursors
         cursors = MediaCursors()
@@ -1064,7 +1115,7 @@ class MediaListViewModel(
                 .onFailure {
                     if (it is CancellationException) throw it
                     if (session.isCurrent()) {
-                        if (previous != null) {
+                        if (previous != null && keepOnFailure) {
                             cursors = previousCursors
                             _state.value = UiState.Content(previous)
                         } else {

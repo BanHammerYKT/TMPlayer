@@ -71,10 +71,13 @@ fun PaneField(
     /** False while the field is not ready to be typed into: the sign in still finding the country. */
     enabled: Boolean = true,
 ) {
+    // The text and caret held here, so a number cut to digits or a code cut to its length keeps
+    // the caret where the typing was (HeldText).
+    val held = com.tmplayer.ui.components.rememberHeldText(value)
     if (isTouch()) {
         OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
+            value = held.value,
+            onValueChange = { held.edit(it, onValueChange) },
             enabled = enabled,
             singleLine = true,
             label = { M3Text(label) },
@@ -109,8 +112,8 @@ fun PaneField(
                 Text(prefix, style = MaterialTheme.typography.titleLarge, color = ink)
             }
             BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
+                value = held.value,
+                onValueChange = { held.edit(it, onValueChange) },
                 enabled = enabled,
                 singleLine = true,
                 textStyle = MaterialTheme.typography.titleLarge.copy(color = ink),

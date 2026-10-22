@@ -230,9 +230,10 @@ fun SearchField(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(TmIcons.Search, contentDescription = null, tint = Tone.muted, modifier = Modifier.size(18.dp))
+        val held = com.tmplayer.ui.components.rememberHeldText(query)
         BasicTextField(
-            value = query,
-            onValueChange = onQuery,
+            value = held.value,
+            onValueChange = { held.edit(it, onQuery) },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium.copy(color = Tone.text),
             cursorBrush = SolidColor(Tone.accent),

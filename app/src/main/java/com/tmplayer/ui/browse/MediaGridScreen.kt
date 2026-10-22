@@ -372,6 +372,10 @@ fun MediaGridScreen(
             viewModel.search(query)
         }
     }
+    // Typing searches the chat once it rests (MediaListViewModel.type); the search key, a recent
+    // search, voice and Clear go through submit, at once.
+    LaunchedEffect(query) { viewModel.type(query) }
+    val chatSearching by viewModel.searching.collectAsStateWithLifecycle()
     // A phone's Sort is a popover over the chat's bar, drawn by TouchMediaScaffold; a remote's is this panel.
     if (sorting && !isTouch()) {
         VideoSortSheet(menu, onDismiss = { sorting = false })
@@ -1104,6 +1108,7 @@ fun MediaGridScreen(
             query = query,
             onQuery = { query = it },
             onSubmit = submit,
+            searchBusy = chatSearching,
             onBack = onBack,
             onToggleFavorite = onToggleFavorite,
             layout = layout,
@@ -1243,6 +1248,8 @@ internal fun TouchMediaScaffold(
     query: String,
     onQuery: (String) -> Unit,
     onSubmit: () -> Unit,
+    /** A search of the chat is on its way while the old listing stays up: a spinner in the field. */
+    searchBusy: Boolean = false,
     onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
     layout: CardLayout,
@@ -1395,7 +1402,10 @@ internal fun TouchMediaScaffold(
                     FloatingBarIcon(TmIcons.ArrowBack, s.browseCloseSearch, closeSearch)
                     MediaSearchField(
                         query = query,
-                        onQueryChange = { onQuery(it); onSubmit() },
+                        // Only the text: the search follows once the typing rests, not per letter.
+                        onQueryChange = onQuery,
+                        onSubmit = onSubmit,
+                        busy = searchBusy,
                         onVoiceSearch = startVoice,
                         modifier = Modifier.focusRequester(field),
                         rowModifier = Modifier.weight(1f),
@@ -1451,6 +1461,8 @@ internal fun TouchMediaScaffold(
 private fun MediaSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    busy: Boolean,
     onVoiceSearch: (() -> Unit)?,
     modifier: Modifier = Modifier,
     rowModifier: Modifier = Modifier,
@@ -1477,13 +1489,17 @@ private fun MediaSearchField(
                 .defaultMinSize(minHeight = 48.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The text and caret held here, the screen told of each edit (HeldText): a late
+            // answer never drags the caret back.
+            val held = com.tmplayer.ui.components.rememberHeldText(query)
             BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
+                value = held.value,
+                onValueChange = { held.edit(it, onQueryChange) },
                 singleLine = true,
                 textStyle = M3MaterialTheme.typography.bodyLarge.copy(color = Tone.text),
                 cursorBrush = SolidColor(Tone.accent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSubmit() }),
                 modifier = modifier.weight(1f),
                 decorationBox = { inner ->
                     if (query.isEmpty()) {
@@ -1498,6 +1514,14 @@ private fun MediaSearchField(
                     inner()
                 },
             )
+            if (busy && query.isNotEmpty()) {
+                // Shown only once Telegram is asked, never while the typing settles.
+                androidx.compose.material3.CircularProgressIndicator(
+                    strokeWidth = 2.dp,
+                    color = Tone.muted,
+                    modifier = Modifier.padding(horizontal = 4.dp).size(18.dp),
+                )
+            }
             if (query.isNotEmpty()) {
                 com.tmplayer.ui.components.IconTip(s.browseClearSearch) {
                     IconButton(onClick = { onQueryChange("") }) {

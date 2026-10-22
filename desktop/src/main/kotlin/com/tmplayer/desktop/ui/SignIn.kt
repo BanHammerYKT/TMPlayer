@@ -381,9 +381,10 @@ private fun PhonePane(wrong: Boolean, initial: String?, onBack: (() -> Unit)?) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             // Down by the number's floating label, so the two boxes line up.
             Box(Modifier.width(DIAL_WIDTH).padding(top = 8.dp)) {
+                val held = com.tmplayer.ui.components.rememberHeldText(entry.dial)
                 OutlinedTextField(
-                    value = entry.dial,
-                    onValueChange = { entry.typeDial(it, countries); request.error = null },
+                    value = held.value,
+                    onValueChange = { held.edit(it, { entry.typeDial(it, countries); request.error = null }) },
                     enabled = !detecting,
                     prefix = if (detecting) null else ({ Text("+") }),
                     placeholder = if (detecting) null else ({ Text("+") }),
@@ -395,9 +396,10 @@ private fun PhonePane(wrong: Boolean, initial: String?, onBack: (() -> Unit)?) {
                 // The code's shimmer, faded out as the guessed code comes in under it.
                 GuessFade(detecting, skeletonWidth = 44.dp, modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)) {}
             }
+            val held2 = com.tmplayer.ui.components.rememberHeldText(entry.national)
             OutlinedTextField(
-                value = entry.national,
-                onValueChange = { entry.typeNational(it, countries); request.error = null },
+                value = held2.value,
+                onValueChange = { held2.edit(it, { entry.typeNational(it, countries); request.error = null }) },
                 enabled = !detecting,
                 label = { Text(s.signinPhoneLabel) },
                 singleLine = true,
@@ -469,10 +471,11 @@ private fun CodePane(state: AuthState.Code, onChangeNumber: () -> Unit) {
     LaunchedEffect(code) { if (CodeInput.shouldAutoSubmit(code, length, digits, submitted)) submit() }
 
     Heading(s.signinCodeTitle, SignInWords.codeBlurb(state))
+    val held3 = com.tmplayer.ui.components.rememberHeldText(code)
     OutlinedTextField(
-        value = code,
+        value = held3.value,
         // A paste can be the whole message the code came in; only the code is kept.
-        onValueChange = { code = CodeInput.clean(it, digits, if (digits) length else 0); request.error = null },
+        onValueChange = { held3.edit(it, { code = CodeInput.clean(it, digits, if (digits) length else 0); request.error = null }) },
         label = { Text(s.signinCodeLabel) },
         singleLine = true,
         isError = request.error != null || state.wrong,
@@ -516,9 +519,10 @@ private fun PasswordField(
 ) {
     val s = LocalStrings.current
     var shown by remember { mutableStateOf(false) }
+    val held4 = com.tmplayer.ui.components.rememberHeldText(value)
     OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
+        value = held4.value,
+        onValueChange = { held4.edit(it, onValueChange) },
         label = { Text(label) },
         singleLine = true,
         isError = error != null,
@@ -613,9 +617,10 @@ private fun PasswordRecoveryPane(state: AuthState.PasswordRecovery) {
         var code by remember { mutableStateOf("") }
         val submit = { if (code.isNotBlank()) scope.send(request) { Td.submitRecoveryCode(code) } }
         Heading(s.loginRecoveryTitle, s.loginRecoveryBody(state.pattern))
+        val held5 = com.tmplayer.ui.components.rememberHeldText(code)
         OutlinedTextField(
-            value = code,
-            onValueChange = { code = it.filter(Char::isLetterOrDigit).take(12); request.error = null },
+            value = held5.value,
+            onValueChange = { held5.edit(it, { code = it.filter(Char::isLetterOrDigit).take(12); request.error = null }) },
             label = { Text(s.loginRecoveryCodeLabel) },
             singleLine = true,
             isError = request.error != null || state.wrong,
@@ -644,9 +649,10 @@ private fun PasswordRecoveryPane(state: AuthState.PasswordRecovery) {
         modifier = Modifier.focusRequester(focus),
     )
     if (password.isNotEmpty()) {
+        val held6 = com.tmplayer.ui.components.rememberHeldText(hint)
         OutlinedTextField(
-            value = hint,
-            onValueChange = { hint = it.take(64) },
+            value = held6.value,
+            onValueChange = { held6.edit(it, { hint = it.take(64) }) },
             label = { Text(s.loginRecoveryHintLabel) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -670,9 +676,10 @@ private fun EmailAddressPane(state: AuthState.EmailAddress) {
     val ready = '@' in address && '.' in address.substringAfter('@')
     val submit = { if (ready) scope.send(request) { Td.submitEmailAddress(address) } }
     Heading(s.loginEmailAddressTitle, s.loginEmailAddressBody)
+    val held7 = com.tmplayer.ui.components.rememberHeldText(address)
     OutlinedTextField(
-        value = address,
-        onValueChange = { address = it.trim(); request.error = null },
+        value = held7.value,
+        onValueChange = { held7.edit(it, { address = it.trim(); request.error = null }) },
         label = { Text(s.loginEmailAddressLabel) },
         singleLine = true,
         isError = request.error != null || state.wrong,
@@ -716,9 +723,10 @@ private fun EmailCodePane(state: AuthState.EmailCode) {
         is EmailReset.Pending -> Text(s.loginEmailResetPending(Failures.waitPhrase(pendingLeft)), color = Tone.muted, textAlign = TextAlign.Center)
         EmailReset.None -> Unit
     }
+    val held8 = com.tmplayer.ui.components.rememberHeldText(code)
     OutlinedTextField(
-        value = code,
-        onValueChange = { code = CodeInput.clean(it, true, length); request.error = null },
+        value = held8.value,
+        onValueChange = { held8.edit(it, { code = CodeInput.clean(it, true, length); request.error = null }) },
         label = { Text(s.loginEmailCodeLabel) },
         singleLine = true,
         isError = request.error != null || state.wrong,

@@ -18,10 +18,14 @@ import kotlinx.coroutines.delay
  */
 @Composable
 fun rememberUsernameChat(query: String): ChatSummary? {
-    val found by produceState<ChatSummary?>(initialValue = null, query) {
+    // Keyed by the name itself, so "@name", "name" and "name " are one lookup, not three.
+    val name = remember(query) { Usernames.clean(query) }
+    val found by produceState<ChatSummary?>(initialValue = null, name) {
+        // Unlike a list of results, a chat found for another name is not kept up meanwhile: it
+        // would offer to join "@foo" while the field says "@foob".
         value = null
-        val name = Usernames.clean(query) ?: return@produceState
-        delay(USERNAME_PAUSE_MS)
+        if (name == null) return@produceState
+        delay(com.tmplayer.data.SearchSettle.MS)
         val session = Td.awaitConnectedSessionOrNull() ?: return@produceState
         value = runCatching { ChatRepository(session.client).findByUsername(name) }.getOrNull()
     }
@@ -31,9 +35,6 @@ fun rememberUsernameChat(query: String): ChatSummary? {
 /** [local] title matches with the username's chat in front, once, when it is not already among them. */
 fun withUsernameChat(local: List<ChatSummary>, found: ChatSummary?): List<ChatSummary> =
     if (found == null || local.any { it.id == found.id }) local else listOf(found) + local
-
-/** How long the typing rests before a username is asked for, so each letter is not a server call. */
-private const val USERNAME_PAUSE_MS = 450L
 
 /**
  * What Search offers for a link or a username typed or pasted into it (CP79): "Open this post"

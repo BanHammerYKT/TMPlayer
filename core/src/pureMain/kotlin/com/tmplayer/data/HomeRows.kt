@@ -235,7 +235,9 @@ object HomeRows {
         resume.forEach { seen += keyOf(it.chatId, it.messageId) }
         // A copy folded under the one watched last is in Continue too, through that one.
         val shownCopies = resume.mapNotNullTo(HashSet()) { record -> copyKeyOf(record) }
-        distinct.forEach { record -> if (copyKeyOf(record).let { it != null && it in shownCopies }) seen += keyOf(record.chatId, record.messageId) }
+        // And by the film's name and year, for a copy whose file name does not tie it to them.
+        resume.mapNotNullTo(shownCopies) { record -> if (record.fileName != null) SameTitle.filmKey(record.toMediaItem()) else null }
+        distinct.forEach { record -> if (listOf(copyKeyOf(record), foldKeyOf(record)).any { it != null && it in shownCopies }) seen += keyOf(record.chatId, record.messageId) }
         if (resume.isNotEmpty()) add(HomeRow.Continue(resume, everyResume.drop(LIMIT)))
         val inContinue = HashSet(seen)
 
@@ -405,7 +407,7 @@ object HomeRows {
     private fun markSeen(entries: List<ShelfEntry>, seen: MutableSet<String>) {
         entries.forEach { entry ->
             when (entry) {
-                is ShelfEntry.File -> seen += keyOf(entry.item.chatId, entry.item.messageId)
+                is ShelfEntry.File -> (listOf(entry.item) + entry.item.versions).forEach { seen += keyOf(it.chatId, it.messageId) }
                 is ShelfEntry.Show -> entry.series.episodes.flatMap { it.copies }.forEach { seen += keyOf(it.chatId, it.messageId) }
             }
         }
@@ -433,7 +435,10 @@ object HomeRows {
         inProgress: Set<String> = emptySet(),
     ): List<ShelfEntry> {
         fun copyOfContinuing(item: MediaItem): Boolean =
-            continuing.isNotEmpty() && VideoCopies.keyOf(item)?.let { it in continuing } == true
+            continuing.isNotEmpty() && (
+                VideoCopies.keyOf(item)?.let { it in continuing } == true ||
+                    SameTitle.filmKey(item)?.let { it in continuing } == true
+                )
         fun episode(item: MediaItem): Boolean = SeriesShelf.episodeOf(item).episode != null
         val fresh = items
             .filterNot { item ->
@@ -443,7 +448,9 @@ object HomeRows {
             }
             .distinctBy { it.id }
             .sortedWith(compareByDescending<MediaItem> { it.date }.thenByDescending { it.messageId })
-        return SeriesShelf.arrange(fresh)
+        // One tile per title in a row: copies the shelf did not fold, across chats or by their
+        // online match, are folded here, the best copy leading ([SameTitle]).
+        return SameTitle.dedupe(SeriesShelf.arrange(fresh))
             .filterNot { entry ->
                 entry is ShelfEntry.File && entry.item.let { keyOf(it.chatId, it.messageId) in inProgress || copyOfContinuing(it) }
             }
@@ -472,13 +479,13 @@ object HomeRows {
     fun foldCopies(records: List<ResumeRecord>): List<ResumeRecord> {
         val latest = HashMap<String, ResumeRecord>()
         records.forEach { record ->
-            val key = copyKeyOf(record) ?: return@forEach
+            val key = foldKeyOf(record) ?: return@forEach
             val held = latest[key]
             if (held == null || record.updatedAt > held.updatedAt) latest[key] = record
         }
         val placed = HashSet<String>()
         return records.mapNotNull { record ->
-            val key = copyKeyOf(record) ?: return@mapNotNull record
+            val key = foldKeyOf(record) ?: return@mapNotNull record
             if (placed.add(key)) latest.getValue(key) else null
         }
     }
@@ -511,8 +518,8 @@ object HomeRows {
      * card [foldCopies] made must remove, or the copy behind it takes its place at once.
      */
     fun copiesOf(record: ResumeRecord, records: List<ResumeRecord>): List<ResumeRecord> {
-        val key = copyKeyOf(record) ?: return listOf(record)
-        return (listOf(record) + records.filter { copyKeyOf(it) == key }).distinctBy { it.chatId to it.messageId }
+        val key = foldKeyOf(record) ?: return listOf(record)
+        return (listOf(record) + records.filter { foldKeyOf(it) == key }).distinctBy { it.chatId to it.messageId }
     }
 
     /**
@@ -521,6 +528,14 @@ object HomeRows {
      * year or an episode, so a caption's bare "S02E04" never folds a whole show into one card.
      */
     private fun copyKeyOf(record: ResumeRecord): String? = VideoCopies.keyOf(record)
+
+    /**
+     * What Continue watching folds by: a film's name and year read with its caption
+     * ([SameTitle.filmKey]), so a bare "Khalifa.mkv" captioned "Khalifa (2026)" and a "Khalifa
+     * 2026 1080p" posted elsewhere are one card; anything else by [copyKeyOf].
+     */
+    private fun foldKeyOf(record: ResumeRecord): String? =
+        (if (record.fileName != null) SameTitle.filmKey(record.toMediaItem()) else null) ?: copyKeyOf(record)
 
     /** The same key [SettingsStore.progressKey] writes, so a resume record and a video match. */
     private fun keyOf(chatId: Long, messageId: Long) = ProgressKeys.of(chatId, messageId)

@@ -83,6 +83,11 @@ data class GlobalSearchState(
     val chats: Map<Long, ChatBrief> = emptyMap(),
     /** Telegram has been asked and has not answered yet. */
     val searching: Boolean = false,
+    /**
+     * The typing has not settled yet ([GlobalSearchViewModel.type]): Telegram is asked once it
+     * does. No spinner meanwhile, and no "Nothing found" either; what was listed stays up.
+     */
+    val settling: Boolean = false,
     /** The first answer is in but thin, and another page is on its way ("Still searching"). */
     val stillSearching: Boolean = false,
     val loadingMore: Boolean = false,
@@ -100,10 +105,10 @@ data class GlobalSearchState(
 
     /** For an empty list: which filters hide what was found. */
     val hiddenBy: List<HidingFilter> by lazy(LazyThreadSafetyMode.PUBLICATION) {
-        if (shown.isNotEmpty() || searching) emptyList() else GlobalSearch.hiddenBy(groups, filters, query)
+        if (shown.isNotEmpty() || searching || settling) emptyList() else GlobalSearch.hiddenBy(groups, filters, query)
     }
 
-    val busy: Boolean get() = searching || stillSearching
+    val busy: Boolean get() = searching || stillSearching || settling
 }
 
 /**
@@ -111,7 +116,9 @@ data class GlobalSearchState(
  *
  * Each change of the text matches at once what the app already knows ([GlobalSearch.localVideos]:
  * chat listings, Continue watching, downloads) and asks Telegram once the typing has settled for
- * [settleMs], or at once on the keyboard's search key ([submit]). Pages arrive merged into the
+ * [settleMs], or at once on the keyboard's search key ([submit]). Meanwhile what was listed and
+ * still matches stays up ([GlobalSearchState.settling]), and the spinner shows only once Telegram
+ * is actually asked. Pages arrive merged into the
  * same cards by message id, so a video found both ways is listed once. The first answer keeps
  * asking until it has [GlobalSearch.FIRST_GROUPS] cards or has asked [GlobalSearch.FIRST_PAGES]
  * times, and a query of several words that found nothing tries its underscored and dotted
@@ -171,6 +178,16 @@ class GlobalSearchViewModel(
     /** What Telegram is being asked: the query, or the spelling of it that found something. */
     private var serverQuery = ""
 
+    /**
+     * The words Telegram has been asked for and is answering, or has answered without a failure,
+     * for the query on screen; empty when it has not been asked. What keeps the same words from
+     * being asked twice: see [submit] and [start].
+     */
+    private var asked = ""
+
+    /** What the app already knew that answers the query on screen: the local half of [start]. */
+    private var localNow: List<MediaItem> = emptyList()
+
     init {
         // The kids lock coming on while results are listed takes its chats out of them.
         viewModelScope.launch {
@@ -189,9 +206,16 @@ class GlobalSearchViewModel(
     /** The text changed: local matches now, Telegram after the settle. Blank clears it all. */
     fun type(text: String) = start(text, settle = settleMs)
 
-    /** The keyboard's search key, or a recent search picked: Telegram at once, and remembered. */
+    /**
+     * The keyboard's search key, or a recent search picked: Telegram at once, and remembered.
+     * Words already asked about and answered (or still being answered) are not asked again.
+     */
     fun submit(text: String = _state.value.query.text) {
-        start(text, settle = 0, force = true)
+        val query = GlobalSearch.parse(text)
+        val now = _state.value
+        val answering = query == now.query && !query.isEmpty && asked == query.server && !now.settling &&
+            now.error == null && !now.offline && now.floodWait == 0
+        if (!answering) start(text, settle = 0, force = true)
         remember(text)
     }
 
@@ -271,23 +295,44 @@ class GlobalSearchViewModel(
         val query = GlobalSearch.parse(text)
         val now = _state.value
         if (!force && query == now.query) return
+        val allowed = ChatGate.allowed.value
+        // Only the words around Telegram's part changed (a quality marker, a space): the answer
+        // asked for, or about to be, stands, and the new words only screen and rank it.
+        if (!force && !query.isEmpty && query.server == now.query.server && (asked == query.server || now.settling) &&
+            now.error == null && !now.offline && now.floodWait == 0
+        ) {
+            localNow = GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames)
+            _state.update { s -> s.copy(query = query, groups = GlobalSearch.merge(GlobalSearch.order(s.groups, query, s.sort), localNow, query, s.sort, identity)) }
+            return
+        }
         job?.cancel()
         rememberJob?.cancel()
         cursor = AllChatsCursor()
+        asked = ""
         if (query.isEmpty) {
+            // Cleared, or down to one letter: whatever was waiting to be asked is dropped, and the
+            // screen goes back to its recent searches.
+            localNow = emptyList()
             _state.value = GlobalSearchState(query = query, filters = now.filters, sort = now.sort)
             return
         }
         // The local half, at once: no connection needed and no wait.
-        val allowed = ChatGate.allowed.value
-        val local = GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames)
+        localNow = GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames)
+        // What was listed and still answers the new words stays up until Telegram's answer takes
+        // its place, so the list never flashes empty between one letter and the next.
+        val carried = GlobalSearch.order(
+            now.groups.filter { g -> g.copies.any { GlobalSearch.matchesLocally(it, query, onlineNames(it)) } },
+            query,
+            now.sort,
+        )
         _state.value = GlobalSearchState(
             query = query,
-            groups = GlobalSearch.merge(emptyList(), local, query, now.sort, identity),
+            groups = GlobalSearch.merge(carried, localNow, query, now.sort, identity),
             filters = now.filters,
             sort = now.sort,
             chats = now.chats,
-            searching = true,
+            searching = settle <= 0,
+            settling = settle > 0,
         )
         // The same words searched before: Telegram's pages from then, listed at once through the
         // kids lock and the hidden chats as they are now, and asked again only once stale.
@@ -295,21 +340,31 @@ class GlobalSearchViewModel(
         if (kept != null) {
             serverQuery = kept.data.serverQuery
             cursor = kept.data.cursor
+            asked = query.server
             val hidden = com.tmplayer.data.HiddenChats.ids.value
-            kept.data.pages.forEach { page ->
-                absorb(page.copy(items = page.items.filter { KidsLock.allows(allowed, it.chatId) && it.chatId !in hidden }), keepTo = query)
+            kept.data.pages.forEachIndexed { index, page ->
+                absorb(page.copy(items = page.items.filter { KidsLock.allows(allowed, it.chatId) && it.chatId !in hidden }), keepTo = query, fresh = index == 0)
             }
-            _state.update { it.copy(searching = false, endReached = kept.data.cursor.done) }
+            _state.update { it.copy(searching = false, settling = false, endReached = kept.data.cursor.done) }
             if (!kept.stale) return
         }
         job = viewModelScope.launch {
-            if (settle > 0) delay(settle)
-            firstAnswer(query)
+            if (settle > 0) {
+                delay(settle)
+                // Asked only now, so only now does the screen say it is searching.
+                _state.update { it.copy(settling = false, searching = kept == null) }
+            }
+            firstAnswer(query, fresh = kept == null)
         }
     }
 
-    private suspend fun firstAnswer(query: SearchQuery) {
+    /**
+     * Telegram's first answer for [query]. A [fresh] one takes the place of whatever was carried
+     * over from the words before ([start]); a revalidation of kept pages merges into them.
+     */
+    private suspend fun firstAnswer(query: SearchQuery, fresh: Boolean = true) {
         val filters = _state.value.filters
+        asked = query.server
         try {
             var pages = 0
             serverQuery = query.server
@@ -331,7 +386,7 @@ class GlobalSearchViewModel(
             }
             cursor = page.cursor
             keepFirst(query, filters, page)
-            absorb(page, keepTo = query)
+            absorb(page, keepTo = query, fresh = fresh)
             _state.update { it.copy(searching = false, endReached = page.cursor.done) }
             while (GlobalSearch.wantsMore(_state.value.shown.size, pages, cursor.done)) {
                 _state.update { it.copy(stillSearching = true) }
@@ -352,6 +407,7 @@ class GlobalSearchViewModel(
         } catch (e: CancellationException) {
             throw e
         } catch (e: VideoSearchSource.Offline) {
+            asked = ""
             _state.update { it.copy(searching = false, stillSearching = false, offline = true) }
         } catch (e: Exception) {
             val wait = Failures.floodWaitSeconds(e.message)
@@ -361,22 +417,28 @@ class GlobalSearchViewModel(
                     delay(1_000)
                 }
                 _state.update { it.copy(floodWait = 0, searching = true) }
-                firstAnswer(query)
+                firstAnswer(query, fresh)
                 return
             }
+            asked = ""
             _state.update {
                 it.copy(searching = false, stillSearching = false, error = Failures.humanise(e))
             }
         }
     }
 
-    /** A page into the cards, screened against the whole query when it was asked by a shorter spelling. */
-    private fun absorb(page: AllChatsPage, keepTo: SearchQuery = _state.value.query) {
+    /**
+     * A page into the cards, screened against the whole query when it was asked by a shorter
+     * spelling. A [fresh] page is the first of a new answer: it starts again from the local half,
+     * dropping the cards carried over from the words typed before.
+     */
+    private fun absorb(page: AllChatsPage, keepTo: SearchQuery = _state.value.query, fresh: Boolean = false) {
         val fallback = serverQuery != keepTo.server
         val kept = if (!fallback) page.items else page.items.filter { GlobalSearch.matchesLocally(it, keepTo, onlineNames(it)) }
         _state.update { s ->
+            val base = if (fresh) GlobalSearch.merge(emptyList(), localNow, s.query, s.sort, identity) else s.groups
             s.copy(
-                groups = GlobalSearch.merge(s.groups, kept, s.query, s.sort, identity),
+                groups = GlobalSearch.merge(base, kept, s.query, s.sort, identity),
                 chats = s.chats + page.chats.associateBy { it.id },
             )
         }
@@ -391,8 +453,8 @@ class GlobalSearchViewModel(
     }
 
     companion object {
-        /** Long enough that each letter typed on a phone is not a round trip to Telegram. */
-        const val SETTLE_MS = 450L
+        /** Long enough that each letter typed on a phone is not a round trip to Telegram: see [com.tmplayer.data.SearchSettle]. */
+        const val SETTLE_MS = com.tmplayer.data.SearchSettle.MS
 
         /** A query that has sat with results this long was read, and is kept as a recent search. */
         const val REMEMBER_MS = 2_000L

@@ -271,9 +271,10 @@ private fun Field(
 ) {
     val requester = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (focus) runCatching { requester.requestFocus() } }
+    val held = com.tmplayer.ui.components.rememberHeldText(value)
     OutlinedTextField(
-        value = value,
-        onValueChange = onValue,
+        value = held.value,
+        onValueChange = { held.edit(it, onValue) },
         label = { Text(label) },
         singleLine = true,
         isError = error != null,
@@ -343,16 +344,19 @@ private fun PhoneStep(auth: WebAuth) {
     }
     Title(s.signinPhoneTitle, s.signinPhoneBody)
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        val heldDial = com.tmplayer.ui.components.rememberHeldText("+$dial")
         OutlinedTextField(
-            value = "+$dial",
-            onValueChange = { v ->
-                // A whole number pasted into the code field lands in both.
-                val split = PhoneCountries.splitInternational(v, countries)
-                if (split != null && split.second.isNotEmpty()) {
-                    dial = split.first
-                    national = split.second
-                } else {
-                    dial = v.filter(Char::isDigit).take(PhoneCountries.MAX_DIAL_DIGITS)
+            value = heldDial.value,
+            onValueChange = { typed ->
+                heldDial.edit(typed) { v ->
+                    // A whole number pasted into the code field lands in both.
+                    val split = PhoneCountries.splitInternational(v, countries)
+                    if (split != null && split.second.isNotEmpty()) {
+                        dial = split.first
+                        national = split.second
+                    } else {
+                        dial = v.filter(Char::isDigit).take(PhoneCountries.MAX_DIAL_DIGITS)
+                    }
                 }
             },
             label = { Text(country?.let { it.flag + " " + it.name } ?: s.loginChooseCountry, maxLines = 1) },
@@ -402,9 +406,10 @@ private fun CountryDialog(countries: List<Country>, onPick: (Country) -> Unit, o
         title = { Text(s.loginChooseCountry) },
         text = {
             Column {
+                val held2 = com.tmplayer.ui.components.rememberHeldText(query)
                 OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
+                    value = held2.value,
+                    onValueChange = { held2.edit(it, { query = it }) },
                     placeholder = { Text(s.loginCountrySearch) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),

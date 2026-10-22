@@ -68,10 +68,69 @@ class GlobalSearchViewModelTest {
         model.type("ha")
         model.type("harb")
         model.type("harbour")
-        assertTrue(model.state.value.searching)
-        advanceUntilIdle()
-        assertEquals("harbour", asked.first().first)
+        // Waiting for the typing to rest is not searching yet: no spinner, no "Nothing found".
         assertFalse(model.state.value.searching)
+        assertTrue(model.state.value.settling)
+        assertTrue(model.state.value.hiddenBy.isEmpty())
+        advanceUntilIdle()
+        // One query asked (its later pages included), never one per letter.
+        assertEquals(listOf("harbour"), asked.map { it.first }.distinct())
+        assertFalse(model.state.value.searching)
+        assertFalse(model.state.value.settling)
+    }
+
+    @Test
+    fun `the same words are never asked twice`() = runTest(dispatcher) {
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        model.type("harbour")
+        advanceUntilIdle()
+        val before = asked.size
+        // Typed again with a space, submitted with the search key, and a quality added to it.
+        model.type("harbour ")
+        model.submit("harbour")
+        model.type("harbour 4k")
+        advanceUntilIdle()
+        assertEquals(before, asked.size)
+        assertEquals(listOf(3L), model.state.value.shown.map { it.lead.messageId })
+    }
+
+    @Test
+    fun `the search key skips the wait, clearing drops what was waiting`() = runTest(dispatcher) {
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 10_000)
+        model.type("harbour")
+        model.submit("harbour")
+        assertTrue(model.state.value.searching)
+        dispatcher.scheduler.runCurrent()
+        assertEquals("harbour", asked.first().first)
+        advanceUntilIdle()
+        val before = asked.size
+        model.type("harbour wind")
+        model.type("")
+        advanceUntilIdle()
+        assertEquals(before, asked.size)
+        assertTrue(model.state.value.groups.isEmpty())
+        assertFalse(model.state.value.busy)
+    }
+
+    @Test
+    fun `one letter is not sent to Telegram`() = runTest(dispatcher) {
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        model.type("h")
+        advanceUntilIdle()
+        assertTrue(asked.isEmpty())
+    }
+
+    @Test
+    fun `what was listed and still matches stays up until the new answer`() = runTest(dispatcher) {
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        model.type("harbour")
+        advanceUntilIdle()
+        model.type("harbour wind")
+        // Still settling: the Wind card answers the new words and stays up, so the list never
+        // flashes empty between one letter and the next.
+        assertTrue(3L in model.state.value.groups.map { it.lead.messageId })
+        advanceUntilIdle()
+        assertFalse(model.state.value.busy)
     }
 
     @Test

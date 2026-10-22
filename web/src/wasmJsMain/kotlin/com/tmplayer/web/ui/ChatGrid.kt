@@ -117,14 +117,28 @@ fun ChatGrid(app: WebAppState, chat: WebChat, onPlay: (WebVideo, List<WebVideo>)
             .filter { it >= items.size - 12 }
             .collect { if (!loading && query.isBlank()) loadMore() }
     }
-    // A search asks Telegram, which finds a video by its caption as well as its name.
-    val found by produceState<List<WebVideo>?>(null, query, chat.id) {
-        if (query.isBlank()) {
+    // A search asks Telegram, which finds a video by its caption as well as its name: once the
+    // typing rests (SearchSettle), the last words only, at once on the keyboard's search key.
+    // Cleared, the chat is listed again at once; one letter is not asked for while typing.
+    var settled by remember(chat.id) { mutableStateOf("") }
+    LaunchedEffect(query, chat.id) {
+        val clean = query.trim()
+        if (clean.isEmpty()) {
+            settled = ""
+            return@LaunchedEffect
+        }
+        if (clean == settled || !com.tmplayer.data.GlobalSearch.searchable(clean)) return@LaunchedEffect
+        delay(com.tmplayer.data.SearchSettle.MS)
+        settled = clean
+    }
+    // Keyed by the settled words, so the same words are asked once, and a newer search cancels
+    // the one before. What was found stays listed until the new answer replaces it.
+    val found by produceState<List<WebVideo>?>(null, settled, chat.id) {
+        if (settled.isBlank()) {
             value = null
             return@produceState
         }
-        delay(350)
-        value = app.videos.searchIn(chat.id, query, chat.protectedContent, s.mediaUntitledVideo)
+        value = app.videos.searchIn(chat.id, settled, chat.protectedContent, s.mediaUntitledVideo)
     }
 
     val shown = remember(items.size, items.lastOrNull(), sort, hideSmall, found, app.resume.version.value) {
@@ -156,13 +170,14 @@ fun ChatGrid(app: WebAppState, chat: WebChat, onPlay: (WebVideo, List<WebVideo>)
             },
             query = query,
             onQuery = { query = it },
+            onSubmit = { settled = query.trim() },
         )
         Box(Modifier.fillMaxSize()) {
             if (entries.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     when {
-                        loading || (query.isNotBlank() && found == null) -> CircularProgressIndicator()
-                        query.isNotBlank() -> Text(s.browseNoMatch(query), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        loading || (settled.isNotBlank() && found == null) -> CircularProgressIndicator()
+                        settled.isNotBlank() -> Text(s.browseNoMatch(settled), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         else -> Text(s.browseNoPlayableVideos, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
@@ -221,6 +236,8 @@ private fun GridTools(
     onSearching: (Boolean) -> Unit,
     query: String,
     onQuery: (String) -> Unit,
+    /** The keyboard's search key: the chat searched at once, past the typing's settle. */
+    onSubmit: () -> Unit,
 ) {
     val s = LocalStrings.current
     var menu by remember { mutableStateOf(false) }
@@ -230,11 +247,14 @@ private fun GridTools(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         if (searching) {
+            val held = com.tmplayer.ui.components.rememberHeldText(query)
             OutlinedTextField(
-                value = query,
-                onValueChange = onQuery,
+                value = held.value,
+                onValueChange = { held.edit(it, onQuery) },
                 placeholder = { Text(s.gridSearchThisChat) },
                 singleLine = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { onSubmit() }),
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = { onSearching(false) }, modifier = Modifier.height(44.dp)) { Text(s.commonClose) }

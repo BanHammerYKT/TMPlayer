@@ -206,10 +206,10 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
         }
         // The grid's keyboard focus, once the grid exists; the search field's Down arrow enters it.
         var gridNav by remember(chat.id) { mutableStateOf<KeyboardNav?>(null) }
-        LaunchedEffect(model, query) {
-            delay(SEARCH_SETTLE_MS)
-            model.search(query.trim())
-        }
+        // Typing searches the chat once it rests (MediaListViewModel.type); Enter and a recent
+        // search go at once.
+        LaunchedEffect(model, query) { model.type(query) }
+        val chatSearching by model.searching.collectAsState()
         LaunchedEffect(chat.id) { state.settings.rememberChatOpened(chat.id) }
         // This chat's own order, from the Sort menu in the header.
         val sort by remember(chat.id) { state.settings.videoSort(chat.id) }.collectAsState(initial = com.tmplayer.data.VideoSort.DEFAULT)
@@ -248,6 +248,8 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                 searching = searching,
                 query = query,
                 onQuery = { query = it },
+                onSubmit = { model.search(it) },
+                busy = chatSearching,
                 onOpenSearch = { searching = true },
                 onCloseSearch = {
                     query = ""
@@ -1492,7 +1494,6 @@ private val PLAY_KEYS = setOf(Key.Enter, Key.NumPadEnter, Key.Spacebar, Key.P)
 // gets Cmd+click and Ctrl+click as the Mac app does.
 private val IS_MAC: Boolean get() = com.tmplayer.desktop.os.OsInfo.isMac
 private const val HOVER_INTENT_MS = 300L
-private const val SEARCH_SETTLE_MS = 300L
 private const val LOAD_AHEAD = 8
 
 /**

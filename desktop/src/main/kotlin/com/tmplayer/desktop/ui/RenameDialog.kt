@@ -49,9 +49,10 @@ internal fun RenameDialog(initial: String, onSave: (String?) -> Unit, onDismiss:
         onDismissRequest = onDismiss,
         title = { Text(s.gridRenameTitle) },
         text = {
+            val held = com.tmplayer.ui.components.rememberHeldText(title)
             OutlinedTextField(
-                value = title,
-                onValueChange = { title = it.take(VideoCorrections.TITLE_MAX) },
+                value = held.value,
+                onValueChange = { held.edit(it, { title = it.take(VideoCorrections.TITLE_MAX) }) },
                 label = { Text(s.gridRenameHint) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

@@ -117,29 +117,45 @@ private fun ChatVideoRow(app: WebAppState, chat: WebChat, onOpenChat: (WebChat) 
 fun SearchScreen(app: WebAppState, bottomPadding: Dp, onOpenChat: (WebChat) -> Unit) {
     val s = LocalStrings.current
     var query by remember { mutableStateOf("") }
+    // What Telegram is asked: the typed words once they rest (SearchSettle), at once on the
+    // keyboard's search key, and cleared at once. One letter is not asked for while typing.
     var settled by remember { mutableStateOf("") }
     LaunchedEffect(query) {
-        delay(350)
-        settled = query
+        val clean = query.trim()
+        if (clean.isEmpty()) {
+            settled = ""
+            return@LaunchedEffect
+        }
+        if (clean == settled || !com.tmplayer.data.GlobalSearch.searchable(clean)) return@LaunchedEffect
+        delay(com.tmplayer.data.SearchSettle.MS)
+        settled = clean
     }
     val chatsVersion by app.chats.version.collectAsState()
     val chats = remember(settled, chatsVersion) {
         if (settled.isBlank()) emptyList() else app.chats.list(ChatListKey.Main).filter { it.title.contains(settled.trim(), ignoreCase = true) }.take(8)
     }
+    // Keyed by the settled words, so the same words are asked once and a newer search cancels
+    // the one before. What was found stays listed until the new answer replaces it; the spinner
+    // is for a first search only, and a cleared field empties the list at once.
     val videos by produceState<List<WebVideo>?>(emptyList(), settled) {
-        value = null
+        if (settled.isBlank()) {
+            value = emptyList()
+            return@produceState
+        }
+        if (value.isNullOrEmpty()) value = null
         value = app.lookups.search(settled, s.mediaUntitledVideo)
     }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Column(Modifier.fillMaxSize()) {
+        val held = com.tmplayer.ui.components.rememberHeldText(query)
         OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
+            value = held.value,
+            onValueChange = { held.edit(it, { query = it }) },
             placeholder = { Text(s.searchFieldHint) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { settled = query }),
+            keyboardActions = KeyboardActions(onSearch = { settled = query.trim() }),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focus),
         )
         LazyVerticalGrid(

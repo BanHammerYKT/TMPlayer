@@ -239,7 +239,7 @@ class GlobalSearchTest {
     }
 
     @Test
-    fun `episodes of one show in one chat are one card`() {
+    fun `episodes of one show are one card, whichever chats they are in`() {
         val groups = GlobalSearch.merge(
             emptyList(),
             listOf(
@@ -249,10 +249,53 @@ class GlobalSearchTest {
             ),
             q("harbour notes"),
         )
-        val show = groups.first { it.chatIds == listOf(1L) }
+        val show = groups.single()
         assertTrue(show.isShow)
         assertEquals(2, show.episodeCount)
-        assertFalse(groups.first { it.chatIds == listOf(2L) }.isShow)
+        assertEquals(listOf(1L, 2L), show.chatIds.sorted())
+    }
+
+    @Test
+    fun `a season pack and a file matched to the show join the show's card, on a later page too`() {
+        val matched = object : SearchIdentity by SearchIdentity.Default {
+            override fun onlineKey(item: MediaItem): String? =
+                if (item.fileName.startsWith("Wednesday") || item.fileName.startsWith("wed_")) "tmdb:show:119051" else null
+        }
+        val first = GlobalSearch.merge(
+            emptyList(),
+            listOf(video(2, 9, "wed_hd_upload.mkv")),
+            q("wednesday"),
+            identity = matched,
+        )
+        assertEquals(1, first.size)
+        val groups = GlobalSearch.merge(
+            first,
+            listOf(
+                video(1, 1, "Wednesday.S01E01.1080p.mkv"),
+                video(1, 2, "Wednesday.S01E02.1080p.mkv"),
+                video(3, 3, "Wednesday.Season.1.Complete.720p.mkv"),
+            ),
+            q("wednesday"),
+            identity = matched,
+        )
+        val show = groups.single()
+        assertTrue(show.isShow)
+        assertEquals(setOf(1L, 2L, 3L, 9L), show.copies.map { it.messageId }.toSet())
+    }
+
+    @Test
+    fun `one film under two names, with its year only in a caption, is one card led by the best copy`() {
+        val groups = GlobalSearch.merge(
+            emptyList(),
+            listOf(
+                video(1, 1, "Khalifa.mkv", caption = "Khalifa (2026)", duration = 9_000),
+                video(2, 2, "Khalifa 2026 1080p WEB-DL.mkv", duration = 8_100),
+            ),
+            q("khalifa"),
+        )
+        val film = groups.single()
+        assertEquals(2L, film.lead.messageId)
+        assertEquals(2, film.copies.size)
     }
 
     // ---- filters --------------------------------------------------------------------------

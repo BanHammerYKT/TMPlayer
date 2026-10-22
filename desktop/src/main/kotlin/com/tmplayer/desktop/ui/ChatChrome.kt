@@ -126,6 +126,10 @@ internal fun ChatBar(
     searching: Boolean,
     query: String,
     onQuery: (String) -> Unit,
+    /** Enter, or a recent search picked: the chat searched at once, past the typing's settle. */
+    onSubmit: (String) -> Unit = {},
+    /** A search of the chat is on its way while the old listing stays up: a spinner in the field. */
+    busy: Boolean = false,
     onOpenSearch: () -> Unit,
     onCloseSearch: () -> Unit,
     onSearchDown: () -> Unit,
@@ -151,15 +155,16 @@ internal fun ChatBar(
             enter = fadeIn() + slideInVertically { it / 3 },
             exit = fadeOut() + slideOutVertically { it / 3 },
         ) {
-            RecentPanel(recent, onPick = onQuery, onClear = onClearRecent)
+            RecentPanel(recent, onPick = { onQuery(it); onSubmit(it) }, onClear = onClearRecent)
         }
         if (searching) {
             BarPill(Modifier.widthIn(min = 360.dp, max = SEARCH_WIDTH).fillMaxWidth()) {
                 BarIcon(TmIcons.ArrowBack, s.browseCloseSearch, "Esc", onCloseSearch)
                 Icon(TmIcons.Search, contentDescription = null, tint = Tone.muted, modifier = Modifier.padding(start = 4.dp).size(20.dp))
+                val held = com.tmplayer.ui.components.rememberHeldText(query)
                 BasicTextField(
-                    value = query,
-                    onValueChange = onQuery,
+                    value = held.value,
+                    onValueChange = { held.edit(it, onQuery) },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = Tone.text),
                     cursorBrush = SolidColor(Tone.accent),
@@ -172,6 +177,10 @@ internal fun ChatBar(
                             when (event.key) {
                                 Key.DirectionDown -> {
                                     onSearchDown()
+                                    true
+                                }
+                                Key.Enter, Key.NumPadEnter -> {
+                                    onSubmit(query)
                                     true
                                 }
                                 Key.Escape -> {
@@ -190,6 +199,14 @@ internal fun ChatBar(
                         }
                     },
                 )
+                if (busy && query.isNotEmpty()) {
+                    // Shown only once Telegram is asked, never while the typing settles.
+                    androidx.compose.material3.CircularProgressIndicator(
+                        strokeWidth = 2.dp,
+                        color = Tone.muted,
+                        modifier = Modifier.padding(horizontal = 6.dp).size(16.dp),
+                    )
+                }
                 if (query.isNotEmpty()) BarIcon(TmIcons.Close, s.browseClearSearch, null, { onQuery("") })
             }
         } else {

@@ -105,9 +105,10 @@ fun CountryPicker(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             val column = Modifier.widthIn(max = PICKER_MAX_WIDTH).fillMaxWidth()
+            val held = com.tmplayer.ui.components.rememberHeldText(query)
             OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
+                value = held.value,
+                onValueChange = { held.edit(it, { query = it }) },
                 singleLine = true,
                 label = { Text(s.loginCountrySearch) },
                 leadingIcon = { Icon(TmIcons.Search, contentDescription = null) },
