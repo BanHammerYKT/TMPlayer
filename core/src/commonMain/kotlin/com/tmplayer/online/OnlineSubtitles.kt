@@ -317,7 +317,7 @@ class OnlineSubtitles(
                     )
                 }
                 when (val body = api.fetch(link.url)) {
-                    is Reply.Ok -> save(hit, SubtitleText.from(body.value, link.fileName.ifBlank { hit.fileName }))
+                    is Reply.Ok -> save(hit, SubtitleText.from(body.value, link.fileName.ifBlank { hit.fileName }, language = hit.language))
                     else -> DownloadResult.Failed(SubtitleNotice.Offline)
                 }
             }
@@ -358,7 +358,7 @@ class OnlineSubtitles(
                     )
                 }
                 when (val body = api.fetch(link.url)) {
-                    is Reply.Ok -> save(hit, SubtitleText.from(body.value, link.fileName.ifBlank { hit.fileName }))
+                    is Reply.Ok -> save(hit, SubtitleText.from(body.value, link.fileName.ifBlank { hit.fileName }, language = hit.language))
                     else -> DownloadResult.Failed(SubtitleNotice.Offline)
                 }
             }
@@ -381,7 +381,7 @@ class OnlineSubtitles(
     private suspend fun downloadSubdl(hit: SubtitleHit, target: SubtitleTarget?): DownloadResult {
         val parsed = target?.let { MediaName.parse(it.fileName, it.caption) }
         return when (val body = withBackoff { subdl.fetch(hit.id) }) {
-            is Reply.Ok -> save(hit, SubtitleText.from(body.value, hit.fileName, parsed?.season, parsed?.episode))
+            is Reply.Ok -> save(hit, SubtitleText.from(body.value, hit.fileName, parsed?.season, parsed?.episode, hit.language))
             is Reply.Throttled -> DownloadResult.Failed(SubtitleNotice.Busy)
             else -> DownloadResult.Failed(SubtitleNotice.Offline)
         }

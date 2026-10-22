@@ -20,6 +20,26 @@ class ExternalSubtitleTest {
     }
 
     @Test
+    fun `the language a side file's name gives is found, and a name without one gives none`() {
+        assertEquals("ar", ExternalSubtitle.languageOf("Film.2019.ar.srt"))
+        assertEquals("pt-br", ExternalSubtitle.languageOf("Film.pt-BR.srt"))
+        assertEquals("ara", ExternalSubtitle.languageOf("Film.ARA.ass"))
+        assertNull(ExternalSubtitle.languageOf("Film.srt"))
+        assertNull(ExternalSubtitle.languageOf("Film.2019.srt"))
+        assertNull(ExternalSubtitle.languageOf("Film.Arabic.srt"))
+    }
+
+    @Test
+    fun `a side file's track is found by its own id and not by a longer one`() {
+        assertTrue(ExternalSubtitle.isTrackId("external-1", "external-1"))
+        assertTrue(ExternalSubtitle.isTrackId("1:external-1", "external-1"))
+        assertFalse(ExternalSubtitle.isTrackId("external-12", "external-1"))
+        assertTrue(ExternalSubtitle.isTrackId("external-12 external-1", "external-1"))
+        assertFalse(ExternalSubtitle.isTrackId("3", "external-1"))
+        assertFalse(ExternalSubtitle.isTrackId(null, "external-1"))
+    }
+
+    @Test
     fun `media3 is told the type of every format it reads as it stands`() {
         assertEquals(ExternalSubtitle.MIME_SUBRIP, ExternalSubtitle.mimeTypeOf("srt"))
         assertEquals(ExternalSubtitle.MIME_SSA, ExternalSubtitle.mimeTypeOf("ASS"))

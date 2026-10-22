@@ -15,14 +15,12 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.tmplayer.i18n.L
+import com.tmplayer.online.SubtitleText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
-import java.nio.charset.Charset
+import java.util.Locale
 
 /**
  * Subtitle files loaded from the phone over the video playing now: the phone's version of the
@@ -85,16 +83,19 @@ class SubtitleFiles(
     fun onTracksChanged(tracks: Tracks) {
         val (id, label) = pending ?: return
         val exo = player() ?: return
-        val group = tracks.groups.firstOrNull { group ->
-            group.type == C.TRACK_TYPE_TEXT && (0 until group.length).any { index ->
-                val format = group.getTrackFormat(index)
-                format.id?.contains(id) == true || format.label == label
-            }
-        } ?: return
+        // By the id first: a label can be the same as an embedded track's name ("English.srt"
+        // over a track called that), and the file loaded tenth is "external-10", which also
+        // contains "external-1". The label only where Media3 kept no id.
+        val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+            .flatMap { group -> (0 until group.length).map { group to it } }
+        val found = text.firstOrNull { (group, index) -> ExternalSubtitle.isTrackId(group.getTrackFormat(index).id, id) }
+            ?: text.firstOrNull { (group, index) -> group.getTrackFormat(index).let { it.id == null && it.label == label } }
+            ?: return
         pending = null
+        val (group, index) = found
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, 0))
+            .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, index))
             .build()
     }
 
@@ -118,7 +119,7 @@ class SubtitleFiles(
             }
             // Read on the main thread before the copy: the player belongs to it.
             val fps = player()?.videoFormat?.frameRate?.toDouble()?.takeIf { it > 0 } ?: ExternalSubtitle.DEFAULT_FPS
-            val copied = withContext(Dispatchers.IO) { runCatching { copy(uri, extension, fps) }.getOrNull() }
+            val copied = withContext(Dispatchers.IO) { runCatching { copy(uri, name, extension, fps) }.getOrNull() }
             when (copied) {
                 null -> say(L.tracksFileUnreadable(name))
                 is Copy.Refused -> say(copied.reason)
@@ -153,7 +154,7 @@ class SubtitleFiles(
         data class Refused(val reason: String) : Copy
     }
 
-    private fun copy(uri: Uri, extension: String, fps: Double): Copy {
+    private fun copy(uri: Uri, name: String, extension: String, fps: Double): Copy {
         val bytes = activity.contentResolver.openInputStream(uri)?.use { input ->
             val out = java.io.ByteArrayOutputStream()
             val chunk = ByteArray(16 * 1024)
@@ -170,7 +171,12 @@ class SubtitleFiles(
         val folder = File(activity.cacheDir, "subtitles").apply { mkdirs() }
         // Written back as UTF-8 whatever it arrived in: Media3 reads these formats as UTF-8, and
         // an older .srt saved in a Windows code page would otherwise lose every accented letter.
-        val text = decode(bytes)
+        // A file that is not Unicode is read in the code page of the language its name gives
+        // ("film.ar.srt"), else the viewer's own: see SubtitleText.decode. A name part that is
+        // not a language ("film.mkv.srt") reads as the Western page and gives way to the viewer's.
+        val western = SubtitleText.codePageFor(null)
+        val named = ExternalSubtitle.languageOf(name)?.takeIf { SubtitleText.codePageFor(it) != western }
+        val text = SubtitleText.decode(bytes, named ?: Locale.getDefault().language)
         val mime = ExternalSubtitle.mimeTypeOf(extension)
         if (mime != null) {
             val file = File(folder, "${loaded.size + 1}.$extension")
@@ -183,17 +189,6 @@ class SubtitleFiles(
         val file = File(folder, "${loaded.size + 1}.srt")
         file.writeText(ExternalSubtitle.microDvdToSrt(text, fps))
         return Copy.Done(file, ExternalSubtitle.MIME_SUBRIP)
-    }
-
-    /** UTF-8 when the bytes are valid UTF-8, and the Western Windows code page when they are not. */
-    private fun decode(bytes: ByteArray): String = try {
-        Charsets.UTF_8.newDecoder()
-            .onMalformedInput(CodingErrorAction.REPORT)
-            .onUnmappableCharacter(CodingErrorAction.REPORT)
-            .decode(ByteBuffer.wrap(bytes))
-            .toString()
-    } catch (_: CharacterCodingException) {
-        String(bytes, runCatching { Charset.forName("windows-1252") }.getOrDefault(Charsets.ISO_8859_1))
     }
 
     private fun displayName(uri: Uri): String? = runCatching {

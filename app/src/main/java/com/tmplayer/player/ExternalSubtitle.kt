@@ -43,6 +43,33 @@ object ExternalSubtitle {
         else -> null
     }
 
+    /**
+     * The language a file's name gives just before its extension, the way players name side
+     * files ("Film.2019.ar.srt", "Film.pt-BR.srt", "Film.ara.srt"); null when it names none.
+     */
+    fun languageOf(name: String): String? {
+        val parts = name.split('.')
+        if (parts.size < 3) return null
+        val tag = parts[parts.size - 2]
+        return tag.takeIf { LANGUAGE_TAG.matches(it) }?.lowercase(Locale.ROOT)
+    }
+
+    /**
+     * Whether a track's format id is the side file [id] ("external-3"). Media3 may put a prefix
+     * of its own in front, so the id is looked for inside it, but not as the start of a longer
+     * number: "external-1" is not "external-12".
+     */
+    fun isTrackId(formatId: String?, id: String): Boolean {
+        formatId ?: return false
+        var at = formatId.indexOf(id)
+        while (at >= 0) {
+            val next = formatId.getOrNull(at + id.length)
+            if (next == null || !next.isDigit()) return true
+            at = formatId.indexOf(id, at + 1)
+        }
+        return false
+    }
+
     /** True when [text] reads as MicroDVD: its first cue line opens with two frame numbers. */
     fun isMicroDvd(text: String): Boolean =
         text.lineSequence().map { it.trim().trimStart('\uFEFF') }.firstOrNull { it.isNotEmpty() }
@@ -105,4 +132,7 @@ object ExternalSubtitle {
 
     private val CUE = Regex("""^\{(\d+)\}\{(\d+)\}(.*)$""")
     private val STYLE = Regex("""\{[^}]*\}""")
+
+    /** Two or three letters, with a region or script after a hyphen or underscore if any. */
+    private val LANGUAGE_TAG = Regex("""[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,4})?""")
 }

@@ -612,6 +612,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private var settingsSubtitlesPending = false
 
+    /** The subtitle tracks as last written to the log, and whether their first lines have been. See [logSubtitleTracks]. */
+    private var subtitleLogLine: String? = null
+    private var firstCuesLogged = false
+
     /** What the track choice is filed under: the series name, or this video's own. */
     private val seriesKey: String
         get() = MediaName.parse(mediaTitle).title.ifBlank { mediaTitle }
@@ -1002,6 +1006,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             pickerOpen =
                 TrackPickerFragment.isOpen(supportFragmentManager)
             holdControls()
+            // The picker holds the row up, and with the row up the subtitles stand down where
+            // they cannot clear it, which on a television is always: the look lines' preview
+            // and a track just chosen showed nothing at all. See [liftSubtitles].
+            liftSubtitles()
             if (!pickerOpen) controls?.focusRow()
         }
         // The manifest opts into the new back dispatch, and from Android 13 that means Back never
@@ -2881,6 +2889,17 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private val playerListener = object : Player.Listener {
         override fun onCues(cueGroup: CueGroup) {
             subtitleView.setCues(scaledForPicture(cueGroup.cues))
+            if (!firstCuesLogged && cueGroup.cues.isNotEmpty()) {
+                firstCuesLogged = true
+                val pictures = cueGroup.cues.count { it.bitmap != null }
+                Log.i(
+                    "TMPlayer",
+                    "Subtitles: first lines at ${player?.currentPosition ?: -1} ms, " +
+                        "${cueGroup.cues.size - pictures} text, $pictures pictures; view " +
+                        "${subtitleView.width}x${subtitleView.height} alpha ${subtitleView.alpha} " +
+                        "shown ${subtitleView.isShown}",
+                )
+            }
         }
 
         /**
@@ -2891,6 +2910,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
          * a phone, and the file's defaults on a series being watched for the first time.
          */
         override fun onTracksChanged(tracks: Tracks) {
+            logSubtitleTracks(tracks)
             if (pictureUnplayable(tracks)) return
             restoreResumeTracks(tracks)
             applySettingsSubtitles(tracks)
@@ -3027,6 +3047,26 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun tracksOfType(current: Tracks, type: Int): List<Pair<Tracks.Group, Int>> =
         current.groups.filter { it.type == type }.flatMap { group -> (0 until group.length).map { group to it } }
+
+    /**
+     * One log line each time the subtitle tracks or the one chosen change, and one when the
+     * chosen track's first lines arrive ([playerListener]'s onCues): what a "chosen, but nothing
+     * shows" report needs from `adb logcat -s TMPlayer`. The kind of track above all, since a
+     * picture track (PGS, VobSub, DVB) and a styled one (ASS) take different paths to the screen.
+     * The chosen track is starred.
+     */
+    private fun logSubtitleTracks(tracks: Tracks) {
+        val line = tracksOfType(tracks, C.TRACK_TYPE_TEXT).joinToString("; ") { (group, index) ->
+            val format = group.getTrackFormat(index)
+            val chosen = if (group.isTrackSelected(index)) "*" else ""
+            "$chosen${format.id} ${format.sampleMimeType} ${format.codecs} ${format.language} " +
+                "flags ${format.selectionFlags} supported ${group.isTrackSupported(index)}"
+        }
+        if (line == subtitleLogLine) return
+        subtitleLogLine = line
+        firstCuesLogged = false
+        Log.i("TMPlayer", "Subtitles: ${line.ifEmpty { "none in this file" }}")
+    }
 
     /** This video's tracks and speed as they stand, for the resume point. */
     private fun resumeState(exo: Player): ResumeState {
@@ -3251,6 +3291,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         player?.removeListener(playerListener)
         player?.release()
         player = null
+        // The listener is gone before the release, so the player's own "no cues" never arrives:
+        // the line on screen would stay frozen over the next video's opening.
+        subtitleView.setCues(emptyList())
     }
 
     /**
@@ -5916,8 +5959,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             val lift = if (room == null) reach else reach.coerceAtMost(room.coerceAtLeast(0))
             // Where the climb cannot clear the row, or the cue would sit among the centre buttons
             // and their episode captions, the cue stands down while the row is up rather than
-            // running through the timebar. It comes back with the row.
-            val blocked = controlsUp && room != null && (room < 0 || room < reach)
+            // running through the timebar. It comes back with the row. Never while a track
+            // picker is open, though: the subtitles behind it are what its look lines preview
+            // and what says a track just chosen works, and the picker covers the row anyway.
+            val blocked = controlsUp && !pickerOpen && room != null && (room < 0 || room < reach)
             subtitleView.animate()
                 .alpha(if (blocked) 0f else 1f)
                 .translationY(if (controlsUp) -lift.toFloat() else 0f)
