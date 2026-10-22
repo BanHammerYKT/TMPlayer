@@ -97,7 +97,11 @@ internal fun TrailerPlayer(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // No background of its own: WebView plays the video on a surface behind the window and
+        // leaves a hole in its own drawing for it, and a black box painted under the WebView in
+        // the same window covered that hole, so a trailer played as sound over black (POCO F5,
+        // WebView 157, 2026-10-22). The page and the WebView are black around the picture.
+        Box(Modifier.fillMaxSize()) {
             var view: WebView? = null
             AndroidView(
                 factory = { context ->

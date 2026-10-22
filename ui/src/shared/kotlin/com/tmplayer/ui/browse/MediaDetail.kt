@@ -218,6 +218,10 @@ fun MediaDetailPanel(
     // never where a platform passed its own picture and words.
     val extras = rememberMetaExtras(meta.takeIf { poster == null && overview == null })
     val trailers = rememberTrailerLauncher()
+    // The trailer's player, once for the page and outside its list: placed in the list's first
+    // item it was composed twice while the first paint's list handed over to the live one, and
+    // two players opened one over the other (sound over a black screen, 2026-10-22).
+    TrailerHost(trailers)
 
     val cover = rememberCover(item)
     // A record's item (opened from Continue watching, say) carries no thumbnail: its picture is
@@ -354,7 +358,6 @@ fun MediaDetailPanel(
             }
         }
         extras?.trailer?.let { trailer -> trailers.unopened?.takeIf { it == trailer }?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) } }
-        TrailerHost(trailers)
 
         // A film the chat posted several times over: every copy by quality and size, one click away.
         Versions(item, onPickCopy, chatTitle, copyStarted)

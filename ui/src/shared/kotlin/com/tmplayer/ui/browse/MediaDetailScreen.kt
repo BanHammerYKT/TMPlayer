@@ -555,6 +555,10 @@ private fun Actions(
     val s = LocalStrings.current
     val tv = !isTouch()
     val trailers = rememberTrailerLauncher()
+    // The trailer's player, once for the page and outside its list: placed in the list's first
+    // item it was composed twice while the first paint's list handed over to the live one, and
+    // two players opened one over the other (sound over a black screen, 2026-10-22).
+    TrailerHost(trailers)
     // Posters and overviews are off: one button to turn them on from here, as Settings can.
     val online = OnlineMetadata.current
     val metadataOff = online != null && !online.settings.collectAsState().value.enabled
@@ -597,7 +601,6 @@ private fun Actions(
             }
         }
         trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) }
-        TrailerHost(trailers)
     }
 }
 

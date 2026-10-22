@@ -133,6 +133,10 @@ fun WideDetailPanel(
     val logoReady = rememberTitleLogoReady(meta, metaState.settled)
     val firstPaint = rememberFirstPaint(item.id, metaState.settled && extrasState.settled && logoReady)
     val trailers = rememberTrailerLauncher()
+    // The trailer's player, once for the page and outside its list: placed in the list's first
+    // item it was composed twice while the first paint's list handed over to the live one, and
+    // two players opened one over the other (sound over a black screen, 2026-10-22).
+    TrailerHost(trailers)
     val cover = rememberCover(item)
     val art = rememberArtItem(item)
     val source = remember(item.id, art, cover, meta?.wideUrl) { BackdropSource(art.miniThumbnail, art.thumbnailFileId, cover, meta?.wideUrl) }
@@ -279,7 +283,6 @@ fun WideDetailPanel(
                         }
                     }
                     trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 4.dp)) }
-                    TrailerHost(trailers)
                 }
 
                 // The overview at a reading measure, the copies and bookmarks under it, and the

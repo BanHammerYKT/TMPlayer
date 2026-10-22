@@ -803,6 +803,10 @@ fun SeriesPanel(
     val namesComing = !metaState.settled || (meta?.kind == com.tmplayer.online.MetaKind.Show && names == null)
     val holdEpisodeWords = remember(series.key, shown.number, firstPaint) { namesComing }
     val trailers = rememberTrailerLauncher()
+    // The trailer's player, once for the page and outside its list: placed in the list's first
+    // item it was composed twice while the first paint's list handed over to the live one, and
+    // two players opened one over the other (sound over a black screen, 2026-10-22).
+    TrailerHost(trailers)
     val target = next ?: series.episodes.first()
     val art = next?.item ?: target.item
     val cover = remember(art.chatId, art.messageId, series.title) { CoverArt.of(art).copy(title = series.title, number = null) }
@@ -1028,7 +1032,6 @@ fun SeriesPanel(
                     }
                 }
                 trailers.unopened?.takeIf { it == extras?.trailer }?.let { TrailerQr(it) }
-                TrailerHost(trailers)
             }
         }
 
