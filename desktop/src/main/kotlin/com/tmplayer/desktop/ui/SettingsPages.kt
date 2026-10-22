@@ -391,10 +391,8 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
     ) { on ->
         scope.launch {
             settings.setResumeSync(on)
-            if (on) {
-                toast(s.settingsResumeSyncStarted)
-                com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
-            }
+            // The switch and its line say it is on; nothing more to say.
+            if (on) com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
         }
     }
     // Hidden chats: each one with Show, and Show all for several; the empty list says how one gets here.
@@ -404,14 +402,14 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
         Setting(s.settingsHiddenChats, s.settingsHiddenChatsNote, icon = TmIcons.VisibilityOff) {}
         hiddenChats.forEach { chat ->
             Action(chat.title.ifBlank { chat.id.toString() }, s.settingsHiddenChatOne, TmIcons.Chats, value = s.settingsHiddenChatsShow, end = RowEnd.None) {
+                // The line leaving this list is the answer.
                 scope.launch { settings.showChat(chat.id) }
-                toast(s.settingsHiddenChatsShown(chat.title))
             }
         }
         if (hiddenChats.size > 1) {
             Action(s.settingsHiddenChatsShowAll, s.settingsHiddenChatsDetail(hiddenChats.size), TmIcons.Checklist, end = RowEnd.None) {
+                // The list emptying is the answer.
                 scope.launch { settings.showAllChats() }
-                toast(s.settingsHiddenChatsAllShown)
             }
         }
     }

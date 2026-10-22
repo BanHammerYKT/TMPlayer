@@ -94,7 +94,6 @@ fun WatchedPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
     var confirmClear by remember { mutableStateOf(false) }
     // The page's, not a tile's: unmarking takes the tile away, and with it any scope of its own.
     val scope = rememberCoroutineScope()
-    val toast = rememberToast()
     // "Watched 5 minutes ago" moves on while the page is open.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -138,8 +137,8 @@ fun WatchedPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
                         daySectionItems(days, key = { it.key }) { index, record, day ->
                             LaunchedEffect(record) { state.noteChatTitle(record.chatId, record.chatTitle) }
                             WatchedTile(state, record, progress[record.key]?.fraction, now, nav, index, day) {
+                                // The card leaving this page is the answer.
                                 val item = HomeRows.watchedItem(record, all.orEmpty())
-                                toast(s.watchedMarkedUnwatched(item.title))
                                 scope.launch {
                                     runCatching { setWatched(state.watched, state.settings, item, record.chatTitle, watched = false) }
                                 }
@@ -217,7 +216,6 @@ fun WatchLaterPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
     val progress by state.settings.watchProgress.collectAsState(initial = emptyMap())
     // The page's, not a tile's: removing takes the tile away, and with it any scope of its own.
     val scope = rememberCoroutineScope()
-    val toast = rememberToast()
     Column(Modifier.fillMaxSize()) {
         PageHeader(BrowseTab.History.heading, HistoryTab.WatchLater.blurb, actions = { PosterSizeStep(state) })
         tabs()
@@ -241,7 +239,7 @@ fun WatchLaterPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
                         itemsIndexed(list, key = { _, it -> it.key }) { index, record ->
                             LaunchedEffect(record) { state.noteChatTitle(record.chatId, record.chatTitle) }
                             WatchLaterTile(state, record, progress[record.key]?.fraction, nav, index) {
-                                toast(s.detailWatchLaterRemoved(record.title))
+                                // The card leaving this page is the answer.
                                 scope.launch { runCatching { state.watched.watchLater.remove(record.chatId, record.messageId) } }
                             }
                         }

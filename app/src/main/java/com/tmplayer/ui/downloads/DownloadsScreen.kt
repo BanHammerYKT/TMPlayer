@@ -570,7 +570,7 @@ fun DownloadsScreen(
                 return@launch
             }
             OfflineDownloads.start(context, row.record.toMediaItem().copy(fileId = row.fileId), row.chatTitle)
-            toast(if (row.cached) L.downloadsSavingTitle(title = row.title) else L.downloadsResumingTitle(title = row.title))
+            // Not said: the row moves to Downloading, or its bar starts moving again.
             if (row.cached) {
                 tab = ONGOING
                 // The page's Downloading section is at the top: show it arriving there.
@@ -653,7 +653,7 @@ fun DownloadsScreen(
     fun removeMissing(row: DownloadRow) {
         scope.launch {
             withContext(Dispatchers.IO) { settings.forgetDownload(row.record.chatId, row.record.messageId) }
-            toast(L.downloadsRemovedTitle(title = row.title))
+            // The row leaving is the answer.
             refresh(history)
         }
     }

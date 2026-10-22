@@ -320,10 +320,10 @@ private fun Browse(state: ShellState, player: PlayerContent) {
     LaunchedEffect(Unit) { DesktopConnectivity.start() }
     val network by DesktopConnectivity.status.collectAsState()
     val telegramConnected by Td.connected.collectAsState()
+    // Back online is not said: the offline pill going is the news, and the lists refresh in place.
     val connection = rememberConnectionNotice(network, telegramConnected) {
         chats.load()
         browseScope.launch { runCatching { state.extras.updates?.checkIfDue() } }
-        toast(s.connectionBackOnline)
     }
 
     BackHandler(enabled = state.openChat != null) { state.closeChat() }

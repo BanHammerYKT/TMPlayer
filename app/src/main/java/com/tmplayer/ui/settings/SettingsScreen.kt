@@ -1239,10 +1239,8 @@ fun SettingsScreen(
                             scope.launch {
                                 val on = !resumeSync
                                 settings.setResumeSync(on)
-                                if (on) {
-                                    toast(s.settingsResumeSyncStarted)
-                                    com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
-                                }
+                                // The switch and its line say it is on; nothing more to say.
+                                if (on) com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
                             }
                         },
                     )
@@ -2284,15 +2282,15 @@ fun SettingsScreen(
                             detail = s.settingsHiddenChatsShow,
                             icon = TmIcons.VisibilityOff,
                         ) {
+                            // The line leaving this list is the answer.
                             scope.launch { settings.showChat(chat.id) }
-                            toast(s.settingsHiddenChatsShown(chat.title))
                         }
                     }
                     if (hiddenChats.size > 1) {
                         ChoiceLine(s.settingsHiddenChatsShowAll, icon = TmIcons.Checklist) {
                             prompt = null
+                            // The Hidden chats row saying there are none is the answer.
                             scope.launch { settings.showAllChats() }
-                            toast(s.settingsHiddenChatsAllShown)
                         }
                     }
                 }

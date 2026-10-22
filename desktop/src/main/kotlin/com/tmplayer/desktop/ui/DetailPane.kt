@@ -268,10 +268,8 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             DetailAction.StartOver -> state.openPlayer(item, startFromBeginning = true)
             DetailAction.MarkWatched, DetailAction.MarkUnwatched -> {
                 val mark = action == DetailAction.MarkWatched
-                outlives.launch {
-                    runCatching { setWatched(state.watched, state.settings, item, title, mark) }
-                    toast(if (mark) s.watchedMarkedWatched(item.title) else s.watchedMarkedUnwatched(item.title))
-                }
+                // Not said: the tick on the card shows it.
+                outlives.launch { runCatching { setWatched(state.watched, state.settings, item, title, mark) } }
             }
             DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> {
                 val add = action == DetailAction.AddWatchLater
@@ -280,14 +278,8 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                     toast(if (add) s.detailWatchLaterAdded(item.title) else s.detailWatchLaterRemoved(item.title))
                 }
             }
-            DetailAction.Download -> {
-                OfflineDownloads.start(state.downloads, item, title)
-                toast(s.downloadsDownloadingTitle(item.title))
-            }
-            DetailAction.SaveToDownloads -> {
-                OfflineDownloads.start(state.downloads, item, title)
-                toast(s.downloadsSavingTitle(item.title))
-            }
+            // Not said: the card shows the queue's state, and the Downloads button its count.
+            DetailAction.Download, DetailAction.SaveToDownloads -> OfflineDownloads.start(state.downloads, item, title)
             DetailAction.InDownloads -> state.go(Destination.Downloads)
             DetailAction.RemoveDownload -> Unit
             DetailAction.CancelDownload -> OfflineDownloads.cancel(state.downloads, item.fileId)

@@ -686,7 +686,6 @@ fun ContinuePage(state: ShellState, tabs: @Composable () -> Unit = {}) {
     // The copies of one film or episode as one card, the one watched last, as on Home.
     val records = remember(stored, state.historySort) { stored?.let(com.tmplayer.data.HomeRows::foldCopies)?.let { historyOrder(state, it) { record -> record.toMediaItem() } } }
     val scope = rememberCoroutineScope()
-    val toast = rememberToast()
     // The card waiting on "Remove from Continue watching?": its saved place cannot be got back.
     var forgetting by remember { mutableStateOf<ResumeRecord?>(null) }
     forgetting?.let { record ->
@@ -731,9 +730,9 @@ fun ContinuePage(state: ShellState, tabs: @Composable () -> Unit = {}) {
                             ContinueTile(
                                 state, record, nav, index,
                                 onMarkWatched = {
-                                    // On the page's scope: marking takes the card off this page.
+                                    // On the page's scope: marking takes the card off this page,
+                                    // which is all the answer it needs.
                                     val item = record.toMediaItem()
-                                    toast(s.watchedMarkedWatched(item.title))
                                     scope.launch {
                                         runCatching { setWatched(state.watched, state.settings, item, record.chatTitle, watched = true) }
                                     }
@@ -1286,10 +1285,8 @@ internal fun TileMenu(
             DropdownMenuItem(text = { Text(WatchedWords.markLabel(watchedToggle)) }, onClick = {
                 onDismiss()
                 val mark = !watchedToggle
-                scope.launch {
-                    runCatching { setWatched(state.watched, state.settings, item, title, mark) }
-                    toast(if (mark) s.watchedMarkedWatched(item.title) else s.watchedMarkedUnwatched(item.title))
-                }
+                // Not said: the tick on the card shows it.
+                scope.launch { runCatching { setWatched(state.watched, state.settings, item, title, mark) } }
             })
         }
         // Nothing is copied, so this stays for a chat that restricts saving.
@@ -1320,13 +1317,12 @@ internal fun TileMenu(
             !item.canBeSaved -> Unit
             item.onDevice -> DropdownMenuItem(text = { Text(withFree(s.downloadsSave, free)) }, onClick = {
                 onDismiss()
+                // Not said: the card shows the queue's state, and the Downloads button its count.
                 OfflineDownloads.start(state.downloads, item, title)
-                toast(s.downloadsSavingTitle(item.title))
             })
             else -> DropdownMenuItem(text = { Text(withFree(s.downloadsDownload, free)) }, onClick = {
                 onDismiss()
                 OfflineDownloads.start(state.downloads, item, title)
-                toast(s.downloadsDownloadingTitle(item.title))
             })
         }
         if (item.canBeSaved && (record != null || item.onDevice)) {

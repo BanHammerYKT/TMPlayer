@@ -859,11 +859,11 @@ private fun Root() {
                 connectionNotice = ConnectionNotice.Hidden
                 wasOffline = false
                 wasDisconnected = false
+                // Nothing said: the offline pill going is the news, and the lists refresh in place.
                 if (auth is AuthState.Ready) {
                     chatsViewModel.load()
                     homeViewModel.refreshInPlace()
                     updates.checkIfDue()
-                    toast(L.mainBackOnline)
                 }
             }
             // Online, signed in, and the line to Telegram is down: back from the background, most
@@ -1221,7 +1221,7 @@ private fun Root() {
                 }
             }
         }
-        toast(if (watched) L.mainMarkedWatched(title = item.title) else L.mainMarkedUnwatched(title = item.title))
+        // Not said: the tick on the card, or the card leaving its row, shows it.
     }
 
     /** [openStored] once its guard is up. */
@@ -1723,48 +1723,17 @@ private fun Root() {
                     downloadCount = activeDownloadCount,
                     updateVersion = offeredUpdate,
                     onUpdate = { showUpdate = true },
-                    // Each of these changes the chat in Telegram, so each says out loud what it
-                    // did: the row has already moved by the time the menu closes, and a row
-                    // moving on its own is not an account of anything.
-                    onTogglePinned = { chat ->
-                        chatsViewModel.setPinned(chat, !chat.isPinned) { toast(it) }
-                        toast(
-                            if (chat.isPinned) {
-                                L.mainUnpinned(title = chat.title)
-                            } else {
-                                L.mainPinned(title = chat.title)
-                            },
-                        )
-                    },
-                    onToggleArchived = { chat ->
-                        chatsViewModel.setArchived(chat, !chat.isArchived) { toast(it) }
-                        toast(
-                            if (chat.isArchived) {
-                                L.mainUnarchived(title = chat.title)
-                            } else {
-                                L.mainArchived(title = chat.title)
-                            },
-                        )
-                    },
-                    onToggleMuted = { chat ->
-                        chatsViewModel.setMuted(chat, !chat.isMuted) { toast(it) }
-                        toast(
-                            if (chat.isMuted) L.mainUnmuted(title = chat.title) else L.mainMuted(title = chat.title),
-                        )
-                    },
-                    onMarkRead = { chat ->
-                        chatsViewModel.markRead(chat) { toast(it) }
-                        toast(L.mainMarkedRead(title = chat.title))
-                    },
+                    // Each of these is said only when Telegram refuses it. Done, the row says so
+                    // itself: the pin, the bell, the badge clearing, or the row leaving the list.
+                    onTogglePinned = { chat -> chatsViewModel.setPinned(chat, !chat.isPinned) { toast(it) } },
+                    onToggleArchived = { chat -> chatsViewModel.setArchived(chat, !chat.isArchived) { toast(it) } },
+                    onToggleMuted = { chat -> chatsViewModel.setMuted(chat, !chat.isMuted) { toast(it) } },
+                    onMarkRead = { chat -> chatsViewModel.markRead(chat) { toast(it) } },
                     onToggleFavorite = { chat ->
                         scope.launch {
-                            // The star lands on a row the menu was covering, and in the Favourites
-                            // tab the row leaves the screen altogether, so the only account of what
-                            // happened is this line.
-                            // Starring says so itself, the star filling in; only a removal is
-                            // told, since in the Favourites tab the row leaves the screen.
+                            // Not said either way: the star fills or empties, and in the
+                            // Favourites tab the row leaves.
                             val nowFavorite = settings.toggleFavorite(chat.id)
-                            if (!nowFavorite) toast(L.mainFavouriteRemoved(title = chat.title))
                             if (nowFavorite) offerNewVideos()
                         }
                     },
@@ -1777,21 +1746,9 @@ private fun Root() {
                     // Asked first: the saved place is the whole of what this forgets, and there
                     // is no getting it back short of finding the spot by hand.
                     onForgetMedia = { record -> forgetPrompt = record },
-                    onClearFavorites = {
-                        scope.launch {
-                            val count = favorites.size
-                            settings.clearFavorites(allowedChats)
-                            toast(
-                                L.mainFavouritesCleared(count = count),
-                            )
-                        }
-                    },
-                    onClearHistory = {
-                        scope.launch {
-                            settings.clearWatchHistory()
-                            toast(L.mainHistoryCleared)
-                        }
-                    },
+                    // The clears below were asked first, and the emptied row or tab is their answer.
+                    onClearFavorites = { scope.launch { settings.clearFavorites(allowedChats) } },
+                    onClearHistory = { scope.launch { settings.clearWatchHistory() } },
                     onMarkMediaWatched = { record ->
                         setWatched(record.toMediaItem(), record.chatTitle, watched = true)
                     },
@@ -1802,19 +1759,14 @@ private fun Root() {
                     onMarkUnwatched = { record ->
                         setWatched(HomeRows.watchedItem(record, watchedHistory), record.chatTitle, watched = false)
                     },
-                    onClearWatched = {
-                        scope.launch {
-                            runCatching { watchedStore.clear() }
-                            toast(L.mainWatchedCleared)
-                        }
-                    },
+                    onClearWatched = { scope.launch { runCatching { watchedStore.clear() } } },
                     watchLater = watchLater,
                     onOpenWatchLater = { record -> openStored(record.toMediaItem(), record.chatTitle) },
+                    // The card leaving the row is the answer.
                     onRemoveWatchLater = { record ->
                         App.backgroundScope.launch {
                             runCatching { watchedStore.watchLater.remove(record.chatId, record.messageId) }
                         }
-                        toast(L.detailWatchLaterRemoved(record.title))
                     },
                     // Marked "Opens on launch" only while Carry on from the last chat is on.
                     launchChatId = if (openLastChat) lastChatId else 0L,
@@ -2148,10 +2100,8 @@ private fun Root() {
                 confirmLabel = L.commonRemove,
                 onConfirm = {
                     forgetPrompt = null
-                    scope.launch {
-                        settings.clearResumeCopies(record)
-                        toast(L.mainForgotResume(title = record.title))
-                    }
+                    // The card leaving Continue watching is the answer.
+                    scope.launch { settings.clearResumeCopies(record) }
                 },
                 onDismiss = { forgetPrompt = null },
             )

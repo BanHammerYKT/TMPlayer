@@ -244,25 +244,18 @@ fun ChatsPage(
                     nav = nav,
                     onOpen = state::openChat,
                     onStar = { chat -> scope.launch { state.settings.toggleFavorite(chat.id) } },
-                    // Each says out loud what it did, as on the phone: the row has already moved
-                    // by the time the toast shows, and a row moving on its own explains nothing.
+                    // Pin, archive and read are said only when Telegram refuses them, as on the
+                    // phone: done, the row shows it (moving to the top, leaving, the badge
+                    // clearing). Muting still says so, since here a row without unread messages
+                    // looks the same either way.
                     actions = ChatRowActions(
-                        onTogglePinned = { chat ->
-                            model.setPinned(chat, !chat.isPinned) { toast(it) }
-                            toast(if (chat.isPinned) s.chatsUnpinned(chat.title) else s.chatsPinned(chat.title))
-                        },
+                        onTogglePinned = { chat -> model.setPinned(chat, !chat.isPinned) { toast(it) } },
                         onToggleMuted = { chat ->
                             model.setMuted(chat, !chat.isMuted) { toast(it) }
                             toast(if (chat.isMuted) s.chatsUnmuted(chat.title) else s.chatsMuted(chat.title))
                         },
-                        onToggleArchived = { chat ->
-                            model.setArchived(chat, !chat.isArchived) { toast(it) }
-                            toast(if (chat.isArchived) s.chatsUnarchived(chat.title) else s.chatsArchived(chat.title))
-                        },
-                        onMarkRead = { chat ->
-                            model.markRead(chat) { toast(it) }
-                            toast(s.chatsMarkedRead(chat.title))
-                        },
+                        onToggleArchived = { chat -> model.setArchived(chat, !chat.isArchived) { toast(it) } },
+                        onMarkRead = { chat -> model.markRead(chat) { toast(it) } },
                         onHide = { chat ->
                             // Gone from the list is the answer; no toast (user, 2026-10-22). Settings,
                             // Library, Hidden chats shows it again.

@@ -555,8 +555,8 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
                                         }
                                         val id = runCatching { Td.currentFileId(record.chatId, record.messageId, record.fileId) }
                                             .getOrDefault(record.fileId)
+                                        // Not said: the row moves up to Downloading.
                                         OfflineDownloads.start(state.downloads, record.toMediaItem().copy(fileId = id), record.chatTitle)
-                                        toast(s.downloadsSavingTitle(record.title))
                                     }
                                 },
                                 onDelete = {
