@@ -121,4 +121,27 @@ class DetailActionsTest {
         assertFalse(DetailActions.of(DetailContext(canBeSaved = true)).contains(Rename))
         assertFalse(listOf(SplitCopy, JoinCopies, WrongMatch, UseMatch, Rename).any(DetailActions::keepsACopy))
     }
+
+    @Test
+    fun `another copy kept says so and offers no second download`() {
+        val actions = DetailActions.of(phoneGrid.copy(grouped = true, copyInDownloads = true))
+        assertTrue(InDownloads in actions)
+        assertFalse(Download in actions)
+        assertFalse(SaveToDownloads in actions)
+        // The copy that is kept is removed from its own page, not from this one's.
+        assertFalse(RemoveDownload in actions)
+        // Nothing of this file is here to hand over.
+        assertFalse(Share in actions)
+    }
+
+    @Test
+    fun `this file kept or coming down wins over another copy kept`() {
+        assertEquals(
+            listOf(InDownloads, RemoveDownload),
+            DetailActions.of(phoneGrid.copy(inDownloads = true, copyInDownloads = true)).filter { it == InDownloads || it == RemoveDownload },
+        )
+        val coming = DetailActions.of(phoneGrid.copy(downloading = true, copyInDownloads = true))
+        assertTrue(CancelDownload in coming)
+        assertFalse(InDownloads in coming)
+    }
 }

@@ -74,6 +74,8 @@ import kotlinx.coroutines.withContext
  * @param onSelectVideos non-null in a chat's grid, where picking several videos is possible.
  * @param onOpenChat non-null outside the video's own chat (Home, search).
  * @param onDownload queues the video; see [queueDownloads]. Run by the caller so it outlives this.
+ *   The page stays open for it (the button turns into the download's own state where it is);
+ *   only the hold menu closes, as it does for every line.
  * @param onRemoved a download was removed from here, so a tile's badge is out of date.
  * @param onOpenItem opens another video's detail in place of this one, for "More like this".
  */
@@ -99,7 +101,14 @@ internal fun MediaDetailOpened(
     val scope = rememberCoroutineScope()
     val touch = isTouch()
     val downloads by OfflineDownloads.active.collectAsStateWithLifecycle()
+    // Another copy of the same film on the queue counts too: the film is coming down, and a second
+    // size of it is not what anybody asked for. Its Cancel then acts on that copy.
     val downloading = downloads[item.fileId]
+        ?: item.versions.firstNotNullOfOrNull { copy -> downloads[copy.fileId]?.takeIf { copy.id != item.id } }
+    // Pressed, and still being planned against the disk: the button shows it took the press and
+    // a second press does not plan it twice. See [QueueingDownloads].
+    val planning by QueueingDownloads.fileIds.collectAsStateWithLifecycle()
+    val asking = item.fileId in planning
     val settings = remember(context) { SettingsStore(context) }
     // Watch later is this device's own list, read and written here so every place that opens a
     // video's actions offers it without passing it down.
@@ -108,10 +117,22 @@ internal fun MediaDetailOpened(
     val later = SettingsStore.progressKey(item.chatId, item.messageId) in laterKeys
 
     // Asked once the panel is up: which kind of copy is here decides half the actions. The
-    // download index first, since TDLib let go of a download's file when it moved.
-    val inDownloads by produceState(initialValue = item.locality == MediaItem.Locality.Downloaded, item.id, downloading) {
-        value = LocalDownloads.fileFor(settings, item.chatId, item.messageId) != null
+    // download index first, since TDLib let go of a download's file when it moved. Read again
+    // whenever the index changes, so a download that finishes, or one deleted from Downloads
+    // while this is open, shows here at once: keyed on the queue alone, the queue let go of a
+    // finished file a moment before its record was written, and the page offered Download again.
+    val history by remember(settings) { settings.downloadHistory }.collectAsStateWithLifecycle(initialValue = null)
+    val kept by produceState(initialValue = Kept(item.locality == MediaItem.Locality.Downloaded, null), item.id, history) {
+        val records = history ?: return@produceState
+        value = withContext(Dispatchers.IO) {
+            fun present(copy: MediaItem) = LocalDownloads.presentFile(
+                records.firstOrNull { it.chatId == copy.chatId && it.messageId == copy.messageId },
+            ) != null
+            val own = present(item)
+            Kept(own, if (own) null else item.versions.firstOrNull { it.id != item.id && present(it) })
+        }
     }
+    val inDownloads = kept.here
     val cachedHere by produceState(initialValue = false, item.fileId, downloading) {
         value = runCatching { Td.isFileCached(item.fileId) }.getOrDefault(false)
     }
@@ -206,6 +227,7 @@ internal fun MediaDetailOpened(
             finished = finished,
             watchLater = later,
             inDownloads = inDownloads,
+            copyInDownloads = kept.copy != null,
             cached = cachedHere,
             downloading = downloading != null,
             canSelect = onSelectVideos != null,
@@ -254,10 +276,29 @@ internal fun MediaDetailOpened(
                 com.tmplayer.ui.components.showMessage(context, if (add) s.detailWatchLaterAdded(item.title) else s.detailWatchLaterRemoved(item.title))
                 onDismiss()
             } }
-            DetailAction.Download, DetailAction.SaveToDownloads -> { { onDownload(); onDismiss() } }
-            DetailAction.InDownloads -> onDismiss
+            // The page stays where it is: the button turns into the download's state (the ring,
+            // then Downloaded), the message says what happened, and a remote keeps its focus on
+            // the button. Closing it here sent the viewer back to Home for no reason. A press
+            // while the first is still being planned is the same press again, so it is let go.
+            DetailAction.Download, DetailAction.SaveToDownloads -> { {
+                if (!asking) onDownload()
+                if (asMenu) onDismiss()
+            } }
+            // On the page it only says how things stand; the copy that is kept opens from it.
+            DetailAction.InDownloads -> when {
+                asMenu -> onDismiss
+                kept.copy != null && onOpenItem != null -> { {
+                    val copy = kept.copy
+                    if (copy != null) scope.launch { runCatching { settings.setCopyPick(copy) }; onOpenItem(copy) }
+                } }
+                else -> { {} }
+            }
             DetailAction.RemoveDownload -> { { confirmingRemove = true } }
-            DetailAction.CancelDownload -> { { OfflineDownloads.cancel(context, item.fileId); onDismiss() } }
+            // The file on the queue, which is another copy's when that is the one coming down.
+            DetailAction.CancelDownload -> { {
+                OfflineDownloads.cancel(context, downloading?.fileId ?: item.fileId)
+                if (asMenu) onDismiss()
+            } }
             DetailAction.SelectVideos -> { { onDismiss(); onSelectVideos?.invoke() } }
             DetailAction.Share -> { { scope.launch { shareVideo(context, item, send = true); onDismiss() } } }
             DetailAction.OpenElsewhere -> { { scope.launch { shareVideo(context, item, send = false); onDismiss() } } }
@@ -277,24 +318,35 @@ internal fun MediaDetailOpened(
             DetailAction.CommentVideos -> { { commentsOpen = true } }
             DetailAction.ExportCopy -> { {
                 com.tmplayer.ui.components.showMessage(context, s.keepExporting(item.title))
-                App.backgroundScope.launch(Dispatchers.Main) {
+                // Off the main thread, with the application's context: the file is looked up and
+                // copied on the disk, which held the screen, and the page (and its activity) may be
+                // gone long before a large copy ends.
+                val app = context.applicationContext
+                App.backgroundScope.launch(Dispatchers.IO) {
                     val file = LocalDownloads.fileFor(settings, item.chatId, item.messageId)
                     val said = when {
                         file == null -> s.downloadsFileGone
                         // Asked again at the copy: the chat may have restricted saving since.
                         !Td.maySave(item.chatId, item.messageId) -> com.tmplayer.data.ContentProtection.NOT_SAVABLE
-                        else -> com.tmplayer.data.GalleryExport.copy(context, file, item.fileName.ifBlank { item.title }, item.mimeType)
+                        else -> com.tmplayer.data.GalleryExport.copy(app, file, item.fileName.ifBlank { item.title }, item.mimeType)
                             ?: s.keepExportedGallery
                     }
-                    com.tmplayer.ui.components.showMessage(context, said)
+                    withContext(Dispatchers.Main) { com.tmplayer.ui.components.showMessage(app, said) }
                 }
                 onDismiss()
             } }
         }
-        if (action == DetailAction.CancelDownload && downloading != null) {
-            cancelRow(s, downloading, run)
-        } else {
-            detailRow(action, s, watched, chatTitle, run, free = free)
+        when {
+            action == DetailAction.CancelDownload && downloading != null -> cancelRow(s, downloading, run)
+            // Taken, and on its way to the queue: an empty ring at once, so the press shows.
+            asking && (action == DetailAction.Download || action == DetailAction.SaveToDownloads) ->
+                detailRow(action, s, watched, chatTitle, run, free = free).copy(progress = 0f)
+            // Kept already: said, dimmed, and pressing it does nothing (it stays reachable, so the
+            // remote's focus stays on it once Download has turned into it). Another copy that is
+            // kept is the exception, being a way to that copy.
+            action == DetailAction.InDownloads && !asMenu && !(kept.copy != null && onOpenItem != null) ->
+                detailRow(action, s, watched, chatTitle, run).copy(label = s.downloadsDownloaded, enabled = false)
+            else -> detailRow(action, s, watched, chatTitle, run, free = free)
         }
     }
 
@@ -437,3 +489,6 @@ private fun DetailScreen(
         }
     }
 }
+
+/** Whether this video is in the Downloads folder ([here]), or else which other copy of it is. */
+private data class Kept(val here: Boolean, val copy: MediaItem?)

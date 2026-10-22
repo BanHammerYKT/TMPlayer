@@ -72,6 +72,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +83,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -187,6 +189,16 @@ class SeriesWatch(
     fun download(series: Series, season: SeriesSeason, which: SeasonDownload.Which) = SeasonDownloadRequest { held ->
         SeasonDownload.copies(series, season, which, finished, { point(it)?.fraction ?: 0f }, held)
     }
+
+    /** Where that button stands now, chosen as [download] chooses: see [SeasonDownload.state]. */
+    fun downloadState(
+        series: Series,
+        season: SeriesSeason,
+        which: SeasonDownload.Which,
+        downloaded: (MediaItem) -> Boolean,
+        queued: (MediaItem) -> Boolean,
+    ): SeasonDownload.State =
+        SeasonDownload.state(series, season, which, finished, { point(it)?.fraction ?: 0f }, downloaded, queued)
 
     companion object {
         val None = SeriesWatch({ null }, { false })
@@ -720,6 +732,12 @@ fun SeriesPanel(
      * null leaves the download buttons out.
      */
     onDownload: ((SeasonDownloadRequest) -> Unit)? = null,
+    /**
+     * [MediaItem.id] of every episode copy in the Downloads folder, so the download buttons say
+     * when the season is downloaded already, rather than offering it again. Kept up to date by
+     * the platform, so a download deleted while the page is open offers it again.
+     */
+    downloadedIds: Set<String> = emptySet(),
     /** The chat the show was posted in, for the facts line; null leaves it out. */
     chatTitle: String? = null,
     /**
@@ -775,7 +793,33 @@ fun SeriesPanel(
     }
     // Download is for the season shown, so its buttons follow the season picked.
     val downloads = onDownload != null && SeasonDownload.anySavable(shown)
+    // What each button stands for now, from the download index and the queue, so a season kept
+    // already says Downloaded and does nothing, and one coming down says so with its ring.
+    val queue by com.tmplayer.data.OfflineDownloads.active.collectAsState()
+    val seasonState = if (!downloads) SeasonDownload.State.Nothing else watch.downloadState(
+        series, shown, SeasonDownload.Which.Season, { it.id in downloadedIds }, { queue.containsKey(it.fileId) },
+    )
     val bothDownloads = downloads && SeasonDownload.unwatchedDiffers(shown, watch.finished)
+    // Nothing left in the season means nothing left in its unwatched part either. That button
+    // stays where it is, dimmed, rather than going (which would drop a remote's focus off the
+    // row); the season's button beside it is the one that says Downloaded or Downloading.
+    val unwatchedLeft = seasonState == SeasonDownload.State.Fetch && watch.downloadState(
+        series, shown, SeasonDownload.Which.Unwatched, { it.id in downloadedIds }, { queue.containsKey(it.fileId) },
+    ) == SeasonDownload.State.Fetch
+    // How far the season's downloads have come, for the ring while it is coming down.
+    val seasonProgress = if (seasonState != SeasonDownload.State.Coming) null else {
+        val entries = shown.episodes.flatMap { it.copies }.mapNotNull { queue[it.fileId] }
+        val total = entries.sumOf { it.totalBytes }
+        if (total > 0) (entries.sumOf { it.downloadedBytes }.toFloat() / total).coerceIn(0f, 1f) else 0f
+    }
+    // Pressed, and on its way to the queue: an empty ring at once, so the press shows before the
+    // queue does. Let go after a few seconds, in case nothing was queued (no room).
+    var asked by remember(series.key, shown.number) { mutableStateOf(false) }
+    LaunchedEffect(asked) {
+        if (!asked) return@LaunchedEffect
+        kotlinx.coroutines.delay(ASKED_RING_MS)
+        asked = false
+    }
 
     val metaState = com.tmplayer.ui.online.rememberMetaState(series.cover, showOnly = true)
     val meta = metaState.value
@@ -978,12 +1022,42 @@ fun SeriesPanel(
             val trailer = extras?.trailer
             val trailerGhost = trailer == null && holdTrailer
             val others = buildList {
-                if (trailer != null || holdTrailer) add(Triple(s.metadataTrailer, TrailerIcon) { trailer?.let(trailers::open); Unit })
+                if (trailer != null || holdTrailer) add(PageAction(s.metadataTrailer, TrailerIcon, { trailer?.let(trailers::open); Unit }))
                 if (downloads) {
-                    add(Triple(s.seriesDownloadSeason, TmIcons.Download) { onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Season)); Unit })
+                    add(
+                        when (seasonState) {
+                            SeasonDownload.State.Fetch -> PageAction(
+                                s.seriesDownloadSeason,
+                                TmIcons.Download,
+                                {
+                                    asked = true
+                                    onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Season))
+                                    Unit
+                                },
+                                progress = if (asked) 0f else null,
+                            )
+                            SeasonDownload.State.Coming ->
+                                PageAction(s.downloadsDownloading, TmIcons.Download, {}, enabled = false, progress = seasonProgress)
+                            SeasonDownload.State.Done ->
+                                PageAction(s.downloadsDownloaded, TmIcons.Download, {}, enabled = false)
+                            SeasonDownload.State.Nothing ->
+                                PageAction(s.seriesDownloadSeason, TmIcons.Download, {}, enabled = false)
+                        },
+                    )
                 }
                 if (bothDownloads) {
-                    add(Triple(s.seriesDownloadUnwatched, TmIcons.Download) { onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Unwatched)); Unit })
+                    add(
+                        PageAction(
+                            s.seriesDownloadUnwatched,
+                            TmIcons.Download,
+                            {
+                                asked = true
+                                onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Unwatched))
+                                Unit
+                            },
+                            enabled = unwatchedLeft,
+                        ),
+                    )
                 }
             }
             val hero: @Composable (Modifier) -> Unit = { m ->
@@ -1007,12 +1081,21 @@ fun SeriesPanel(
                             focusRequester = playFocus,
                             large = true,
                         )
-                        others.forEach { (label, icon, run) -> WideIconAction(label, icon, run, ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                        others.forEach { (label, icon, run, enabled, progress) -> WideIconAction(label, icon, run, ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled, progress = progress, enabled = enabled) }
                     }
                 } else if (tv) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         hero(Modifier)
-                        others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                        others.forEach { action ->
+                            RoundAction(
+                                action.label, action.icon, action.run,
+                                short = roundLabel(action.label, s),
+                                ghost = trailerGhost && action.label == s.metadataTrailer,
+                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
+                                progress = action.progress,
+                                enabled = action.enabled,
+                            )
+                        }
                     }
                 } else if (wide) {
                     // A phone on its side: the round buttons in Play's row, after it, as on a
@@ -1020,7 +1103,16 @@ fun SeriesPanel(
                     // so the trailer arriving later never moves it.
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         hero(Modifier)
-                        others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                        others.forEach { action ->
+                            RoundAction(
+                                action.label, action.icon, action.run,
+                                short = roundLabel(action.label, s),
+                                ghost = trailerGhost && action.label == s.metadataTrailer,
+                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
+                                progress = action.progress,
+                                enabled = action.enabled,
+                            )
+                        }
                     }
                 } else {
                     hero(Modifier.fillMaxWidth())
@@ -1031,7 +1123,16 @@ fun SeriesPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                            others.forEach { action ->
+                            RoundAction(
+                                action.label, action.icon, action.run,
+                                short = roundLabel(action.label, s),
+                                ghost = trailerGhost && action.label == s.metadataTrailer,
+                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
+                                progress = action.progress,
+                                enabled = action.enabled,
+                            )
+                        }
                         }
                     }
                 }
@@ -1413,3 +1514,15 @@ private fun HeroStaysWhole(list: LazyListState, content: @Composable () -> Unit)
     }
     CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
 }
+
+/** A round button beside a show's Play: the trailer, or a season's download in its present state. */
+private data class PageAction(
+    val label: String,
+    val icon: ImageVector,
+    val run: () -> Unit,
+    val enabled: Boolean = true,
+    val progress: Float? = null,
+)
+
+/** How long a pressed season download shows its empty ring while the queue has not shown it. */
+private const val ASKED_RING_MS = 5_000L

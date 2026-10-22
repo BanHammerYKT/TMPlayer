@@ -24,7 +24,14 @@ import com.tmplayer.data.start
 import com.tmplayer.i18n.L
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /*
  * Putting videos on the download queue, shared by every place that offers it: a chat's grid and its
@@ -45,8 +52,29 @@ internal suspend fun queueDownloads(
     ticked: List<MediaItem>,
     chatTitle: (MediaItem) -> String,
 ): String? {
-    val chosen = ticked.filter { it.canBeSaved }
+    val savable = ticked.filter { it.canBeSaved }
+    if (savable.isEmpty()) return null
+    // A second press while the first is still being planned (a double press, or Download season
+    // over an episode just asked for) leaves those videos to the first, whose sentence answers
+    // both: planned twice, the watch cache was given up twice and the viewer told twice.
+    val claimed = QueueingDownloads.claim(savable.map { it.fileId })
+    val chosen = savable.filter { it.fileId in claimed }
     if (chosen.isEmpty()) return null
+    var handedOver = false
+    try {
+        return planAndQueue(context, settings, chosen, chatTitle).also { handedOver = true }
+    } finally {
+        if (!handedOver) QueueingDownloads.release(claimed)
+    }
+}
+
+/** [queueDownloads] once the videos are its own to plan. */
+private suspend fun planAndQueue(
+    context: Context,
+    settings: SettingsStore,
+    chosen: List<MediaItem>,
+    chatTitle: (MediaItem) -> String,
+): String {
     // Android 13 counts a download's progress notification as one the viewer has to have agreed
     // to. Asked here rather than at first launch, because here is the one moment the request
     // explains itself.
@@ -73,7 +101,53 @@ internal suspend fun queueDownloads(
         }
     }
     taken.forEach { OfflineDownloads.start(context, it, chatTitle(it)) }
+    QueueingDownloads.releaseOnceQueued(chosen.map { it.fileId }.toSet(), taken)
     return message
+}
+
+/**
+ * The files a press asked for that the queue does not show yet: from the press, through the plan
+ * against the disk, until the download service has noted them (a moment after it is started).
+ * A detail page draws its button as taken meanwhile, and [queueDownloads] lets a second press on
+ * the same file go, so a double press plans and queues it once.
+ */
+internal object QueueingDownloads {
+    private val _fileIds = MutableStateFlow<Set<Int>>(emptySet())
+    val fileIds: StateFlow<Set<Int>> = _fileIds.asStateFlow()
+
+    /** Takes the ones of [ids] nobody is planning yet, and returns those. */
+    fun claim(ids: Collection<Int>): Set<Int> {
+        var taken = emptySet<Int>()
+        _fileIds.update { now ->
+            taken = ids.toSet() - now
+            now + taken
+        }
+        return taken
+    }
+
+    fun release(ids: Set<Int>) = _fileIds.update { it - ids }
+
+    /**
+     * Lets go of [claimed] at once except for the [queued] videos, which are held until the queue
+     * shows them, or for a few seconds at most should the service never say (Android refusing to
+     * start it is noted as a failed row, which counts as shown). Without the wait the button went
+     * back to Download for a moment between the plan and the service.
+     */
+    fun releaseOnceQueued(claimed: Set<Int>, queued: List<MediaItem>) {
+        val waiting = queued.map { it.fileId }.toSet()
+        release(claimed - waiting)
+        if (waiting.isEmpty()) return
+        // A video kept as byte pieces is on the queue as its pieces, not as itself.
+        val shownBy = queued.map { item -> if (item.isJoined) item.pieces.map { it.fileId } else listOf(item.fileId) }
+        com.tmplayer.App.backgroundScope.launch {
+            withTimeoutOrNull(SHOWN_WITHIN_MS) {
+                OfflineDownloads.active.first { active -> shownBy.all { ids -> ids.any { it in active } } }
+            }
+            release(waiting)
+        }
+    }
+
+    private const val SHOWN_WITHIN_MS = 5_000L
 }
 
 /**

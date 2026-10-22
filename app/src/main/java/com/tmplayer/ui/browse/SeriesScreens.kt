@@ -15,6 +15,11 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,7 +71,8 @@ internal fun SeriesCard(
             )
         },
     ) {
-        SeriesArt(series, progress, Modifier.fillMaxSize(), compact = dense, badge = badge, poster = poster, fresh = fresh)
+        // VideoTile already rounds the art's corners.
+        SeriesArt(series, progress, Modifier.fillMaxSize(), compact = dense, badge = badge, poster = poster, fresh = fresh, clip = false)
     }
 }
 
@@ -88,7 +94,20 @@ internal fun SeriesOpened(
 ) {
     // Every episode its chat holds, not only those the screen behind had read.
     val whole = com.tmplayer.ui.browse.rememberWholeSeries(series)
-    SeriesPage(whole, watch, onPlay, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle)
+    // Which episodes are in the Downloads folder, for the season's download buttons: read again
+    // whenever the index changes (a download finishing, or one deleted while the page is open),
+    // each file asked of the disk off the drawing thread, as [queueSeason] does.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val settings = remember(context) { com.tmplayer.data.SettingsStore(context) }
+    val history by remember(settings) { settings.downloadHistory }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val downloadedIds by produceState(initialValue = emptySet<String>(), history) {
+        value = withContext(Dispatchers.IO) {
+            history.filter { com.tmplayer.data.LocalDownloads.presentFile(it) != null }
+                .mapTo(HashSet()) { "${it.chatId}:${it.messageId}" }
+        }
+    }
+    SeriesPage(whole, watch, onPlay, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle, downloadedIds)
 }
 
 /**
@@ -106,6 +125,7 @@ private fun SeriesPage(
     onLongClick: ((MediaItem) -> Unit)?,
     onDownload: ((SeasonDownloadRequest) -> Unit)?,
     chatTitle: String?,
+    downloadedIds: Set<String>,
 ) {
     val touch = isTouch()
     // On a phone the page grows out of the show's tile, and folds back towards it.
@@ -125,6 +145,7 @@ private fun SeriesPage(
                 onPlay = onPlay,
                 onLongClick = onLongClick,
                 onDownload = onDownload,
+                downloadedIds = downloadedIds,
                 chatTitle = chatTitle,
                 contentPadding = if (touch) {
                     PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)

@@ -101,6 +101,12 @@ data class DetailRow(
     val progress: Float? = null,
     /** A place held for a button still on its way (the trailer): laid out, unseen, unreachable. */
     val placeholder: Boolean = false,
+    /**
+     * False for a line that only says how things stand (a video already downloaded): drawn
+     * dimmed and does nothing, but a remote can still stand on it, so focus is not thrown
+     * elsewhere when the Download button it was on turns into this.
+     */
+    val enabled: Boolean = true,
 )
 
 /**
@@ -354,7 +360,7 @@ fun MediaDetailPanel(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, if (centred) Alignment.CenterHorizontally else Alignment.Start),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s)) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), progress = it.progress, enabled = it.enabled) }
             }
         }
         extras?.trailer?.let { trailer -> trailers.unopened?.takeIf { it == trailer }?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) } }
@@ -388,7 +394,7 @@ fun MediaDetailPanel(
                     horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s)) }
+                    rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), progress = it.progress, enabled = it.enabled) }
                 }
             }
         }

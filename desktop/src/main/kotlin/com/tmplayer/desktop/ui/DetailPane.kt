@@ -196,7 +196,13 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
     val point = progress[key]
     val finished = key in watchedList
     val record = history.firstOrNull { it.chatId == item.chatId && it.messageId == item.messageId }
-    val queued = downloads[item.fileId]?.busy == true
+    // Another copy of the same film kept, or coming down, counts as well: the film is here (or
+    // on its way), and a second size of it is not what anybody asked for.
+    val otherCopies = item.versions.filter { it.id != item.id }
+    val copyKept = record == null && otherCopies.any { copy -> history.any { it.chatId == copy.chatId && it.messageId == copy.messageId } }
+    val coming = downloads[item.fileId]?.takeIf { it.busy }
+        ?: otherCopies.firstNotNullOfOrNull { copy -> downloads[copy.fileId]?.takeIf { it.busy } }
+    val queued = coming != null
     val title = request.chatTitle.ifBlank { state.chatTitleOf(item.chatId) }
     val chat = state.chatOf(item.chatId)
     val free by produceState(0L, item.id) {
@@ -220,6 +226,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             finished = finished,
             watchLater = key in laterKeys,
             inDownloads = record != null,
+            copyInDownloads = copyKept,
             cached = item.onDevice,
             downloading = queued,
             canSelect = request.selectThis != null,
@@ -262,6 +269,21 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             commentsOpen = true
             return
         }
+        // The pane stays open for these: the button turns into the download's state (the ring,
+        // then Downloaded) where the viewer is looking, and the keyboard's focus stays on it.
+        // Closing it here sent the viewer back to the page behind for no reason.
+        when (action) {
+            DetailAction.Download, DetailAction.SaveToDownloads -> {
+                // The queue ignores a second press on a file already coming down.
+                OfflineDownloads.start(state.downloads, item, title)
+                return
+            }
+            DetailAction.CancelDownload -> {
+                OfflineDownloads.cancel(state.downloads, coming?.fileId ?: item.fileId)
+                return
+            }
+            else -> Unit
+        }
         close()
         when (action) {
             DetailAction.Resume, DetailAction.Play -> state.openPlayer(item, startFromBeginning = false)
@@ -278,11 +300,10 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                     toast(if (add) s.detailWatchLaterAdded(item.title) else s.detailWatchLaterRemoved(item.title))
                 }
             }
-            // Not said: the card shows the queue's state, and the Downloads button its count.
-            DetailAction.Download, DetailAction.SaveToDownloads -> OfflineDownloads.start(state.downloads, item, title)
+            // Handled above, with the pane left open.
+            DetailAction.Download, DetailAction.SaveToDownloads, DetailAction.CancelDownload -> Unit
             DetailAction.InDownloads -> state.go(Destination.Downloads)
             DetailAction.RemoveDownload -> Unit
-            DetailAction.CancelDownload -> OfflineDownloads.cancel(state.downloads, item.fileId)
             DetailAction.SelectVideos -> request.selectThis?.invoke()
             DetailAction.Share -> Unit
             DetailAction.OpenElsewhere -> outlives.launch {
@@ -349,7 +370,8 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             // The desktop's own copy goes to a folder, not a gallery.
             .let { if (it.action == DetailAction.ExportCopy) it.copy(label = s.keepExportFolder, detail = s.keepExportFolderDetail, icon = TmIcons.Folder) else it }
         // The desktop's own words where it has them: the queue lives on the Downloads page.
-        if (action == DetailAction.CancelDownload) row.copy(label = s.downloadsCancel) else row
+        // and the ring round the button fills as the download comes down.
+        if (action == DetailAction.CancelDownload) row.copy(label = s.downloadsCancel, progress = coming?.fraction ?: 0f) else row
     }
 
     Box(Modifier.fillMaxSize()) {

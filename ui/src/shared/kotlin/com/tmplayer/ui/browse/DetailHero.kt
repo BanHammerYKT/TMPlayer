@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -258,6 +259,11 @@ internal fun RoundAction(
     ghost: Boolean = false,
     /** With [ghost]: it is still on its way, so a soft placeholder of the button stands in its place. */
     waiting: Boolean = false,
+    /**
+     * False for a button that only says how things stand (Downloaded): dimmed, and a press does
+     * nothing. It stays reachable, so a remote whose focus was on Download keeps it there.
+     */
+    enabled: Boolean = true,
 ) {
     if (ghost && waiting) {
         Box(modifier) {
@@ -285,9 +291,12 @@ internal fun RoundAction(
         .graphicsLayer { alpha = shown }
         .then(if (ghost) Modifier.clearAndSetSemantics {} else Modifier)
     val requester = if (focusRequester != null && !ghost) Modifier.focusRequester(focusRequester) else Modifier
+    val press: () -> Unit = if (enabled) onClick else ({})
+    val off = if (enabled) Modifier else Modifier.semantics { disabled() }
     if (tv) {
         val ink = when {
             focused -> Tone.onFocusFill
+            !enabled -> Tone.muted
             destructive -> Tone.danger
             else -> Tone.text
         }
@@ -308,7 +317,8 @@ internal fun RoundAction(
                     },
                 )
                 .focusRing(focused, CircleShape)
-                .clickable(interactionSource = interactions, indication = null, enabled = !ghost, onClick = onClick)
+                .clickable(interactionSource = interactions, indication = null, enabled = !ghost, onClick = press)
+                .then(off)
                 .padding(start = 16.dp, end = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -318,18 +328,25 @@ internal fun RoundAction(
         }
         return
     }
-    val ink = if (destructive) Tone.danger else Tone.text
+    val ink = when {
+        !enabled -> Tone.muted
+        destructive -> Tone.danger
+        else -> Tone.text
+    }
     val tick = rememberToggleTick()
     Column(
         modifier
             .then(requester)
             .width(RoundActionWidth)
             .clip(RoundedCornerShape(Corner.Medium))
-            .clickable(interactionSource = interactions, indication = LocalIndication.current, enabled = !ghost) {
-                toggles?.let(tick)
-                onClick()
+            .clickable(interactionSource = interactions, indication = if (enabled) LocalIndication.current else null, enabled = !ghost) {
+                if (enabled) {
+                    toggles?.let(tick)
+                    onClick()
+                }
             }
             .then(if (ghost) Modifier else Modifier.semantics { contentDescription = listOfNotNull(label, detail).joinToString(". ") })
+            .then(off)
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -368,7 +385,7 @@ internal fun RoundAction(
  * as the Download button turns into the Cancel one. Nothing when [progress] is null.
  */
 @Composable
-private fun Modifier.downloadRing(progress: Float?): Modifier {
+internal fun Modifier.downloadRing(progress: Float?): Modifier {
     val shown by animateFloatAsState(if (progress != null) 1f else 0f, Motion.standard(Motion.Normal), label = "ringShown")
     val sweep by animateFloatAsState((progress ?: 0f).coerceIn(0f, 1f), Motion.standard(Motion.Slow), label = "ringSweep")
     val accent = Tone.accent

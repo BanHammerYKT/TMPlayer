@@ -62,4 +62,46 @@ object SeasonDownload {
     /** Whether anything in [season] may be saved at all: false in a chat that restricts saving. */
     fun anySavable(season: SeriesSeason): Boolean =
         season.episodes.any { episode -> episode.copies.any { it.canBeSaved } }
+
+    /** What a season's download button stands for now; see [state]. */
+    enum class State {
+        /** Something is left to fetch: the button queues it. */
+        Fetch,
+
+        /** Nothing left to fetch, and some of it is still on the queue: the button says so. */
+        Coming,
+
+        /** Every episode it covers is downloaded already: the button says so and does nothing. */
+        Done,
+
+        /** Nothing it covers can be fetched (saving restricted) and nothing is kept either. */
+        Nothing,
+    }
+
+    /**
+     * Where "Download season" or "Download unwatched" for [season] stands, from the same choice
+     * [copies] makes, so the button and the press agree: it offers to fetch exactly when a press
+     * would queue something.
+     *
+     * @param downloaded whether a copy is in the Downloads folder.
+     * @param queued whether a copy is on the download queue, at any stage.
+     */
+    fun state(
+        series: Series,
+        season: SeriesSeason,
+        which: Which,
+        finished: (MediaItem) -> Boolean,
+        position: (MediaItem) -> Float,
+        downloaded: (MediaItem) -> Boolean,
+        queued: (MediaItem) -> Boolean,
+    ): State {
+        val left = copies(series, season, which, finished, position) { downloaded(it) || queued(it) }
+        if (left.isNotEmpty()) return State.Fetch
+        val covered = season.episodes.filter { episode -> which == Which.Season || !episode.copies.any(finished) }
+        return when {
+            covered.any { episode -> episode.copies.any(queued) } -> State.Coming
+            covered.any { episode -> episode.copies.any(downloaded) } -> State.Done
+            else -> State.Nothing
+        }
+    }
 }

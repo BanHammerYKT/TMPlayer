@@ -242,6 +242,8 @@ internal fun SeriesPage(
                     )
                 }
             },
+            // The season's buttons say Downloaded once every episode is, from the same index.
+            downloadedIds = index.keys,
             chatTitle = state.chatTitleOf(series.cover.chatId),
             // Over the backdrop on a dark disc, in a band that fills in as the page scrolls.
             onBack = onClose,
