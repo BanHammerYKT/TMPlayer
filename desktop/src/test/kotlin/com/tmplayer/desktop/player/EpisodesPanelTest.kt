@@ -83,7 +83,9 @@ class EpisodesPanelTest {
 
         onNodeWithText("Season 2").performClick()
         waitForIdle()
-        onNodeWithText("Harbour Notes S02E02").assertExists()
+        onNodeWithText("Episode 2").assertExists()
+        // The card names the episode, never the Telegram file name under it.
+        onNodeWithText("Harbour Notes S02E02").assertDoesNotExist()
 
         onNodeWithText("Next").performClick()
         assertEquals("Harbour.Notes.S01E04.mkv", played.last())

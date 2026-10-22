@@ -721,8 +721,16 @@ object TmIcons {
 
     // Player
 
+    /**
+     * Hugeicons Play, moved 1.25 units right of its box's centre: a triangle's weight sits toward
+     * its flat side, so one centred by its box looks pushed left inside a round button or a pill
+     * (user, 2026-10-22, the cards' hover Play). Every play glyph uses this one path, so each
+     * button, badge and pill that holds it is centred by eye without its own nudge.
+     */
+    private const val PLAY_PATH = "M20.1406 12.846C19.7871 14.189 18.1167 15.138 14.7757 17.0361C11.546 18.8709 9.9312 19.7884 8.6298 19.4196C8.0918 19.2671 7.6016 18.9776 7.2062 18.5787C6.25 17.6139 6.25 15.7426 6.25 12C6.25 8.2574 6.25 6.3861 7.2062 5.42132C7.6016 5.02245 8.0918 4.73288 8.6298 4.58042C9.9312 4.21165 11.546 5.12907 14.7757 6.96393C18.1167 8.86197 19.7871 9.811 20.1406 11.154C20.2865 11.7084 20.2865 12.2916 20.1406 12.846Z"
+
     /** Play. Hugeicons Play. */
-    val Play: ImageVector by lazy { icon("Play", s("M18.8906 12.846C18.5371 14.189 16.8667 15.138 13.5257 17.0361C10.296 18.8709 8.6812 19.7884 7.37983 19.4196C6.8418 19.2671 6.35159 18.9776 5.95624 18.5787C5 17.6139 5 15.7426 5 12C5 8.2574 5 6.3861 5.95624 5.42132C6.35159 5.02245 6.8418 4.73288 7.37983 4.58042C8.6812 4.21165 10.296 5.12907 13.5257 6.96393C16.8667 8.86197 18.5371 9.811 18.8906 11.154C19.0365 11.7084 19.0365 12.2916 18.8906 12.846Z")) }
+    val Play: ImageVector by lazy { icon("Play", s(PLAY_PATH)) }
 
     /** Pause. Hugeicons Pause. */
     val Pause: ImageVector by lazy {
@@ -734,7 +742,7 @@ object TmIcons {
     }
 
     /** The player's big centre play, and play badges on artwork. Hugeicons Play, filled. */
-    val PlaySolid: ImageVector by lazy { icon("PlaySolid", sf("M18.8906 12.846C18.5371 14.189 16.8667 15.138 13.5257 17.0361C10.296 18.8709 8.6812 19.7884 7.37983 19.4196C6.8418 19.2671 6.35159 18.9776 5.95624 18.5787C5 17.6139 5 15.7426 5 12C5 8.2574 5 6.3861 5.95624 5.42132C6.35159 5.02245 6.8418 4.73288 7.37983 4.58042C8.6812 4.21165 10.296 5.12907 13.5257 6.96393C16.8667 8.86197 18.5371 9.811 18.8906 11.154C19.0365 11.7084 19.0365 12.2916 18.8906 12.846Z")) }
+    val PlaySolid: ImageVector by lazy { icon("PlaySolid", sf(PLAY_PATH)) }
 
     /** The player's big centre pause. Hugeicons Pause, filled. */
     val PauseSolid: ImageVector by lazy {
@@ -1045,7 +1053,7 @@ object TmIcons {
     /** [Play], selected: Hugeicons Play filled in. */
     val PlaySelected: FilledIcon by lazy {
         FilledIcon(
-            body = icon("PlaySelected", sf("M18.8906 12.846C18.5371 14.189 16.8667 15.138 13.5257 17.0361C10.296 18.8709 8.6812 19.7884 7.37983 19.4196C6.8418 19.2671 6.35159 18.9776 5.95624 18.5787C5 17.6139 5 15.7426 5 12C5 8.2574 5 6.3861 5.95624 5.42132C6.35159 5.02245 6.8418 4.73288 7.37983 4.58042C8.6812 4.21165 10.296 5.12907 13.5257 6.96393C16.8667 8.86197 18.5371 9.811 18.8906 11.154C19.0365 11.7084 19.0365 12.2916 18.8906 12.846Z")),
+            body = icon("PlaySelected", sf(PLAY_PATH)),
             cut = null,
         )
     }
