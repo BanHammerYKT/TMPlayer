@@ -1,6 +1,5 @@
 package com.tmplayer.ui.components
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -89,10 +88,11 @@ fun MediaArt(
             .onSizeChanged { if (it.height > 0) frame = it.width.toFloat() / it.height },
         contentAlignment = Alignment.Center,
     ) {
-        // Nothing at all until the preview is decoded, and then no fade for the first picture: a
-        // cross-fade starts on whatever it is first given, so it only ever runs between two steps.
+        // Nothing at all until the preview is decoded, and then no fade for the first picture: the
+        // fade starts on whatever it is first given, so it only ever runs between two steps, the
+        // better picture over the one it replaces ([FadeOver]).
         // A preview fading up from the surface under every tile of a scrolling grid is a flicker.
-        if (shown != null) Crossfade(targetState = shown, animationSpec = Motion.standard()) { step ->
+        if (shown != null) FadeOver(shown, Modifier.fillMaxSize()) { step ->
             when (step) {
                 is ImageBitmap -> Picture(step, miniBitmap, frame)
                 Missing -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

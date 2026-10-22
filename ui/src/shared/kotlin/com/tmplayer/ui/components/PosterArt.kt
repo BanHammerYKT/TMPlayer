@@ -1,6 +1,5 @@
 package com.tmplayer.ui.components
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -62,8 +61,10 @@ fun PosterArt(
     compactCover: Boolean = false,
 ) {
     // The inline preview first, off the composition thread, then the thumbnail when it arrives.
-    val mini by produceState<ImageBitmap?>(null, miniThumbnail) {
-        value = withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) }
+    // Decoding: nothing drawn yet, so the colour cover is not flashed for a frame under a preview
+    // about to land. [NoPreview] once there is none to decode.
+    val mini by produceState<Any?>(if (miniThumbnail == null || miniThumbnail.isEmpty()) NoPreview else null, miniThumbnail) {
+        value = withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) } ?: NoPreview
     }
     var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
     LaunchedEffect(thumbnailFileId, posterUrl) {
@@ -74,11 +75,12 @@ fun PosterArt(
         if (posterUrl != null && online != null && withContext(Dispatchers.IO) { online.hasImage(posterUrl) }) return@LaunchedEffect
         full = Thumbnails.full(thumbnailFileId)
     }
-    val picture = full ?: mini
+    val picture: Any? = full ?: mini
     Box(modifier.background(Tone.surface)) {
-        Crossfade(targetState = picture, animationSpec = Motion.standard(), label = "posterPicture") { shown ->
+        // Each better picture fades in over the one before ([FadeOver]), never through the surface.
+        if (picture != null) FadeOver(picture, Modifier.fillMaxSize()) { shown ->
             when {
-                shown == null -> GeneratedCover(cover, Modifier.fillMaxSize(), compact = compactCover)
+                shown !is ImageBitmap -> GeneratedCover(cover, Modifier.fillMaxSize(), compact = compactCover)
                 shown.height >= shown.width -> Image(
                     shown,
                     contentDescription = null,
@@ -126,3 +128,6 @@ private const val POSTER_WIDTH = 342
 
 /** The soft field is dimmed so the sharp picture over it reads as the picture. */
 private const val FIELD_DIM = 0.3f
+
+/** No inline preview to show: the generated cover stands in. */
+private object NoPreview

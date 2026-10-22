@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.tmplayer.data.Thumbnails
 import com.tmplayer.ui.theme.Motion
+import com.tmplayer.ui.theme.rememberReducedMotion
 
 /**
  * A hero's picture set into the page rather than laid over it: the Home carousel on every device.
@@ -72,6 +73,20 @@ fun EdgeBackdrop(
         val topFadePx = with(density) { topFade.toPx() }
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
+        // A slow push in on each page's picture (user, 2026-10-22: the television's backdrop
+        // coming in "looks good, add it to the others"): from whole to [DRIFT_SCALE] over
+        // [DRIFT_MS], once, from the edge the picture stands at, then still. Nothing that runs by
+        // itself for long, so an idle carousel costs no frames once it settles; none at all with
+        // reduced motion.
+        val still = rememberReducedMotion() || Motion.reduced
+        val drift = remember(source) { androidx.compose.animation.core.Animatable(1f) }
+        androidx.compose.runtime.LaunchedEffect(source, art?.picture != null, still) {
+            if (still || art?.picture == null) {
+                drift.snapTo(1f)
+                return@LaunchedEffect
+            }
+            drift.animateTo(DRIFT_SCALE, androidx.compose.animation.core.tween(DRIFT_MS, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+        }
         val pictured by androidx.compose.runtime.rememberUpdatedState(onPictured)
         androidx.compose.runtime.LaunchedEffect(art != null) { if (art != null) pictured?.invoke() }
         // From nothing as well as between steps, so the first picture fades in rather than popping.
@@ -122,7 +137,18 @@ fun EdgeBackdrop(
                         contentScale = ContentScale.Crop,
                         alignment = Alignment.TopCenter,
                         filterQuality = Thumbnails.drawFilter,
-                        modifier = if (step.blurred) place.then(Modifier.blur(STAND_IN_BLUR)) else place,
+                        modifier = if (step.blurred) {
+                            place.then(Modifier.blur(STAND_IN_BLUR))
+                        } else {
+                            place.graphicsLayer {
+                                val zoom = drift.value
+                                scaleX = zoom
+                                scaleY = zoom
+                                // Pushed in towards the top end, where the picture is anchored.
+                                transformOrigin = androidx.compose.ui.graphics.TransformOrigin(if (rtl) 0f else 1f, 0f)
+                                clip = true
+                            }
+                        },
                     )
                 } else {
                     // The colours alone: the cover's number and initial would sit under the clock.
@@ -199,3 +225,7 @@ private const val CORNER_STRETCH = 2.6f
 
 /** How many times its own width a thumbnail may be drawn here, at most, before it reads as a blur. */
 private const val EDGE_SMALL_SCALE = 2f
+
+/** How far a page's picture pushes in, and over how long: about a carousel page's time. */
+private const val DRIFT_SCALE = 1.06f
+private const val DRIFT_MS = 9_000

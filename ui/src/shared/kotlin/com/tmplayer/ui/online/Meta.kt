@@ -270,6 +270,13 @@ fun MetaPicture(
             }
         }
     }
+    // The small copy fades in over what stands under it (the video's own picture) rather than
+    // popping in; one already there when the tile was composed is drawn at once.
+    val tinyIn = remember(url) { Animatable(if (tiny != null) 1f else 0f) }
+    LaunchedEffect(tiny != null) {
+        if (tiny == null || tinyIn.value >= 1f) return@LaunchedEffect
+        if (still) tinyIn.snapTo(1f) else tinyIn.animateTo(1f, androidx.compose.animation.core.tween(TINY_FADE_MS))
+    }
     val shown = bitmap
     LaunchedEffect(shown != null) {
         if (shown == null || reveal.value >= 1f) return@LaunchedEffect
@@ -281,7 +288,7 @@ fun MetaPicture(
             Image(
                 small,
                 contentDescription = null,
-                modifier = Modifier.matchParentSize().blur(TINY_BLUR),
+                modifier = Modifier.matchParentSize().graphicsLayer { alpha = tinyIn.value }.blur(TINY_BLUR),
                 contentScale = contentScale,
                 alignment = alignment,
                 filterQuality = androidx.compose.ui.graphics.FilterQuality.Low,
@@ -310,6 +317,9 @@ private val TINY_BLUR = 12.dp
 
 /** How wide TMDB's small copies are decoded: `w92` whole, a `w300` still halved. */
 private const val TINY_PICTURE_WIDTH = 160
+
+/** How long the small copy takes to fade in over the video's own picture. */
+private const val TINY_FADE_MS = 220
 
 /** How long the sharp copy takes to come into focus over the small one. */
 private const val REVEAL_MS = 380
