@@ -1,5 +1,31 @@
 # Working on TMPlayer
 
+## Building a feature
+
+Plan first, then build (user, 2026-10-22). Before writing code for a feature, list what it does on
+each platform (phone, TV, desktop, web) and its edge cases. Then implement every edge case, or, where
+one is too risky to handle in this pass, say so and suggest what to do instead. Never ship the happy
+path alone. The kinds of cases that keep coming up:
+
+- **Space and size.** Check free space before anything that writes (a download, saving files to a
+  folder), say plainly how much is needed and how much is free, and offer what fits. Show running
+  totals where the user picks several things.
+- **Several at once.** Select all (and Ctrl+A on the desktop), a selection that changes while the
+  work runs, an empty selection, the same action run twice.
+- **Interruptions.** Cancel, a full disk part way, a revoked folder permission, the app going to the
+  background or the screen rotating, a file that is gone, still downloading or not allowed to be
+  saved. No partial files left behind, and a summary of what worked, what was skipped and why.
+- **Confirm what cannot be undone.** A dialog before a destructive or large step that says what will
+  happen (removing TMPlayer's copy after saving it elsewhere, for example), off by default.
+- **Each platform's limits.** The TV's remote and focus after the action, Android storage rules, the
+  desktop's paths on Windows, Linux and macOS, a browser without the API needed.
+- **Low-end devices.** Anything that runs by itself (paging ahead, refreshes, warm-ups) must stop on
+  its own. A row that kept paging while nobody touched it held a 1 GB TV stick at 150% CPU and
+  slowed every video start (2026-10-22), so measure idle CPU on the TV
+  (`/proc/<pid>/stat`) after touching Home, lists or background work.
+
+Then test on the real devices (phone, TV) with small videos before calling it done.
+
 ## Screenshots
 
 Every screenshot in the repository is a WebP, and stays one. A screenshot off the stick arrives as
