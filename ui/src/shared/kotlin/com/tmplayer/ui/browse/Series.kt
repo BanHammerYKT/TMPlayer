@@ -342,6 +342,11 @@ fun EpisodeRow(
     showOverview: Boolean = false,
     /** A large window's show page: a larger picture and type, as the page around it has. */
     large: Boolean = false,
+    /**
+     * The overview's two lines kept from the first frame, while the season's listing is on its way,
+     * so the cards do not grow (and the list under them move) when the words arrive.
+     */
+    holdOverview: Boolean = false,
 ) {
     val shape = RoundedCornerShape(Corner.Medium)
     val card = modifier
@@ -354,6 +359,7 @@ fun EpisodeRow(
         still = guide?.stillUrl,
         overview = guide?.overview?.trim()?.takeIf { showOverview && it.isNotEmpty() },
         large = large,
+        holdOverview = showOverview && holdOverview,
     )
 }
 
@@ -453,6 +459,7 @@ private fun EpisodeLine(
     still: String? = null,
     overview: String? = null,
     large: Boolean = false,
+    holdOverview: Boolean = false,
 ) {
     val s = LocalStrings.current
     val tv = !isTouch()
@@ -565,12 +572,13 @@ private fun EpisodeLine(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            overview?.let {
+            if (overview != null || holdOverview) {
                 Text(
-                    it,
+                    overview.orEmpty(),
                     style = if (tv || large) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
                     color = Tone.muted,
                     maxLines = 2,
+                    minLines = if (holdOverview) 2 else 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 2.dp),
                 )
@@ -773,9 +781,27 @@ fun SeriesPanel(
     val downloads = onDownload != null && SeasonDownload.anySavable(shown)
     val bothDownloads = downloads && SeasonDownload.unwatchedDiffers(shown, watch.finished)
 
-    val meta = rememberMeta(series.cover, showOnly = true)
-    val extras = rememberMetaExtras(meta)
+    val metaState = com.tmplayer.ui.online.rememberMetaState(series.cover, showOnly = true)
+    val meta = metaState.value
+    val extrasState = com.tmplayer.ui.online.rememberMetaExtrasState(meta, metaState.settled)
+    val extras = extrasState.value
     val names = rememberSeasonEpisodes(meta, shown.number)
+    // The first frame waits a moment for what the caches hold, so a show seen before is drawn
+    // whole at once; what is still coming after that has its place held (DetailSlots.kt).
+    val namesSettled = meta == null || meta.kind != com.tmplayer.online.MetaKind.Show || names != null
+    val logoReady = com.tmplayer.ui.online.rememberTitleLogoReady(meta, metaState.settled)
+    val firstPaint = rememberFirstPaint(series.key, metaState.settled && extrasState.settled && logoReady && namesSettled)
+    val titleHold = logoMayCome(metaState)
+    val holdTitle = remember(series.key, firstPaint) { titleHold }
+    val holdMetaLines = remember(series.key, firstPaint) { !extrasState.settled }
+    val holdOverview = remember(series.key, firstPaint) { !metaState.settled }
+    val holdPoster = remember(series.key, firstPaint) { meta?.posterUrl != null || !metaState.settled }
+    val holdTrailer = remember(series.key, firstPaint) { extras?.trailer != null || !extrasState.settled }
+    val yearInFacts = remember(series.key, firstPaint) { metaState.settled }
+    val onlineBackdrop = remember(series.key, firstPaint) { meta?.backdropUrl != null || !metaState.settled }
+    // A season's episode words held per season: from its first frame while its listing comes.
+    val namesComing = !metaState.settled || (meta?.kind == com.tmplayer.online.MetaKind.Show && names == null)
+    val holdEpisodeWords = remember(series.key, shown.number, firstPaint) { namesComing }
     val trailers = rememberTrailerLauncher()
     val target = next ?: series.episodes.first()
     val art = next?.item ?: target.item
@@ -803,7 +829,9 @@ fun SeriesPanel(
     val upNextAt = if (next != null) listed.indexOfFirst { it.sameAs(next) } else -1
     val upNextFocus = remember(series.key) { FocusRequester() }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(shown.number, rangeAt) {
+    LaunchedEffect(shown.number, rangeAt, firstPaint) {
+        // Nothing to scroll while the first frame is held for the caches.
+        if (!firstPaint) return@LaunchedEffect
         if (!opened) {
             opened = true
             // A long season (an anime's hundreds) opens on its up-next episode under a finger, one
@@ -849,33 +877,44 @@ fun SeriesPanel(
         } else if (wide) {
             (maxHeight * 0.62f).coerceIn(280.dp, 560.dp)
         } else {
-            tallBackdropHeight(maxWidth, maxHeight, online = meta?.backdropUrl != null)
+            // Chosen once, so the online picture fades into the frame rather than growing it.
+            tallBackdropHeight(maxWidth, maxHeight, online = onlineBackdrop)
         }
         val heading: @Composable () -> Unit = {
             val title = meta?.title?.takeIf { it.isNotBlank() } ?: series.title
             // The show's title logo from TMDB where it has one, the name in type until it is
-            // decoded and wherever it has none; read out as the name either way.
-            com.tmplayer.ui.online.TitleArt(
-                meta,
-                maxWidth = if (large) TITLE_LOGO_WIDTH_LARGE else if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
-                maxHeight = if (large) TITLE_LOGO_HEIGHT_LARGE else if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT,
-                modifier = Modifier.clearAndSetSemantics {
-                    heading()
-                    contentDescription = title
-                },
-            ) {
-                Text(
-                    title,
-                    style = (if (large) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displaySmall).trackedFor(title),
-                    fontWeight = if (large) FontWeight.Bold else null,
-                    color = Tone.text,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            // decoded and wherever it has none; read out as the name either way. Its place is as
+            // tall as the logo may be, so the name giving way to it moves nothing.
+            val logoHeight = if (large) TITLE_LOGO_HEIGHT_LARGE else if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT
+            TitleSlot(logoHeight, hold = holdTitle) {
+                com.tmplayer.ui.online.TitleArt(
+                    meta,
+                    maxWidth = if (large) TITLE_LOGO_WIDTH_LARGE else if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
+                    maxHeight = logoHeight,
+                    settled = metaState.settled,
+                    waitMs = 0L,
+                    modifier = Modifier.clearAndSetSemantics {
+                        heading()
+                        contentDescription = title
+                    },
+                ) {
+                    Text(
+                        title,
+                        style = (if (large) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displaySmall).trackedFor(title),
+                        fontWeight = if (large) FontWeight.Bold else null,
+                        color = Tone.text,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         val poster: @Composable () -> Unit = {
-            meta?.posterUrl?.let { url ->
+            val url = meta?.posterUrl
+            // Its place is held while the match is on its way: a soft poster, the picture fading
+            // in over it, or the show's own cover where the match has none, so the title beside
+            // it never moves over or re-wraps.
+            if (url != null || holdPoster) {
                 Box(
                     Modifier
                         .width(if (large) SERIES_POSTER_LARGE else if (tv) SERIES_POSTER_TV else if (wide) SERIES_POSTER_WIDE else SERIES_POSTER)
@@ -883,7 +922,11 @@ fun SeriesPanel(
                         .clip(RoundedCornerShape(Corner.Medium))
                         .background(Tone.surfaceHigh),
                 ) {
-                    MetaPicture(url, Modifier.fillMaxSize(), maxWidth = 342, contentDescription = s.metadataPoster)
+                    when {
+                        url != null -> MetaPicture(url, Modifier.fillMaxSize(), maxWidth = 342, contentDescription = s.metadataPoster)
+                        !metaState.settled -> PosterPlaceholder()
+                        else -> MediaArt(art.miniThumbnail, art.thumbnailFileId, Modifier.fillMaxSize(), cover = cover, compactCover = true)
+                    }
                 }
             }
         }
@@ -891,29 +934,49 @@ fun SeriesPanel(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 FactLine(
                     listOfNotNull(
-                        meta?.year?.let { Fact(it.toString()) },
+                        // The year only when it was there on the first frame; later it opens the
+                        // genres line, in its held place, so the facts never re-wrap.
+                        meta?.year?.takeIf { yearInFacts }?.let { Fact(it.toString()) },
                         Fact(seriesSummary(series)),
                         seriesProgressLine(progress)?.let { Fact(it, accent = true) },
                         chatTitle?.takeIf { it.isNotBlank() }?.let { Fact(it) },
                     ),
                     style = if (large) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
                 )
-                MetaFactsLines(extras, maxLines = 1)
+                DetailMetaLines(
+                    extrasState,
+                    year = meta?.year?.takeIf { !yearInFacts },
+                    hold = holdMetaLines,
+                    yearPending = !yearInFacts && !metaState.settled,
+                )
                 // How far through the whole show; the facts line says it in words.
                 if (progress.watched > 0) ProgressLine(progress.watched.toFloat() / progress.total, Modifier.widthIn(max = 240.dp))
             }
         }
         val overview: @Composable () -> Unit = {
-            meta?.overview?.takeIf { it.isNotBlank() }?.let { text ->
+            val text = meta?.overview?.takeIf { it.isNotBlank() }
+            if (text != null || holdOverview) {
                 Column(Modifier.then(if (large) Modifier.widthIn(max = LARGE_READING) else Modifier), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    if (large) Synopsis(text, style = MaterialTheme.typography.bodyLarge, lines = 3) else Synopsis(text, lines = if (wide) 3 else null)
-                    MetaCredit(meta)
+                    SynopsisSlot(
+                        text,
+                        waiting = !metaState.settled,
+                        hold = holdOverview,
+                        style = if (large) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.bodyMedium,
+                        lines = if (large || wide) 3 else null,
+                    )
+                    // The credit's line kept with the held words, so it does not add one when they come.
+                    Box(Modifier.neverShrink()) { meta?.let { if (text != null) MetaCredit(it) } }
+                    MetaPeopleLine(extras)
                 }
             }
         }
         val actions: @Composable () -> Unit = {
+            // The trailer's place is held (unseen) while the extras are on their way, so the
+            // download buttons after it never move over when it comes.
+            val trailer = extras?.trailer
+            val trailerGhost = trailer == null && holdTrailer
             val others = buildList {
-                extras?.trailer?.let { trailer -> add(Triple(s.metadataTrailer, TrailerIcon) { trailers.open(trailer) }) }
+                if (trailer != null || holdTrailer) add(Triple(s.metadataTrailer, TrailerIcon) { trailer?.let(trailers::open); Unit })
                 if (downloads) {
                     add(Triple(s.seriesDownloadSeason, TmIcons.Download) { onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Season)); Unit })
                 }
@@ -942,12 +1005,12 @@ fun SeriesPanel(
                             focusRequester = playFocus,
                             large = true,
                         )
-                        others.forEach { (label, icon, run) -> WideIconAction(label, icon, run) }
+                        others.forEach { (label, icon, run) -> WideIconAction(label, icon, run, ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
                     }
                 } else if (tv) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         hero(Modifier)
-                        others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s)) }
+                        others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
                     }
                 } else {
                     hero(if (wide) Modifier else Modifier.fillMaxWidth())
@@ -958,7 +1021,7 @@ fun SeriesPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp, if (wide) Alignment.Start else Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s)) }
+                            others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
                         }
                     }
                 }
@@ -967,7 +1030,8 @@ fun SeriesPanel(
             }
         }
 
-        HeroStaysWhole(list) { LazyColumn(
+        // The page's ground, and the band's way back, for the moment the caches are asked.
+        if (firstPaint) HeroStaysWhole(list) { LazyColumn(
             state = list,
             modifier = Modifier.fillMaxSize().keepTopInSight(list, enabled = tv),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
@@ -1047,6 +1111,7 @@ fun SeriesPanel(
                     guide = EpisodeNames.listed(episode.season, episode.episode, names),
                     showOverview = true,
                     large = large,
+                    holdOverview = holdEpisodeWords,
                 )
             }
             // The cast and "More like this" after the episodes: composed only once scrolled to.
@@ -1060,10 +1125,12 @@ fun SeriesPanel(
             }
         }
         }
-        ScrollToTop(list)
-        // A long season is one hold from its end; the bubble names the episode on screen.
-        val episodeLabels = remember(listed) { listed.associate { it.item.id to s.seriesEpisodeShort(it.season, it.episode) } }
-        FastScroller(list, label = { key -> episodeLabels[key] })
+        if (firstPaint) {
+            ScrollToTop(list)
+            // A long season is one hold from its end; the bubble names the episode on screen.
+            val episodeLabels = remember(listed) { listed.associate { it.item.id to s.seriesEpisodeShort(it.season, it.episode) } }
+            FastScroller(list, label = { key -> episodeLabels[key] })
+        }
         onBack?.let { back ->
             PageBackBand(list, meta?.title?.takeIf { it.isNotBlank() } ?: series.title, back, barInsets, Modifier.align(Alignment.TopStart))
         }

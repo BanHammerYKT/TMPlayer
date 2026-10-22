@@ -68,7 +68,7 @@ val LocalOnlineArt = compositionLocalOf { false }
  */
 @Composable
 fun rememberMeta(fileName: String, caption: String?, showOnly: Boolean = false): MetaInfo? {
-    val found = rememberLookup(fileName, caption, showOnly) ?: return null
+    val found = rememberLookup(fileName, caption, showOnly).value ?: return null
     // Only an answer the name backs with a year or an episode code: with no file to measure,
     // the runtime cannot vouch for it here (see [rememberMatched]).
     val name = remember(fileName, caption) { com.tmplayer.data.MediaName.parse(fileName, caption) }
@@ -82,43 +82,112 @@ fun rememberMeta(fileName: String, caption: String?, showOnly: Boolean = false):
  * looked up.
  */
 @Composable
-fun rememberMatched(item: MediaItem, showOnly: Boolean = false): com.tmplayer.online.MatchedMeta? {
+fun rememberMatched(item: MediaItem, showOnly: Boolean = false): com.tmplayer.online.MatchedMeta? =
+    rememberMatchedState(item, showOnly).value
+
+/**
+ * [rememberMatched], with whether its answer is in: a title page holds its places for what is
+ * still on its way ([MetaState.settled] false) and leaves out what is known not to come.
+ */
+@Composable
+fun rememberMatchedState(item: MediaItem, showOnly: Boolean = false): MetaState<com.tmplayer.online.MatchedMeta> {
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
     val correction = corrections[item.id]
     val renamed = correction?.title
-    val found = rememberLookup(renamed ?: item.nameForParsing, if (renamed != null) null else item.caption, showOnly)
+    val lookup = rememberLookup(renamed ?: item.nameForParsing, if (renamed != null) null else item.caption, showOnly)
+    val found = lookup.value
     val name = remember(item, renamed) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
     // A verdict on the runtime reached before counts too, so a tile seen before is matched on its
     // first frame rather than drawing its own thumbnail and fading the poster in again.
     val quick = found?.let { info -> OnlineMetadata.current?.peekMatched(item, name, info) }
-    val matched by produceState(quick, found, name, item.durationSec) {
+    // Whether the runtime still has to be asked about before there is a verdict either way.
+    val asks = quick == null && found != null && com.tmplayer.online.MetaConfidence.needsRuntime(name, found, item.durationSec)
+    val matched by produceState(Verdict(quick, found, !asks), found, name, item.durationSec) {
         // produceState keeps its value across new keys: an answer that arrived after the first
         // frame (always so on the web) would otherwise never be taken.
-        value = quick
-        if (value == null && found != null && com.tmplayer.online.MetaConfidence.needsRuntime(name, found, item.durationSec)) {
-            value = withContext(Dispatchers.IO) { OnlineMetadata.current?.matched(item, name, found) }
+        value = Verdict(quick, found, !asks)
+        if (asks) {
+            value = Verdict(withContext(Dispatchers.IO) { OnlineMetadata.current?.matched(item, name, found!!) }, found, true)
         }
     }
-    if (correction?.wrongMatch == true) return null
-    return matched?.takeIf { it.info == found }
+    // A verdict for an earlier answer than the one in hand is not one yet.
+    val current = matched.takeIf { it.of == found }
+    val settled = lookup.settled && current?.done == true
+    if (correction?.wrongMatch == true) return MetaState(null, lookup.settled)
+    return MetaState(current?.matched?.takeIf { it.info == found }, settled)
+}
+
+/** [rememberMatchedState]'s verdict, the answer it is for, and whether it is final. */
+private class Verdict(val matched: com.tmplayer.online.MatchedMeta?, val of: MetaInfo?, val done: Boolean)
+
+/**
+ * What a lookup has given so far, and whether that is all: [settled] is false while more may still
+ * come (the answer is on its way), true once it is in, nothing included (lookups off, no match).
+ */
+@androidx.compose.runtime.Immutable
+class MetaState<out T>(val value: T?, val settled: Boolean) {
+    /** Still on its way: nothing yet, and more may come. */
+    val pending: Boolean get() = value == null && !settled
 }
 
 /** The provider's answer for a name, before anything checks that it is the right one. */
 @Composable
-private fun rememberLookup(fileName: String, caption: String?, showOnly: Boolean): MetaInfo? {
-    val online = OnlineMetadata.current ?: return null
+private fun rememberLookup(fileName: String, caption: String?, showOnly: Boolean): MetaState<MetaInfo> {
+    val online = OnlineMetadata.current ?: return MetaState(null, true)
     val settings by online.settings.collectAsState()
-    if (!settings.enabled) return null
+    if (!settings.enabled) return MetaState(null, true)
     val language by Translator.active.collectAsState()
     val query = remember(fileName, caption, showOnly) {
         MetaQuery.of(fileName, caption)?.let { if (showOnly) it.showOnly() else it }
-    } ?: return null
-    val known = remember(query, language.tag, settings) { (online.peek(query) as? MetaResult.Found)?.info }
-    val found by produceState(known, query, language.tag, settings.ownKey) {
-        value = known
-        if (value == null) value = (withContext(Dispatchers.IO) { online.lookup(query) } as? MetaResult.Found)?.info
+    } ?: return MetaState(null, true)
+    // Any answer in memory, "nothing matched" included, is a settled one.
+    val peeked = remember(query, language.tag, settings) { online.peek(query) }
+    val known = (peeked as? MetaResult.Found)?.info
+    val found by produceState(MetaState(known, peeked != null), query, language.tag, settings.ownKey) {
+        value = MetaState(known, peeked != null)
+        if (known == null) {
+            val answer = withContext(Dispatchers.IO) { runCatching { online.lookup(query) }.getOrNull() }
+            value = MetaState((answer as? MetaResult.Found)?.info, true)
+        }
     }
     return found
+}
+
+/**
+ * [rememberMeta] for a Telegram video, with whether its answer is in; see [rememberMatchedState].
+ */
+@Composable
+fun rememberMetaState(item: MediaItem, showOnly: Boolean = false): MetaState<MetaInfo> {
+    val matched = rememberMatchedState(item, showOnly)
+    return MetaState(matched.value?.info, matched.settled)
+}
+
+/**
+ * Whether [meta]'s title logo is known and decoded (or known not to exist), so a title page's
+ * first frame can draw it in place rather than the name first. Fetches and decodes it as
+ * [TitleArt] would ([prefetchTitleLogo]); true at once while lookups are off, without a match, or
+ * once [metaSettled] says no match is coming.
+ */
+@Composable
+fun rememberTitleLogoReady(meta: MetaInfo?, metaSettled: Boolean): Boolean {
+    val online = OnlineMetadata.current ?: return true
+    val enabled = online.settings.collectAsState().value.enabled
+    if (!enabled) return true
+    if (meta == null) return metaSettled
+    val known = remember(meta) { logoInMemory(online, meta) }
+    val ready by produceState(known, meta) {
+        if (value) return@produceState
+        runCatching { prefetchTitleLogo(meta) }
+        value = true
+    }
+    return ready
+}
+
+/** Whether [meta]'s logo answer is in memory and, if it has one, decoded with its tone known. */
+private fun logoInMemory(online: OnlineMetadata, meta: MetaInfo): Boolean {
+    val answer = online.peekLogo(meta) ?: return false
+    val url = answer.url ?: return true
+    return Thumbnails.peekOnline(url, LOGO_PIXELS) != null && LogoTone.known(url) != null
 }
 
 /**
@@ -311,6 +380,11 @@ fun MetaCredit(info: MetaInfo, modifier: Modifier = Modifier) {
  *
  * @param maxWidth the widest the logo may be; it keeps its own shape inside [maxWidth] by
  *   [maxHeight], set at the start (or the centre, by [alignment]) of that box.
+ * @param settled true once it is known whether [meta] is all there will be: with no match then,
+ *   the name is set at once rather than its place held for a logo that cannot come.
+ * @param waitMs how long the name's place is held for a logo still on its way. A title page sets
+ *   0: its title area is already as tall as the logo, so the name stands there at once and the
+ *   logo fades in over it in the same place.
  */
 @Composable
 fun TitleArt(
@@ -319,6 +393,8 @@ fun TitleArt(
     maxHeight: androidx.compose.ui.unit.Dp,
     modifier: Modifier = Modifier,
     alignment: Alignment = Alignment.BottomStart,
+    settled: Boolean = false,
+    waitMs: Long = LOGO_WAIT_MS,
     text: @Composable () -> Unit,
 ) {
     val online = OnlineMetadata.current
@@ -350,15 +426,16 @@ fun TitleArt(
         bright = withContext(Dispatchers.Default) { LogoTone.of(url, shown) }
     }
     // How long the place is held for a logo still on its way, from when the page is first drawn.
-    var waited by remember { mutableStateOf(false) }
+    var waited by remember { mutableStateOf(waitMs <= 0L) }
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(LOGO_WAIT_MS)
+        if (waited) return@LaunchedEffect
+        kotlinx.coroutines.delay(waitMs)
         waited = true
     }
     val ink = Tone.text
     val light = Tone.background.luminance() > 0.5f
     val tint = if (light && bright == true) androidx.compose.ui.graphics.ColorFilter.tint(ink) else null
-    val noLogo = online == null || !enabled || failed || (answer != null && url == null)
+    val noLogo = online == null || !enabled || failed || (answer != null && url == null) || (meta == null && settled)
     val step: Any = when {
         // On a light page a logo waits the few milliseconds for its verdict, so a white one is
         // never drawn white first.

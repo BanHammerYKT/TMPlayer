@@ -83,13 +83,14 @@ import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.MetaCastRow
 import com.tmplayer.ui.online.MetaCredit
-import com.tmplayer.ui.online.MetaFactsLines
+import com.tmplayer.ui.online.MetaState
 import com.tmplayer.ui.online.MoreLikeThisRow
 import com.tmplayer.ui.online.TrailerHost
 import com.tmplayer.ui.online.TrailerIcon
 import com.tmplayer.ui.online.TrailerQr
-import com.tmplayer.ui.online.rememberMeta
-import com.tmplayer.ui.online.rememberMetaExtras
+import com.tmplayer.ui.online.rememberMetaExtrasState
+import com.tmplayer.ui.online.rememberMetaState
+import com.tmplayer.ui.online.rememberTitleLogoReady
 import com.tmplayer.ui.online.rememberTrailerLauncher
 import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Tone
@@ -115,6 +116,12 @@ import kotlinx.coroutines.launch
  * Close sits at the top end on both; Back closes as well. On a phone the page leaves by the round
  * Back at the top start instead, and [topEndAction] (the Cast button) mirrors it at the top end;
  * elsewhere the action stands just before Close, in one row with it.
+ *
+ * Nothing on it moves once it is drawn (see DetailSlots.kt): the first frame waits a moment for
+ * what the caches hold, and what is still on its way after that (the match's logo, year and
+ * overview, the genres and scores, the trailer, the cast) has its place held at its size, with
+ * soft placeholders, and fades in there. Play stays where it was first drawn, under a finger and
+ * under the remote's focus.
  *
  * @param firstAction focused when the screen opens on a remote or a keyboard: Play or Resume.
  * @param topEndAction one button over the picture at the top end (Cast), drawn the page's way.
@@ -142,20 +149,27 @@ fun MediaDetailScreen(
     copyStarted: (MediaItem) -> Boolean = { false },
     topEndAction: (@Composable () -> Unit)? = null,
 ) {
-    val meta = rememberMeta(item)
-    val extras = rememberMetaExtras(meta)
+    val metaState = rememberMetaState(item)
+    val meta = metaState.value
+    val extrasState = rememberMetaExtrasState(meta, metaState.settled)
+    val extras = extrasState.value
+    // The first frame waits, a moment at most, for what the caches hold: a page seen before is
+    // drawn whole at once, and one new to the device holds places for what is still coming.
+    val logoReady = rememberTitleLogoReady(meta, metaState.settled)
+    val firstPaint = rememberFirstPaint(item.id, metaState.settled && extrasState.settled && logoReady)
     val cover = rememberCover(item)
     // A record's item (opened from Continue watching, say) carries no thumbnail: its picture is
     // looked up, as the card it was opened from did.
     val art = rememberArtItem(item)
     val source = remember(item.id, art, cover, meta?.wideUrl) { BackdropSource(art.miniThumbnail, art.thumbnailFileId, cover, meta?.wideUrl) }
-    val page = DetailPage(item, chatTitle, watched, finished, rows, meta, extras, source, firstAction, onOpenItem, bookmarks, onOpenBookmark, onPickCopy, copyStarted)
+    val page = DetailPage(item, chatTitle, watched, finished, rows, meta, extras, source, firstAction, onOpenItem, bookmarks, onOpenBookmark, onPickCopy, copyStarted, metaState, extrasState)
+    // Decided on the first frame and kept for the visit, the phone turned included.
+    val holds = rememberHolds(page, firstPaint)
     BoxWithConstraints(modifier.fillMaxSize().background(Tone.background)) {
         val wide = maxWidth > maxHeight
-        if (wide) {
-            CinemaLayout(page, maxHeight)
-        } else {
-            StackedLayout(page, maxWidth, maxHeight)
+        // Until the first frame only the page's own ground and its way out, while the caches are asked.
+        if (firstPaint) {
+            if (wide) CinemaLayout(page, holds, maxHeight) else StackedLayout(page, holds, maxWidth, maxHeight)
         }
         if (com.tmplayer.ui.components.usesFloatingChrome()) {
             // The page scrolls up under the status bar; a fade there keeps the clock and the
@@ -221,10 +235,57 @@ private class DetailPage(
     val onOpenBookmark: ((Bookmark) -> Unit)?,
     val onPickCopy: ((MediaItem) -> Unit)?,
     val copyStarted: (MediaItem) -> Boolean,
+    /** The match, and whether more may still come of it. */
+    val metaState: MetaState<MetaInfo>,
+    /** The extras, and whether more may still come of them (the scores, after a kept answer). */
+    val extrasState: MetaState<MetaExtras>,
+)
+
+/**
+ * The places a page holds from its first frame for what is still on its way, decided then and kept
+ * for the visit: see DetailSlots.kt.
+ */
+private class Holds(
+    /** The title area at the logo's height. */
+    val title: Boolean,
+    /** Two lines for the genres and the scores. */
+    val metaLines: Boolean,
+    /** The overview's lines, its placeholder while it comes. */
+    val synopsis: Boolean,
+    /** The trailer's button, unseen until it comes. */
+    val trailer: Boolean,
+    /** The match's year on the facts line (known on the first frame), else on the genres line. */
+    val yearInFacts: Boolean,
+    /** Episodes at the start of the buttons (known on the first frame), else at their end. */
+    val episodesFirst: Boolean,
+    /** A tall page's backdrop at the online picture's height. */
+    val onlineBackdrop: Boolean,
+    /** The cast row's placeholder below the first screen. */
+    val cast: Boolean,
 )
 
 @Composable
-private fun CinemaLayout(page: DetailPage, height: Dp) {
+private fun rememberHolds(page: DetailPage, firstPaint: Boolean): Holds {
+    val titleHold = logoMayCome(page.metaState)
+    val episode = remember(page.item.id) { SeriesShelf.episodeOf(page.item).episode != null }
+    return remember(page.item.id, firstPaint) {
+        val metaComing = !page.metaState.settled
+        val extrasComing = !page.extrasState.settled
+        Holds(
+            title = titleHold,
+            metaLines = extrasComing,
+            synopsis = metaComing,
+            trailer = page.extras?.trailer != null || extrasComing,
+            yearInFacts = !metaComing,
+            episodesFirst = episode || page.meta?.kind == MetaKind.Show,
+            onlineBackdrop = page.meta?.wideUrl != null || metaComing,
+            cast = extrasComing,
+        )
+    }
+}
+
+@Composable
+private fun CinemaLayout(page: DetailPage, holds: Holds, height: Dp) {
     val tv = !isTouch()
     val scroll = rememberScrollState()
     val episodes = remember { BringIntoViewRequester() }
@@ -260,15 +321,21 @@ private fun CinemaLayout(page: DetailPage, height: Dp) {
                 Spacer(Modifier.height(if (tv) 24.dp else 12.dp))
                 // The words keep to the faded half; the buttons may run on under the picture.
                 Column(Modifier.fillMaxWidth(0.55f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Box(Modifier.riseIn(0, enabled = !tv)) { TitleBlock(page) }
-                    Box(Modifier.riseIn(1, enabled = !tv)) { FactsBlock(page) }
-                    synopsisOf(page)?.let { Synopsis(it, style = MaterialTheme.typography.bodyLarge, lines = if (tv) 3 else 2) }
+                    Box(Modifier.riseIn(0, enabled = !tv)) { TitleBlock(page, holds) }
+                    Box(Modifier.riseIn(1, enabled = !tv)) { FactsBlock(page, holds) }
+                    SynopsisSlot(
+                        synopsisOf(page),
+                        waiting = !page.metaState.settled,
+                        hold = holds.synopsis,
+                        style = MaterialTheme.typography.bodyLarge,
+                        lines = if (tv) 3 else 2,
+                    )
                     ProtectedNote(page.item)
                 }
                 Column(Modifier.riseIn(2, enabled = !tv), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     // A television keeps the everyday buttons beside Play and the rest at the foot
                     // of the page, as a phone does; Right walks along the first, Down reaches the rest.
-                    Actions(page, onEpisodes = episodesButton(page.item, page.meta, episodes), headlineOnly = tv)
+                    Actions(page, holds, onEpisodes = episodesButton(page.item, page.meta, episodes), headlineOnly = tv)
                     Versions(page.item, page.onPickCopy, page.chatTitle, page.copyStarted)
                     TelegramQualityLine(page.item)
                 }
@@ -276,7 +343,7 @@ private fun CinemaLayout(page: DetailPage, height: Dp) {
             }
             // Just under the first screen, so a long list never pushes the title off the top.
             Box(Modifier.widthIn(max = 720.dp)) { DetailBookmarks(page.bookmarks, page.onOpenBookmark) }
-            BelowTheFold(page.item, page.meta, page.extras, page.onOpenItem, Modifier.bringIntoViewRequester(episodes))
+            BelowTheFold(page, holds, Modifier.bringIntoViewRequester(episodes))
             if (tv) MoreActions(page)
             Spacer(Modifier.height(24.dp))
         }
@@ -292,12 +359,14 @@ private fun CinemaLayout(page: DetailPage, height: Dp) {
 }
 
 @Composable
-private fun StackedLayout(page: DetailPage, width: Dp, height: Dp) {
+private fun StackedLayout(page: DetailPage, holds: Holds, width: Dp, height: Dp) {
     val scroll = rememberScrollState()
     val episodes = remember { BringIntoViewRequester() }
     val reduced = rememberReducedMotion()
     val touch = isTouch()
-    val backdrop = tallBackdropHeight(width, height, online = page.meta?.wideUrl != null)
+    // The frame's height is chosen once: an online picture arriving fades into it rather than
+    // making the frame taller and pushing the title, the facts and Play down.
+    val backdrop = tallBackdropHeight(width, height, online = holds.onlineBackdrop)
     Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
         // Under the status bar and the full width; the title sits on its foot, in the fade.
         Box(Modifier.fillMaxWidth().heightIn(min = backdrop).clipToBounds()) {
@@ -317,7 +386,7 @@ private fun StackedLayout(page: DetailPage, width: Dp, height: Dp) {
                     .riseIn(0, enabled = touch),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                TitleBlock(page)
+                TitleBlock(page, holds)
             }
         }
         Column(
@@ -331,9 +400,9 @@ private fun StackedLayout(page: DetailPage, width: Dp, height: Dp) {
             // The page arrives in reading order: the title, then the facts, Play and its buttons,
             // the copies line and the overview, each a beat after the one above.
             Column(Modifier.revealFromTop(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.riseIn(1, enabled = touch)) { FactsBlock(page) }
+                Box(Modifier.riseIn(1, enabled = touch)) { FactsBlock(page, holds) }
                 Box(Modifier.riseIn(2, enabled = touch)) {
-                    Actions(page, primaryFullWidth = true, onEpisodes = episodesButton(page.item, page.meta, episodes), headlineOnly = true)
+                    Actions(page, holds, primaryFullWidth = true, onEpisodes = episodesButton(page.item, page.meta, episodes), headlineOnly = true)
                 }
                 Box(Modifier.riseIn(3, enabled = touch)) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -341,11 +410,15 @@ private fun StackedLayout(page: DetailPage, width: Dp, height: Dp) {
                         TelegramQualityLine(page.item)
                     }
                 }
-                synopsisOf(page)?.let { Box(Modifier.riseIn(4, enabled = touch)) { Synopsis(it) } }
+                if (synopsisOf(page) != null || holds.synopsis) {
+                    Box(Modifier.riseIn(4, enabled = touch)) {
+                        SynopsisSlot(synopsisOf(page), waiting = !page.metaState.settled, hold = holds.synopsis)
+                    }
+                }
                 ProtectedNote(page.item)
                 DetailBookmarks(page.bookmarks, page.onOpenBookmark)
             }
-            BelowTheFold(page.item, page.meta, page.extras, page.onOpenItem, Modifier.bringIntoViewRequester(episodes))
+            BelowTheFold(page, holds, Modifier.bringIntoViewRequester(episodes))
             MoreActions(page)
             Spacer(Modifier.height(24.dp))
         }
@@ -354,7 +427,7 @@ private fun StackedLayout(page: DetailPage, width: Dp, height: Dp) {
 
 /** The episode or part over the title in the accent, then the title in the page's display size. */
 @Composable
-private fun TitleBlock(page: DetailPage) {
+private fun TitleBlock(page: DetailPage, holds: Holds) {
     val item = page.item
     val meta = page.meta
     val parsed = remember(item) { MediaName.parse(item.nameForParsing, item.caption) }
@@ -367,50 +440,66 @@ private fun TitleBlock(page: DetailPage) {
     ).joinToString("  ·  ")
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (eyebrow.isNotEmpty()) {
-            Text(eyebrow, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Tone.accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // One line, so the episode's name arriving after its code never adds a second.
+            Text(eyebrow, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Tone.accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        // The film's or show's title logo from TMDB where it has one, read out as the name.
+        // The film's or show's title logo from TMDB where it has one, read out as the name, in a
+        // place as tall as the logo may be, so the name giving way to it moves nothing.
         val tv = !isTouch()
-        com.tmplayer.ui.online.TitleArt(
-            meta,
-            maxWidth = if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
-            maxHeight = if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT,
-            modifier = Modifier.clearAndSetSemantics {
-                heading()
-                contentDescription = heading
-            },
-        ) {
-            Text(
-                heading,
-                style = MaterialTheme.typography.displaySmall.trackedFor(heading),
-                color = Tone.text,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
+        val logoHeight = if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT
+        TitleSlot(logoHeight, hold = holds.title) {
+            com.tmplayer.ui.online.TitleArt(
+                meta,
+                maxWidth = if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
+                maxHeight = logoHeight,
+                settled = page.metaState.settled,
+                waitMs = 0L,
+                modifier = Modifier.clearAndSetSemantics {
+                    heading()
+                    contentDescription = heading
+                },
+            ) {
+                Text(
+                    heading,
+                    style = MaterialTheme.typography.displaySmall.trackedFor(heading),
+                    color = Tone.text,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
 /** The facts line, the provider's genres and people under it, and where the viewer stopped. */
 @Composable
-private fun FactsBlock(page: DetailPage) {
+private fun FactsBlock(page: DetailPage, holds: Holds) {
     val s = LocalStrings.current
-    val facts = remember(page.item, page.meta, page.chatTitle, page.finished, s) { videoFacts(page, s) }
+    val parsedYear = remember(page.item) { MediaName.parse(page.item.nameForParsing, page.item.caption).year }
+    // The match's year joins the facts line only when it was there on the first frame; one that
+    // comes later opens the genres line instead, in its held place, so the facts never re-wrap.
+    val matchYear = page.meta?.year.takeIf { parsedYear == null }
+    val factsYear = parsedYear ?: matchYear.takeIf { holds.yearInFacts }
+    val facts = remember(page.item, factsYear, page.chatTitle, page.finished, s) { videoFacts(page, factsYear, s) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         FactLine(facts)
-        MetaFactsLines(page.extras)
+        DetailMetaLines(
+            page.extrasState,
+            year = matchYear.takeIf { !holds.yearInFacts },
+            hold = holds.metaLines,
+            yearPending = !holds.yearInFacts && parsedYear == null && !page.metaState.settled,
+        )
         ResumeLine(page.watched, page.finished, page.item.durationSec)
         PiecesMissingLine(page.item)
     }
 }
 
 /** Year, length, quality, size and the chat, then Watched; only what the file and the match know. */
-private fun videoFacts(page: DetailPage, s: Messages): List<Fact> {
+private fun videoFacts(page: DetailPage, year: Int?, s: Messages): List<Fact> {
     val item = page.item
-    val parsed = MediaName.parse(item.nameForParsing, item.caption)
     val facts = MediaFacts.of(item)
     return listOfNotNull(
-        (parsed.year ?: page.meta?.year)?.let { Fact(it.toString()) },
+        year?.let { Fact(it.toString()) },
         item.durationSec.takeIf { it > 0 }?.let { Fact(s.formatter.duration(it.toLong())) },
         facts.resolution?.let { Fact(it, chip = true) },
         item.sizeBytes.takeIf { it > 0 }?.let { Fact(com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(it))) },
@@ -451,6 +540,7 @@ private fun ProtectedNote(item: MediaItem) {
 @Composable
 private fun Actions(
     page: DetailPage,
+    holds: Holds,
     primaryFullWidth: Boolean = false,
     /** Scrolls down to the seasons and episodes; null where the video is not an episode. */
     onEpisodes: (() -> Unit)? = null,
@@ -470,9 +560,16 @@ private fun Actions(
     val primary = page.rows.firstOrNull()
     val others = buildList {
         addAll(page.rows.drop(1).filter { !headlineOnly || it.action in HEADLINE_ACTIONS })
-        // Beside the main button, as a streaming app's "Episodes" sits by Play.
-        if (onEpisodes != null) add(0, DetailRow(DetailAction.Play, s.detailEpisodes, TmIcons.Episodes, onSelect = onEpisodes))
-        if (trailer != null) add(DetailRow(DetailAction.Play, s.metadataTrailer, TrailerIcon, onSelect = { trailers.open(trailer) }))
+        // Beside the main button, as a streaming app's "Episodes" sits by Play; at the end when the
+        // match only said it is a show after the first frame, so nothing already drawn moves.
+        if (onEpisodes != null) {
+            val row = DetailRow(DetailAction.Play, s.detailEpisodes, TmIcons.Episodes, onSelect = onEpisodes)
+            if (holds.episodesFirst) add(0, row) else add(row)
+        }
+        // The trailer's place is held while the extras are on their way, unseen; it fades in there.
+        if (trailer != null || holds.trailer) {
+            add(DetailRow(DetailAction.Play, s.metadataTrailer, TrailerIcon, onSelect = { trailer?.let(trailers::open) }, placeholder = trailer == null))
+        }
         if (!headlineOnly && online != null && page.meta == null && metadataOff) {
             add(DetailRow(DetailAction.Play, s.metadataTurnOn, TmIcons.Info, s.metadataTurnOnDetail, onSelect = { online.setEnabled(true) }))
         }
@@ -485,7 +582,7 @@ private fun Actions(
         if (tv) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 hero(Modifier)
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
             }
         } else {
             hero(if (primaryFullWidth) Modifier.fillMaxWidth() else Modifier)
@@ -494,7 +591,7 @@ private fun Actions(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, if (headlineOnly) Alignment.CenterHorizontally else Alignment.Start),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
             }
         }
         trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) }
@@ -554,21 +651,29 @@ private fun MoreActions(page: DetailPage) {
 /** The cast, "More like this", then the file's facts, below the first screen. */
 @Composable
 private fun BelowTheFold(
-    item: MediaItem,
-    meta: MetaInfo?,
-    extras: MetaExtras?,
-    onOpenItem: ((MediaItem) -> Unit)?,
+    page: DetailPage,
+    holds: Holds,
     episodesModifier: Modifier = Modifier,
 ) {
     val s = LocalStrings.current
+    val item = page.item
+    val meta = page.meta
+    val extras = page.extras
+    val onOpenItem = page.onOpenItem
     val facts = remember(item) { MediaFacts.of(item) }
     // The cast first, a short row; then the seasons and episodes, which can run long, so they
-    // never push the cast out of sight; then "More like this".
-    if (meta != null && extras != null) MetaCastRow(extras.cast)
+    // never push the cast out of sight; then "More like this". While the extras are on their way
+    // the cast's place shows soft faces.
+    when {
+        meta != null && extras != null -> MetaCastRow(extras.cast)
+        holds.cast && !page.extrasState.settled -> com.tmplayer.ui.online.MetaCastPlaceholder()
+    }
     SeasonsSection(item, meta, extras, onOpenItem, episodesModifier)
     if (meta != null && extras != null) MoreLikeThisRow(meta, extras, onOpenItem)
     Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(s.detailAbout, style = MaterialTheme.typography.titleSmall, color = Tone.text)
+        // Who made it, here with the credits rather than over Play, where it arrived late.
+        MetaPeopleLine(extras)
         DetailFacts(item, facts, s, overview = null, showSynopsis = false)
         meta?.let { MetaCredit(it) }
     }

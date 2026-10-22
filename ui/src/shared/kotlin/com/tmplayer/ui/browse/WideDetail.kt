@@ -68,13 +68,13 @@ import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.online.MetaCastRow
 import com.tmplayer.ui.online.MetaCredit
-import com.tmplayer.ui.online.MetaFactsLines
 import com.tmplayer.ui.online.MoreLikeThisRow
 import com.tmplayer.ui.online.TrailerHost
 import com.tmplayer.ui.online.TrailerIcon
 import com.tmplayer.ui.online.TrailerQr
-import com.tmplayer.ui.online.rememberMatched
-import com.tmplayer.ui.online.rememberMetaExtras
+import com.tmplayer.ui.online.rememberMetaExtrasState
+import com.tmplayer.ui.online.rememberMetaState
+import com.tmplayer.ui.online.rememberTitleLogoReady
 import com.tmplayer.ui.online.rememberTrailerLauncher
 import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Danger
@@ -94,6 +94,9 @@ import com.tmplayer.ui.theme.trackedFor
  * the everyday actions as round buttons beside it, then the overview at a reading measure beside
  * the file's own facts, the copies and bookmarks, the cast, the seasons and episodes, "More like
  * this", and the things done now and then at the foot.
+ *
+ * As on the phone's page ([MediaDetailScreen]), nothing moves once drawn: the first frame waits a
+ * moment for the caches, and what is still coming has its place held (DetailSlots.kt).
  */
 
 /** A video's detail for a large window; see the file's note. Same inputs as [MediaDetailPanel]. */
@@ -117,14 +120,18 @@ fun WideDetailPanel(
     val s = LocalStrings.current
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
     val parsed = remember(item, corrections) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
-    val meta = rememberMatched(item)?.info
+    val metaState = rememberMetaState(item)
+    val meta = metaState.value
     // A match's own title, in the UI language; else the name as read, its joiners made spaces.
     val heading = meta?.title?.takeIf { it.isNotBlank() }
         ?: parsed.title.ifBlank { item.title }.let { if (' ' in it) it else it.replace(WIDE_JOINERS, " ") }
     val eyebrow = listOfNotNull(parsed.episodeCode, meta?.episode?.name?.takeIf { it.isNotBlank() }).joinToString("  ·  ")
     val metaOverview = meta?.let { it.episode?.overview?.takeIf { o -> o.isNotBlank() } ?: it.overview.takeIf { o -> o.isNotBlank() } }
     val overview = metaOverview ?: item.caption.takeIf { it.isNotBlank() }
-    val extras = rememberMetaExtras(meta)
+    val extrasState = rememberMetaExtrasState(meta, metaState.settled)
+    val extras = extrasState.value
+    val logoReady = rememberTitleLogoReady(meta, metaState.settled)
+    val firstPaint = rememberFirstPaint(item.id, metaState.settled && extrasState.settled && logoReady)
     val trailers = rememberTrailerLauncher()
     val cover = rememberCover(item)
     val art = rememberArtItem(item)
@@ -139,11 +146,29 @@ fun WideDetailPanel(
     val onEpisodes = episodesButton(item, meta, episodesAt)
 
     val primary = rows.firstOrNull()
-    // Beside Play: the episodes, the everyday switches and the trailer.
+    // What the page holds places for, decided on its first frame (see DetailSlots.kt).
+    val titleHold = logoMayCome(metaState)
+    val holdsTitle = remember(item.id, firstPaint) { titleHold }
+    val metaComing = !metaState.settled
+    val extrasComing = !extrasState.settled
+    val holdMetaLines = remember(item.id, firstPaint) { extrasComing }
+    val holdSynopsis = remember(item.id, firstPaint) { metaComing }
+    val holdTrailer = remember(item.id, firstPaint) { extras?.trailer != null || extrasComing }
+    val holdCast = remember(item.id, firstPaint) { extrasComing }
+    val yearInFacts = remember(item.id, firstPaint) { !metaComing }
+    val episodesFirst = remember(item.id, firstPaint) { parsed.episode != null || meta?.kind == com.tmplayer.online.MetaKind.Show }
+    // Beside Play: the episodes, the everyday switches and the trailer, whose place is held
+    // (unseen) while the extras are on their way.
     val quick = buildList {
-        if (onEpisodes != null) add(DetailRow(DetailAction.Play, s.detailEpisodes, TmIcons.Episodes, onSelect = onEpisodes))
         addAll(rows.drop(1).filter { it.action in WIDE_HEADLINE })
-        extras?.trailer?.let { trailer -> add(DetailRow(DetailAction.Play, s.metadataTrailer, TrailerIcon, onSelect = { trailers.open(trailer) })) }
+        if (onEpisodes != null) {
+            val row = DetailRow(DetailAction.Play, s.detailEpisodes, TmIcons.Episodes, onSelect = onEpisodes)
+            if (episodesFirst) add(0, row) else add(row)
+        }
+        val trailer = extras?.trailer
+        if (trailer != null || holdTrailer) {
+            add(DetailRow(DetailAction.Play, s.metadataTrailer, TrailerIcon, onSelect = { trailer?.let(trailers::open) }, placeholder = trailer == null))
+        }
     }
     // At the foot: the chat, the corrections, the hand offs, the switch for posters while off.
     val rest = buildList {
@@ -156,7 +181,8 @@ fun WideDetailPanel(
         val side = if (roomy) 48.dp else 32.dp
         // 16:9 of the sheet's width while that leaves Play on the first screen.
         val heroHeight = minOf(maxWidth * (9f / 16f), maxHeight * 0.56f).coerceAtLeast(240.dp)
-        Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
+        // The sheet's own ground and Close, for the moment the caches are asked.
+        if (firstPaint) Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
             Box(Modifier.fillMaxWidth().height(heroHeight).clipToBounds()) {
                 PageBackdrop(
                     source,
@@ -174,19 +200,25 @@ fun WideDetailPanel(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (eyebrow.isNotEmpty()) {
-                        Text(eyebrow, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Tone.accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        // One line, so the episode's name arriving after its code never adds a second.
+                        Text(eyebrow, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Tone.accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    com.tmplayer.ui.online.TitleArt(
-                        meta,
-                        maxWidth = if (roomy) 460.dp else 380.dp,
-                        maxHeight = if (roomy) 150.dp else 120.dp,
-                        modifier = Modifier.clearAndSetSemantics {
-                            heading()
-                            contentDescription = heading
-                        },
-                    ) {
-                        val style = if (roomy) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displaySmall
-                        Text(heading, style = style.trackedFor(heading), fontWeight = FontWeight.Bold, color = Tone.text, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    val logoHeight = if (roomy) 150.dp else 120.dp
+                    TitleSlot(logoHeight, hold = holdsTitle) {
+                        com.tmplayer.ui.online.TitleArt(
+                            meta,
+                            maxWidth = if (roomy) 460.dp else 380.dp,
+                            maxHeight = logoHeight,
+                            settled = metaState.settled,
+                            waitMs = 0L,
+                            modifier = Modifier.clearAndSetSemantics {
+                                heading()
+                                contentDescription = heading
+                            },
+                        ) {
+                            val style = if (roomy) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displaySmall
+                            Text(heading, style = style.trackedFor(heading), fontWeight = FontWeight.Bold, color = Tone.text, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
             }
@@ -197,9 +229,12 @@ fun WideDetailPanel(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(22.dp)) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // The match's year on the facts line only when it was there on the first
+                        // frame; later it opens the genres line, in its held place.
+                        val matchYear = meta?.year.takeIf { parsed.year == null }
                         FactLine(
                             listOfNotNull(
-                                (parsed.year ?: meta?.year)?.let { Fact(it.toString()) },
+                                (parsed.year ?: matchYear.takeIf { yearInFacts })?.let { Fact(it.toString()) },
                                 item.durationSec.takeIf { it > 0 }?.let { Fact(s.formatter.duration(it.toLong())) },
                                 facts.resolution?.let { Fact(it, chip = true) },
                                 item.sizeBytes.takeIf { it > 0 }?.let { Fact(com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(it))) },
@@ -208,7 +243,12 @@ fun WideDetailPanel(
                             ),
                             style = MaterialTheme.typography.titleSmall,
                         )
-                        MetaFactsLines(extras)
+                        DetailMetaLines(
+                            extrasState,
+                            year = matchYear.takeIf { !yearInFacts },
+                            hold = holdMetaLines,
+                            yearPending = !yearInFacts && parsed.year == null && metaComing,
+                        )
                         ResumeLine(watched, finished, item.durationSec)
                         PiecesMissingLine(item)
                     }
@@ -233,7 +273,7 @@ fun WideDetailPanel(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            quick.forEach { WideIconAction(it.label, it.icon, it.onSelect, destructive = it.destructive) }
+                            quick.forEach { WideIconAction(it.label, it.icon, it.onSelect, destructive = it.destructive, ghost = it.placeholder, waiting = it.placeholder && extrasComing) }
                         }
                     }
                     trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 4.dp)) }
@@ -244,11 +284,14 @@ fun WideDetailPanel(
                 // file's own facts beside it where the sheet is wide enough, else under it.
                 val story: @Composable () -> Unit = {
                     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                        overview?.let { text ->
+                        if (overview != null || holdSynopsis) {
                             Column(Modifier.widthIn(max = READING), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Synopsis(text, style = MaterialTheme.typography.bodyLarge, lines = 5)
+                                SynopsisSlot(overview, waiting = metaComing, hold = holdSynopsis, style = MaterialTheme.typography.bodyLarge, lines = 5)
                                 if (metaOverview != null && meta != null) MetaCredit(meta)
+                                MetaPeopleLine(extras)
                             }
+                        } else {
+                            MetaPeopleLine(extras)
                         }
                         Versions(item, onPickCopy, chatTitle, copyStarted)
                         TelegramQualityLine(item)
@@ -271,7 +314,10 @@ fun WideDetailPanel(
                     file()
                 }
 
-                if (meta != null && extras != null) MetaCastRow(extras.cast)
+                when {
+                    meta != null && extras != null -> MetaCastRow(extras.cast)
+                    holdCast && extrasComing -> com.tmplayer.ui.online.MetaCastPlaceholder()
+                }
                 SeasonsSection(item, meta, extras, onOpenItem, Modifier.bringIntoViewRequester(episodesAt))
                 if (meta != null && extras != null) MoreLikeThisRow(meta, extras, onOpenItem)
 
@@ -295,7 +341,19 @@ fun WideDetailPanel(
         }
         PageDiscButton(TmIcons.Close, s.detailClose, onClose, Modifier.align(Alignment.TopStart).padding(16.dp))
     }
+    // Play is composed once the first frame is drawn, which the caches may hold back a moment:
+    // focus is asked for again then, so a held page still opens on Play.
+    androidx.compose.runtime.LaunchedEffect(item.id, firstPaint) {
+        if (!firstPaint || firstAction == null) return@LaunchedEffect
+        repeat(FOCUS_AFTER_HOLD_TRIES) {
+            androidx.compose.runtime.withFrameNanos { }
+            if (runCatching { firstAction.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
 }
+
+/** Frames Play is asked for focus over once a held page is drawn. */
+private const val FOCUS_AFTER_HOLD_TRIES = 10
 
 /**
  * One of the everyday actions beside Play on a large window: a round button as tall as the pill,
@@ -303,9 +361,25 @@ fun WideDetailPanel(
  * other one in place, so the press shows.
  */
 @Composable
-internal fun WideIconAction(label: String, icon: ImageVector, onClick: () -> Unit, destructive: Boolean = false) {
+internal fun WideIconAction(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+    /** A place held for a button still on its way (the trailer): laid out, unseen, unreachable; it fades in there. */
+    ghost: Boolean = false,
+    /** With [ghost]: still on its way, so a soft placeholder of the button stands in its place. */
+    waiting: Boolean = false,
+) {
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusVisibleAsState()
+    val shown by androidx.compose.animation.core.animateFloatAsState(if (ghost) 0f else 1f, com.tmplayer.ui.theme.Motion.standard(), label = "wideActionShown")
+    if (ghost) {
+        Box(Modifier.size(WIDE_ACTION).clearAndSetSemantics {}) {
+            if (waiting) com.tmplayer.ui.components.SkeletonBox(com.tmplayer.ui.components.rememberShimmer(), Modifier.matchParentSize(), CircleShape)
+        }
+        return
+    }
     val ink = when {
         focused -> Tone.onFocusFill
         destructive -> Tone.danger
@@ -314,6 +388,7 @@ internal fun WideIconAction(label: String, icon: ImageVector, onClick: () -> Uni
     IconTip(label, side = TipSide.Below) {
         Box(
             Modifier
+                .graphicsLayer { alpha = shown }
                 .pressScale(interactions)
                 .size(WIDE_ACTION)
                 .clip(CircleShape)

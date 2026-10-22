@@ -91,17 +91,26 @@ import kotlin.math.roundToInt
 
 /** The extras for [info], once asked for; null while off, before they arrive, or with no match. */
 @Composable
-fun rememberMetaExtras(info: MetaInfo?): MetaExtras? {
-    info ?: return null
-    val online = OnlineMetadata.current ?: return null
+fun rememberMetaExtras(info: MetaInfo?): MetaExtras? = rememberMetaExtrasState(info, infoSettled = true).value
+
+/**
+ * [rememberMetaExtras], with whether the answer is in ([MetaState.settled]). Without [info] they
+ * are settled once [infoSettled] is (no match, so no extras to come). An answer kept from before
+ * the scores were asked for is the value at once and not settled until the scores have been asked.
+ */
+@Composable
+fun rememberMetaExtrasState(info: MetaInfo?, infoSettled: Boolean): MetaState<MetaExtras> {
+    info ?: return MetaState(null, infoSettled)
+    val online = OnlineMetadata.current ?: return MetaState(null, true)
     val settings by online.settings.collectAsState()
-    if (!settings.enabled) return null
+    if (!settings.enabled) return MetaState(null, true)
     val language by Translator.active.collectAsState()
     val known = remember(info.provider, info.kind, info.id, language.tag) { online.peekExtras(info) }
-    val extras by produceState(known, info.provider, info.kind, info.id, language.tag) {
-        value = known
+    val done = known?.scoresAsked == true
+    val extras by produceState(MetaState(known, done), info.provider, info.kind, info.id, language.tag) {
+        value = MetaState(known, done)
         // An answer kept from before the scores were asked for is shown at once, then refreshed with them.
-        if (value?.scoresAsked != true) value = withContext(Dispatchers.IO) { online.extras(info) } ?: value
+        if (!done) value = MetaState(withContext(Dispatchers.IO) { runCatching { online.extras(info) }.getOrNull() } ?: known, true)
     }
     return extras
 }
@@ -400,6 +409,37 @@ fun MetaCastRow(cast: List<MetaPerson>, modifier: Modifier = Modifier, contentPa
         }
     }
 }
+
+/**
+ * The cast row's place while the extras are on their way: its heading and a row of soft faces with
+ * a line of name under each, about as tall as the row it stands for, so the cast comes in where
+ * its place was rather than pushing what is under it down.
+ */
+@Composable
+fun MetaCastPlaceholder(modifier: Modifier = Modifier) {
+    val s = LocalStrings.current
+    val tv = !isTouch()
+    val face = if (tv) FACE_TV else FACE
+    val shimmer = com.tmplayer.ui.components.rememberShimmer()
+    Column(modifier.semantics { contentDescription = s.metadataCast }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(s.metadataCast, style = MaterialTheme.typography.titleSmall, color = Tone.text)
+        Row(
+            Modifier.padding(start = if (tv) 6.dp else 0.dp, top = if (tv) 6.dp else 0.dp, bottom = if (tv) 6.dp else 0.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (tv) 12.dp else 8.dp),
+        ) {
+            repeat(CAST_PLACEHOLDERS) {
+                Column(Modifier.width(face + 16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.size(face), CircleShape)
+                    com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.width(face * 0.8f).height(10.dp))
+                    com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.width(face * 0.55f).height(10.dp))
+                }
+            }
+        }
+    }
+}
+
+/** How many soft faces stand in for the cast. */
+private const val CAST_PLACEHOLDERS = 5
 
 @Composable
 private fun PersonCard(person: MetaPerson, loadPhoto: Boolean) {

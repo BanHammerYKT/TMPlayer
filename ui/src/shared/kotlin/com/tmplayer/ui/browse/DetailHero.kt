@@ -39,6 +39,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -190,6 +192,7 @@ internal fun HeroPill(
     Row(
         modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .testTag(PLAY_PILL_TAG)
             .widthIn(max = HeroPillMax)
             .heightIn(min = if (tv) 48.dp else if (large) 56.dp else 52.dp)
             .then(if (large) Modifier.widthIn(min = 176.dp) else Modifier)
@@ -248,7 +251,26 @@ internal fun RoundAction(
     toggles: Boolean? = null,
     /** A download under way, 0 to 1: a ring round the button fills as it goes. */
     progress: Float? = null,
+    /**
+     * Its place held for a button that may still come (the trailer, while the title's extras are on
+     * their way): laid out, not drawn, not reachable. It fades in where it stood once it is real.
+     */
+    ghost: Boolean = false,
+    /** With [ghost]: it is still on its way, so a soft placeholder of the button stands in its place. */
+    waiting: Boolean = false,
 ) {
+    if (ghost && waiting) {
+        Box(modifier) {
+            RoundAction(label, icon, onClick, short = short, ghost = true)
+            val shimmer = com.tmplayer.ui.components.rememberShimmer()
+            if (isTouch()) {
+                com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.align(Alignment.TopCenter).padding(top = 4.dp).size(48.dp), CircleShape)
+            } else {
+                com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.matchParentSize(), CircleShape)
+            }
+        }
+        return
+    }
     val tv = !isTouch()
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusVisibleAsState()
@@ -258,7 +280,11 @@ internal fun RoundAction(
         Motion.standard(Motion.Fast),
         label = "roundActionScale",
     )
-    val requester = if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier
+    val shown by animateFloatAsState(if (ghost) 0f else 1f, Motion.standard(), label = "roundActionShown")
+    val modifier = modifier
+        .graphicsLayer { alpha = shown }
+        .then(if (ghost) Modifier.clearAndSetSemantics {} else Modifier)
+    val requester = if (focusRequester != null && !ghost) Modifier.focusRequester(focusRequester) else Modifier
     if (tv) {
         val ink = when {
             focused -> Tone.onFocusFill
@@ -282,7 +308,7 @@ internal fun RoundAction(
                     },
                 )
                 .focusRing(focused, CircleShape)
-                .clickable(interactionSource = interactions, indication = null, onClick = onClick)
+                .clickable(interactionSource = interactions, indication = null, enabled = !ghost, onClick = onClick)
                 .padding(start = 16.dp, end = 20.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -299,11 +325,11 @@ internal fun RoundAction(
             .then(requester)
             .width(RoundActionWidth)
             .clip(RoundedCornerShape(Corner.Medium))
-            .clickable(interactionSource = interactions, indication = LocalIndication.current) {
+            .clickable(interactionSource = interactions, indication = LocalIndication.current, enabled = !ghost) {
                 toggles?.let(tick)
                 onClick()
             }
-            .semantics { contentDescription = listOfNotNull(label, detail).joinToString(". ") }
+            .then(if (ghost) Modifier else Modifier.semantics { contentDescription = listOfNotNull(label, detail).joinToString(". ") })
             .padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -364,9 +390,18 @@ private fun Modifier.downloadRing(progress: Float?): Modifier {
  * An overview or a caption, cut to three lines under a finger and four on a television, with
  * "More" under it while it is cut. A press opens it whole and "Less" closes it. On a remote it is
  * a stop only while there is more to read, so a short one is not a dead step for the D-pad.
+ *
+ * With [holdLines] it takes all its lines and the "More" line's room whatever its length, so an
+ * overview arriving in place of a caption (or a short one) moves nothing under it ([SynopsisSlot]).
  */
 @Composable
-internal fun Synopsis(text: String, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.bodyMedium, lines: Int? = null) {
+internal fun Synopsis(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
+    lines: Int? = null,
+    holdLines: Boolean = false,
+) {
     val s = LocalStrings.current
     val tv = !isTouch()
     val cutAt = lines ?: if (tv) 4 else 3
@@ -376,8 +411,10 @@ internal fun Synopsis(text: String, modifier: Modifier = Modifier, style: TextSt
     val focused by interactions.collectIsFocusVisibleAsState()
     val shape = RoundedCornerShape(Corner.Small)
     val pressable = cut || open
-    Column(
-        modifier
+    val measurer = rememberTextMeasurer()
+    val bodyStyle = androidx.compose.material3.LocalTextStyle.current.merge(style)
+    Layout(
+        modifier = modifier
             .clip(shape)
             .background(if (focused) Tone.surfaceHigh else Color.Transparent)
             .focusRing(focused, shape)
@@ -389,23 +426,50 @@ internal fun Synopsis(text: String, modifier: Modifier = Modifier, style: TextSt
                 },
             )
             .padding(vertical = 2.dp, horizontal = if (tv) 6.dp else 0.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(
-            text,
-            style = style,
-            color = Tone.text,
-            maxLines = if (open) Int.MAX_VALUE else cutAt,
-            overflow = TextOverflow.Ellipsis,
-            onTextLayout = { if (!open) cut = it.hasVisualOverflow },
-        )
-        if (pressable) {
+        content = {
+            Text(
+                text,
+                style = style,
+                color = Tone.text,
+                maxLines = if (open) Int.MAX_VALUE else cutAt,
+                minLines = if (holdLines && !open) cutAt else 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(
                 if (open) s.commonLess else s.commonMore,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
                 color = Tone.accent,
+                // Held with nothing more to read: the room kept, the word neither shown nor read out.
+                modifier = Modifier
+                    .graphicsLayer { alpha = if (cut || open) 1f else 0f }
+                    .then(if (pressable) Modifier else Modifier.clearAndSetSemantics {}),
             )
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val body = measurables[0].measure(loose)
+        // Whether the words run past their lines, worked out here rather than from the text's own
+        // layout a frame later: "More" is in its place on the first frame, instead of arriving
+        // under the words and pushing everything below it down by a line.
+        if (!open) {
+            val room = if (constraints.hasBoundedWidth) constraints.maxWidth else body.width
+            val over = measurer.measure(
+                text,
+                bodyStyle,
+                overflow = TextOverflow.Ellipsis,
+                maxLines = cutAt,
+                constraints = androidx.compose.ui.unit.Constraints(maxWidth = room),
+            ).hasVisualOverflow
+            if (over != cut) cut = over
+        }
+        val more = if (cut || open || holdLines) measurables[1].measure(loose) else null
+        val gap = 2.dp.roundToPx()
+        val width = maxOf(body.width, more?.width ?: 0)
+        val height = body.height + (more?.let { gap + it.height } ?: 0)
+        layout(width, height) {
+            body.placeRelative(0, 0)
+            more?.placeRelative(0, body.height + gap)
         }
     }
 }
@@ -475,6 +539,9 @@ internal const val BACKDROP_SHARE = 0.72f
 
 /** How fast a tall page's backdrop moves against the page's own scroll. */
 internal const val PARALLAX = 0.5f
+
+/** The Play pill's tag, for the tests that check it stays where it was first drawn. */
+const val PLAY_PILL_TAG = "play-pill"
 
 /** How wide the Play pill grows at most. */
 internal val HeroPillMax = 420.dp

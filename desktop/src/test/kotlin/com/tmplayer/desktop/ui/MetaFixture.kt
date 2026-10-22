@@ -21,8 +21,11 @@ internal object MetaFixture {
 
     private val pictures = File("../app/src/promo/res/drawable-nodpi")
 
-    /** [state] is `on`, `off`, `none` (no TMDB key in the build) or `refused`. */
-    fun install(state: String): OnlineMetadata {
+    /**
+     * [state] is `on`, `off`, `none` (no TMDB key in the build) or `refused`. With [gate], every
+     * answer waits for it, so a test can draw a page before its metadata arrives.
+     */
+    fun install(state: String, gate: kotlinx.coroutines.Deferred<Unit>? = null): OnlineMetadata {
         val dir = Files.createTempDirectory("tm-meta-render").toFile()
         val store = MetadataStore(File(dir, "metadata.properties"))
         store.update { it.copy(enabled = state != "off") }
@@ -32,15 +35,16 @@ internal object MetaFixture {
             cache = MetadataCache(File(dir, "cache")),
             appVersion = "render",
             omdbKey = "render-omdb",
-            http = Canned(refuse = state == "refused"),
+            http = Canned(refuse = state == "refused", gate = gate),
         )
         OnlineMetadata.current = online
         if (state == "refused") runBlocking { online.lookup(MetaQuery("Refused", 2000)) }
         return online
     }
 
-    private class Canned(private val refuse: Boolean) : HttpTransport {
+    private class Canned(private val refuse: Boolean, private val gate: kotlinx.coroutines.Deferred<Unit>? = null) : HttpTransport {
         override suspend fun send(request: HttpRequest): HttpResponse {
+            gate?.await()
             val url = URLDecoder.decode(request.url, "UTF-8")
             IMAGES.entries.firstOrNull { url.endsWith("/" + it.key) }?.let {
                 return HttpResponse(200, body = File(pictures, it.value).readBytes())
