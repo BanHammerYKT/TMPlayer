@@ -82,11 +82,18 @@ object Thumbnails {
         if (everything) cache.evictAll() else cache.trimToSize(cache.size() / 2)
     }
 
+    /**
+     * The inline preview, softened: Telegram's preview is a few dozen pixels across, and drawn
+     * stretched over a card it showed as a blocky, low resolution copy of the picture until the
+     * real one came. Blurred ([MiniBlur]) it reads as the picture coming into focus, as streaming
+     * apps and Telegram itself show it. Every placeholder on every platform comes from here.
+     */
     fun mini(data: ByteArray?): ImageBitmap? {
         if (data == null || data.isEmpty()) return null
         val key = "mini:${data.size}:${data.contentHashCode()}"
         cache.get(key)?.let { return it }
-        return decodeImage(data)?.also { cache.put(key, it) }
+        val raw = decodeImage(data) ?: return null
+        return (runCatching { MiniBlur.soften(raw) }.getOrNull() ?: raw).also { cache.put(key, it) }
     }
 
     /** Downloads the real thumbnail if needed. Returns null when there isn't one. */
