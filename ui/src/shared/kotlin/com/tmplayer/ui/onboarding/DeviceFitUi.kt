@@ -87,9 +87,6 @@ fun RecommendationList(recommendations: List<Recommendation>, modifier: Modifier
                 }
             }
         }
-        if (postersNote && recommendations.any { it != Recommendation.LowStorageMode }) {
-            Text(s.devicePostersNote, style = MaterialTheme.typography.bodySmall, color = Tone.muted)
-        }
     }
 }
 

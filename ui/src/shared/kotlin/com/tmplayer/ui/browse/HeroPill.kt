@@ -44,8 +44,8 @@ import com.tmplayer.ui.theme.rememberReducedMotion
 /**
  * Home's one bright action (the first-run card's button): a pill in [Tone.hero], near white on dark and near black on
  * light, [HERO_PILL_HEIGHT] tall and at most [HERO_PILL_MAX] wide. Under the remote or the
- * keyboard it changes three ways at once: the fill goes to [Tone.focusFill], a [Focus.Ring]
- * goes round it, and it grows by [Motion.FocusScale] (unless motion is off).
+ * keyboard it grows by [Motion.FocusScale] (unless motion is off) and keeps its colour: no
+ * accent fill and no ring (user, 2026-10-22), the scale alone says where the focus is.
  */
 @Composable
 fun HeroPill(
@@ -66,11 +66,12 @@ fun HeroPill(
         label = "heroPillScale",
     )
     val fill by animateColorAsState(
-        if (focused) Tone.focusFill else if (hovered) Tone.hero.copy(alpha = 0.88f) else Tone.hero,
+        // Under the remote it grows and keeps its colour (user, 2026-10-22): the scale is the focus.
+        if (hovered && !focused) Tone.hero.copy(alpha = 0.88f) else Tone.hero,
         Motion.standard(Motion.Fast),
         label = "heroPillFill",
     )
-    val ink = if (focused) Tone.onFocusFill else Tone.onHero
+    val ink = Tone.onHero
     Row(
         modifier
             .then(if (stretch) Modifier.widthIn(max = HERO_PILL_MAX).fillMaxWidth() else Modifier.widthIn(min = 160.dp, max = HERO_PILL_MAX))
@@ -82,7 +83,6 @@ fun HeroPill(
             .then(if (focus != null) Modifier.focusRequester(focus) else Modifier)
             .clip(CircleShape)
             .background(fill)
-            .border(Focus.Ring, if (focused) Tone.accent else Color.Transparent, CircleShape)
             .clickable(interactionSource = interactions, indication = if (isTouch()) androidx.compose.foundation.LocalIndication.current else null, role = Role.Button, onClick = onClick)
             .padding(horizontal = 28.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.Center,

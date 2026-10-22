@@ -26,15 +26,18 @@ class MetadataStore(private val file: File) : MetaSettingsStore {
     private fun load(): MetaSettings {
         val p = Properties()
         runCatching { if (file.isFile) file.inputStream().use { p.load(it) } }
+        // Posters were turned back on once for everybody (user, 2026-10-22); what is chosen after
+        // that, with the mark saved beside it, stands.
+        val onAgain = p.getProperty(ON_AGAIN) == "true"
         return MetaSettings(
-            enabled = p.getProperty("enabled") != "false",
+            enabled = !onAgain || p.getProperty("enabled") != "false",
             ownKey = p.getProperty("own_key").orEmpty(),
             refusedKey = p.getProperty("refused_key").orEmpty(),
             refusedAt = p.getProperty("refused_at")?.toLongOrNull() ?: 0L,
             omdbKey = p.getProperty("omdb_key").orEmpty(),
             omdbRefusedKey = p.getProperty("omdb_refused_key").orEmpty(),
             skipTimes = p.getProperty("skip_times") != "false",
-            offByChoice = p.getProperty("off_by_choice") == "true",
+            offByChoice = onAgain && p.getProperty("off_by_choice") == "true",
         )
     }
 
@@ -48,6 +51,7 @@ class MetadataStore(private val file: File) : MetaSettingsStore {
         p["omdb_refused_key"] = s.omdbRefusedKey
         p["skip_times"] = s.skipTimes.toString()
         p["off_by_choice"] = s.offByChoice.toString()
+        p[ON_AGAIN] = "true"
         runCatching {
             file.parentFile?.mkdirs()
             val temp = File(file.parentFile, file.name + ".tmp")
@@ -57,5 +61,10 @@ class MetadataStore(private val file: File) : MetaSettingsStore {
                 temp.renameTo(file)
             }
         }
+    }
+
+    private companion object {
+        /** Saved with every write once posters were turned back on for everybody; see [load]. */
+        const val ON_AGAIN = "posters_on_again"
     }
 }

@@ -264,8 +264,9 @@ fun ChatsPage(
                             toast(s.chatsMarkedRead(chat.title))
                         },
                         onHide = { chat ->
+                            // Gone from the list is the answer; no toast (user, 2026-10-22). Settings,
+                            // Library, Hidden chats shows it again.
                             scope.launch { state.settings.hideChat(chat.id, chat.title) }
-                            undoToast(s.browseChatHidden(chat.title), s.browseUndo) { scope.launch { state.settings.showChat(chat.id) } }
                         },
                     ),
                 )

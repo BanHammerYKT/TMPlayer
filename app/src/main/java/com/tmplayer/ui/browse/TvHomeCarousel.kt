@@ -286,15 +286,16 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
     }
 }
 
-/** Details beside Play: a quiet pill with the info icon, filled under the remote. */
+/** Details beside Play: a quiet pill with the info icon, grown under the remote. */
 @Composable
 private fun TvDetailsPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
     val still = rememberReducedMotion() || Motion.reduced
     val scale by animateFloatAsState(if (focused && !still) Motion.FocusScale else 1f, Motion.standard(Motion.Fast), label = "detailsScale")
-    val fill by animateColorAsState(if (focused) Tone.focusFill else Tone.surfaceHigh.copy(alpha = 0.8f), Motion.standard(Motion.Fast), label = "detailsFill")
-    val ink = if (focused) Tone.onFocusFill else Tone.text
+    // The same as Play beside it: the scale is the focus, the colour stays (user, 2026-10-22).
+    val fill = Tone.surfaceHigh.copy(alpha = 0.8f)
+    val ink = Tone.text
     Row(
         modifier
             .heightIn(min = 48.dp)
@@ -304,7 +305,6 @@ private fun TvDetailsPill(label: String, onClick: () -> Unit, modifier: Modifier
             }
             .clip(CircleShape)
             .background(fill)
-            .focusRing(focused, CircleShape)
             .clickable(interactionSource = interactions, indication = null, role = Role.Button, onClick = onClick)
             .padding(start = 16.dp, end = 20.dp),
         verticalAlignment = Alignment.CenterVertically,

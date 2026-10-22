@@ -11,8 +11,11 @@ package com.tmplayer.online
  * the first-run switch, the note, a restore), and never again after either answer.
  */
 object MetaNotice {
-    fun shouldShow(enabled: Boolean, dismissed: Boolean): Boolean = enabled && !dismissed
+    // Both retired (user, 2026-10-22): no word in the grid inviting the viewer to turn posters
+    // off, and posters were turned back on for everybody (MetadataStore), so nobody is left to invite.
+    @Suppress("UNUSED_PARAMETER")
+    fun shouldShow(enabled: Boolean, dismissed: Boolean): Boolean = false
 
-    fun shouldInvite(settings: MetaSettings, inviteSeen: Boolean): Boolean =
-        !settings.enabled && !settings.offByChoice && !inviteSeen
+    @Suppress("UNUSED_PARAMETER")
+    fun shouldInvite(settings: MetaSettings, inviteSeen: Boolean): Boolean = false
 }

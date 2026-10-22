@@ -59,15 +59,17 @@ private class WebMetaSettings : MetaSettingsStore {
 
     private fun load(): MetaSettings {
         val p = TmHost.getItem(KEY)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
+        // Posters turned back on once for everybody (user, 2026-10-22), as MetadataStore does.
+        val onAgain = p.optString(ON_AGAIN) == "true"
         return MetaSettings(
-            enabled = p.optString("enabled") != "false",
+            enabled = !onAgain || p.optString("enabled") != "false",
             ownKey = p.optString("own_key"),
             refusedKey = p.optString("refused_key"),
             refusedAt = p.optString("refused_at").toLongOrNull() ?: 0L,
             omdbKey = p.optString("omdb_key"),
             omdbRefusedKey = p.optString("omdb_refused_key"),
             skipTimes = p.optString("skip_times") != "false",
-            offByChoice = p.optString("off_by_choice") == "true",
+            offByChoice = onAgain && p.optString("off_by_choice") == "true",
         )
     }
 
@@ -81,11 +83,13 @@ private class WebMetaSettings : MetaSettingsStore {
             .put("omdb_refused_key", s.omdbRefusedKey)
             .put("skip_times", s.skipTimes.toString())
             .put("off_by_choice", s.offByChoice.toString())
+            .put(ON_AGAIN, "true")
         TmHost.setItem(KEY, p.toString())
     }
 
     private companion object {
         const val KEY = "tm.meta.settings"
+        const val ON_AGAIN = "posters_on_again"
     }
 }
 

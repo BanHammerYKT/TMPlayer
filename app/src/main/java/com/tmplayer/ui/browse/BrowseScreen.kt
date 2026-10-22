@@ -375,18 +375,12 @@ internal fun BrowseScreen(
     LaunchedEffect(searchConnected) { if (searchConnected) search.reconnected() }
     val panelScope = rememberCoroutineScope()
     val panelContext = LocalContext.current
-    // Hiding a chat from its menu: gone from the lists at once, with Undo on a touch screen. Under
-    // a remote the message says where it is shown again instead, as the pill takes no focus.
-    val hiddenToast = com.tmplayer.ui.components.rememberActionToast()
+    // Hiding a chat from its menu: gone from the lists at once, which is the answer; no toast
+    // (user, 2026-10-22). Settings, Library, Hidden chats shows it again.
     val hideScope = rememberCoroutineScope()
     val hideStore = remember(panelContext) { SettingsStore(panelContext) }
-    val hideTouch = !FormFactor.isTv(panelContext)
     val hideChat: (ChatSummary) -> Unit = { chat ->
         hideScope.launch { hideStore.hideChat(chat.id, chat.title) }
-        hiddenToast(
-            if (hideTouch) s.browseChatHidden(chat.title) else s.browseChatHiddenWhere(chat.title),
-            s.browseUndo,
-        ) { hideScope.launch { hideStore.showChat(chat.id) } }
     }
     // A hold, the info key or a right click: the quick menu, which leads to the page by Details.
     var held by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }

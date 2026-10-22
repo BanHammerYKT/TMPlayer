@@ -153,12 +153,21 @@ object TvChannels {
         chatTitle: (Long) -> String,
         progress: (Long, Long) -> WatchPoint?,
     ): List<Program> {
-        val kept = entries.filter { entry ->
+        val saveable = entries.filter { entry ->
             when (entry) {
                 is ShelfEntry.File -> entry.item.canBeSaved
                 is ShelfEntry.Show -> entry.series.episodes.all { it.item.canBeSaved }
             }
-        }.take(LIMIT)
+        }
+        // Films and shows only, as on Home (user, 2026-10-22: random videos on the home screen's
+        // row); the other videos only when the chats hold no film or show at all.
+        val titled = saveable.filter { entry ->
+            when (entry) {
+                is ShelfEntry.File -> SeriesShelf.isFilm(entry.item)
+                is ShelfEntry.Show -> true
+            }
+        }
+        val kept = titled.ifEmpty { saveable }.take(LIMIT)
         return kept.mapIndexed { index, entry ->
             val weight = kept.size - index
             when (entry) {
