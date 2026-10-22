@@ -54,12 +54,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -89,6 +89,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -305,6 +306,9 @@ fun DownloadsScreen(
         active.filter { it.stage != OfflineDownloads.Stage.Moving && it.downloadedBytes > 0 }
     }
     val listState = rememberLazyListState()
+    // The list's own height, which an empty section's message takes a share of as its least.
+    val viewportPx by remember(listState) { derivedStateOf { listState.layoutInfo.viewportSize.height } }
+    val viewport = with(androidx.compose.ui.platform.LocalDensity.current) { viewportPx.toDp() }
     // Where the Recently played heading sits in the list, written as the list is laid out, so
     // the page can scroll to it when it opens on that section.
     val cachedHeadingAt = remember { intArrayOf(-1) }
@@ -847,7 +851,7 @@ fun DownloadsScreen(
                 item {
                     // Given a height of its own: BigEmpty fills what it is given, and
                     // inside a LazyColumn that is nothing, so it would collapse to a line.
-                    Box(emptyStateHeight(0.7f)) {
+                    EmptyState(0.7f, viewport) {
                         BigEmpty(
                             L.downloadsEmptyDownloading,
                             icon = TmIcons.Download,
@@ -894,7 +898,7 @@ fun DownloadsScreen(
             }
             if (counted && cachedRows.isEmpty() && split.strays.isEmpty()) {
                 item {
-                    Box(emptyStateHeight(0.6f)) {
+                    EmptyState(0.6f, viewport) {
                         BigEmpty(
                             L.downloadsEmptyCached,
                             icon = TmIcons.Download,
@@ -939,7 +943,7 @@ fun DownloadsScreen(
         }
         if (counted && shown.isEmpty()) {
             item {
-                Box(emptyStateHeight(0.6f)) {
+                EmptyState(0.6f, viewport) {
                     BigEmpty(
                         L.downloadsEmptyDownloaded(folder = LegacyDownloads.FOLDER),
                         icon = TmIcons.Download,
@@ -1022,7 +1026,7 @@ fun DownloadsScreen(
         }
         if (counted && rows.isEmpty()) {
             item(key = "e-done") {
-                Box(emptyStateHeight(0.4f)) {
+                EmptyState(0.4f, viewport) {
                     BigEmpty(
                         L.downloadsEmptyDownloaded(folder = LegacyDownloads.FOLDER),
                         icon = TmIcons.Download,
@@ -1223,7 +1227,7 @@ fun DownloadsScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 24.dp),
+                        contentPadding = PaddingValues(bottom = 24.dp + LocalBottomChrome.current),
                         content = body,
                     )
                     ScrollToTop(listState)
@@ -1273,12 +1277,14 @@ fun DownloadsScreen(
     }
 
     confirmingDelete?.let { row ->
+        // Named as its card names it.
+        val name = com.tmplayer.ui.browse.rememberVideoName(remember(row.record) { row.record.toMediaItem() })
         TvConfirm(
             title = if (row.cached) L.downloadsDeleteCachedTitle else L.downloadsDeleteOneTitle,
             message = if (row.cached) {
-                L.downloadsDeleteCachedBody(title = row.title, size = Translator.messages.formatter.bytes(row.bytes))
+                L.downloadsDeleteCachedBody(title = name, size = Translator.messages.formatter.bytes(row.bytes))
             } else {
-                L.downloadsDeleteOneBody(title = row.title, size = Translator.messages.formatter.bytes(row.bytes))
+                L.downloadsDeleteOneBody(title = name, size = Translator.messages.formatter.bytes(row.bytes))
             },
             confirmLabel = L.commonDelete,
             cancelLabel = L.downloadsKeepIt,
@@ -1294,10 +1300,11 @@ fun DownloadsScreen(
     if (confirmingDeleteMany) {
         // One chosen reads as one: its name, "it" and "Keep it", not "them".
         val only = chosen.singleOrNull()
+        val onlyName = only?.let { com.tmplayer.ui.browse.rememberVideoName(remember(it.record) { it.record.toMediaItem() }) }
         TvConfirm(
             title = L.downloadsDeleteManyTitle(count = chosen.size),
             message = if (only != null) {
-                L.downloadsDeleteOneBody(title = only.title, size = Translator.messages.formatter.bytes(only.bytes))
+                L.downloadsDeleteOneBody(title = onlyName ?: only.title, size = Translator.messages.formatter.bytes(only.bytes))
             } else {
                 L.downloadsDeleteManyBody(size = Translator.messages.formatter.bytes(chosen.sumOf { it.bytes }))
             },
@@ -1994,6 +2001,12 @@ private fun DownloadCard(
         if (row.missing) s.downloadsFileMissing else null,
     ).joinToString(DOT)
 
+    // The clean name the rest of the app uses for it, with the file's own name on a quiet line of
+    // its own under it, which tells two copies of one film apart. Only the words on screen change.
+    val item = remember(row.record) { row.record.toMediaItem() }
+    val name = com.tmplayer.ui.browse.rememberVideoName(item)
+    val fileName = remember(item, name) { com.tmplayer.ui.browse.fileNameLine(item, name) }
+
     val pickTick = com.tmplayer.ui.components.rememberToggleTick()
     RowCard(
         accent = if (checked) MaterialTheme.colorScheme.primary else null,
@@ -2010,18 +2023,30 @@ private fun DownloadCard(
                 // television and the desktop alike, so a download reads as the same kind of thing:
                 // the picture, or the generated cover until there is one.
                 VideoPosterThumb(
-                    item = row.record.toMediaItem(),
+                    item = item,
                     fraction = if (row.partial && row.totalBytes > 0) (row.bytes.toFloat() / row.totalBytes).coerceIn(0f, 1f) else 0f,
                 )
                 Spacer(Modifier.width(14.dp))
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    row.title,
+                    name,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (fileName != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        fileName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        // The end of a file name is its extension and release tags; the middle is
+                        // what goes when it does not fit.
+                        overflow = TextOverflow.MiddleEllipsis,
+                    )
+                }
                 if (details.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -2135,9 +2160,10 @@ private fun ActiveDownloadCard(
     // since that is space a viewer looking for room can get back (user, 2026-10-18).
     val held = stage != OfflineDownloads.Stage.Running && stage != OfflineDownloads.Stage.Moving &&
         progress.downloadedBytes > 0
+    val name = com.tmplayer.ui.browse.rememberVideoName(remember(progress.request) { progress.request.item() })
     RowCard(accent = if (failed) MaterialTheme.colorScheme.error.copy(alpha = 0.5f) else null) {
         Text(
-            progress.title,
+            name,
             style = MaterialTheme.typography.titleMedium,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -2221,15 +2247,24 @@ private fun ActiveDownloadCard(
 }
 
 /**
- * The height an empty tab's message is given. A phone's share of the screen centres it in the
- * space under the storage card. A television's would not fit: the card and the switch already take
+ * The room an empty section's message is given. A phone's share of the screen centres it in the
+ * space under the storage card, and grows with the message where the share is too short for it. A television's would not fit: the card and the switch already take
  * most of a 540 dp screen, so a share of the whole list put the message's last line under the
  * bottom edge, and with nothing focusable down there the remote could never scroll to it. There
  * the message takes only the room it needs, straight under the switch.
  */
 @Composable
-private fun LazyItemScope.emptyStateHeight(fraction: Float): Modifier =
-    if (isTouch()) Modifier.fillParentMaxHeight(fraction) else Modifier.padding(top = 8.dp)
+private fun EmptyState(fraction: Float, viewport: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
+    // At least the share, never at most: a phone on its side has a short list, and a fixed share
+    // of it (fillParentMaxHeight) cut the message off after a line or two and let the Recently
+    // played heading under it draw over the rest (2026-10-22). The message's own height wins.
+    Box(
+        if (isTouch()) Modifier.fillMaxWidth().heightIn(min = viewport * fraction) else Modifier.padding(top = 8.dp),
+        contentAlignment = Alignment.Center,
+        // BigEmpty fills what it is given: handed the least height, it centres in at least that.
+        propagateMinConstraints = true,
+    ) { content() }
+}
 
 /**
  * Downloads on a phone, drawn like the pages behind the picture it is reached from (History is the
@@ -2283,9 +2318,21 @@ private fun PhoneDownloads(
     val navigationBar = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     // The list's end clears whatever floats over it: the selection's bar, the app's bar, or the
     // sticky bar standing in for it.
+    // The app's bar and the pill of this page's buttons are counted here too, not only read from
+    // LocalBottomChrome, so the last card's Delete and an active card's Pause and Cancel come out
+    // from under them at the list's end even on a frame where the host has not yet heard this
+    // page's buttons (portrait: the bar with the pill over it; a rail: the pill alone).
+    val shell = if (hosted) {
+        navigationBar + com.tmplayer.ui.browse.touchShellClearance(
+            withActions = actions != null,
+            rail = com.tmplayer.ui.browse.LocalTouchRail.current,
+        )
+    } else {
+        0.dp
+    }
     val bottom = when {
         picking || (!hosted && actions != null) -> navigationBar + FloatingChrome.clearance(compact)
-        else -> maxOf(LocalBottomChrome.current, navigationBar) + 16.dp
+        else -> maxOf(LocalBottomChrome.current, shell, navigationBar) + 16.dp
     }
     val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
 

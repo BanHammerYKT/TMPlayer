@@ -750,9 +750,11 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
 
     confirmCached?.let { record ->
         val bytes = cachedBytes[record.key]?.takeIf { it > 0 } ?: record.sizeBytes
+        // Named as its row names it.
+        val name = com.tmplayer.ui.browse.rememberVideoName(remember(record) { record.toMediaItem() })
         ConfirmDialog(
             title = s.downloadsDeleteCachedTitle,
-            message = s.downloadsDeleteCachedBody(record.title, MediaMapper.formatSize(bytes)),
+            message = s.downloadsDeleteCachedBody(name, MediaMapper.formatSize(bytes)),
             confirmLabel = s.commonDelete,
             onDismiss = { confirmCached = null },
             onConfirm = {
@@ -813,9 +815,10 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
 
     confirm?.let { doomed ->
         val one = doomed.size == 1
+        val oneName = if (one) com.tmplayer.ui.browse.rememberVideoName(remember(doomed) { doomed.first().toMediaItem() }) else null
         ConfirmDialog(
             title = s.downloadsDeleteTitle(doomed.size),
-            message = if (one) s.downloadsDeleteOneMessage(doomed.first().title) else s.downloadsDeleteManyMessage,
+            message = if (one) s.downloadsDeleteOneMessage(oneName ?: doomed.first().title) else s.downloadsDeleteManyMessage,
             detail = s.downloadsDeleteDetail,
             confirmLabel = s.commonDelete,
             onDismiss = { confirm = null },
@@ -1049,6 +1052,19 @@ private fun RowScope.Words(title: String, detail: String, detailColor: Color = T
     }
 }
 
+/** The file's own name under a row's details: quieter still, one line, cut in the middle. */
+@Composable
+private fun FileNameLine(name: String) {
+    Text(
+        name,
+        style = MaterialTheme.typography.bodySmall,
+        color = Tone.muted.copy(alpha = 0.75f),
+        maxLines = 1,
+        // The end of a file name is its extension and release tags; the middle goes when it does not fit.
+        overflow = TextOverflow.MiddleEllipsis,
+    )
+}
+
 @Composable
 private fun ActiveRow(state: ShellState, row: OfflineDownloads.Progress, onFreeUp: (() -> Unit)? = null) {
     val s = LocalStrings.current
@@ -1089,10 +1105,11 @@ private fun ActiveRow(state: ShellState, row: OfflineDownloads.Progress, onFreeU
         }
         add(RowMenuEntry(s.commonCancel, TmIcons.Close, danger = true, action = cancel))
     }
+    val name = com.tmplayer.ui.browse.rememberVideoName(remember(row.request) { row.request.item() })
     VideoRow(onClick = null, menu = menu) {
         Thumb(row.request.item().copy(title = correctedTitle(row.request.chatId, row.request.messageId, row.title)))
         Words(
-            correctedTitle(row.request.chatId, row.request.messageId, row.title),
+            name,
             status,
             detailColor = if (failed) Tone.danger else Tone.muted,
         ) {
@@ -1175,16 +1192,20 @@ private fun KeptRow(
         playable -> onPlay
         else -> null
     }
+    // The clean name the rest of the app uses, with the file's own name on a quieter line under it.
+    val item = remember(record) { record.toMediaItem() }
+    val name = com.tmplayer.ui.browse.rememberVideoName(item)
+    val fileName = remember(item, name) { com.tmplayer.ui.browse.fileNameLine(item, name) }
     VideoRow(onClick = click, menu = menu) { lit ->
         Thumb(
-            record.toMediaItem().copy(title = correctedTitle(record.chatId, record.messageId, record.title)),
+            item.copy(title = correctedTitle(record.chatId, record.messageId, record.title)),
             Pick(picked, shown = lit || picking, onPick = onPick),
         )
         Words(
-            correctedTitle(record.chatId, record.messageId, record.title),
+            name,
             detail,
             detailColor = if (missing) Tone.danger else Tone.muted,
-        )
+        ) { fileName?.let { FileNameLine(it) } }
         when {
             missing -> TextButton(onClick = onRemove) { Text(s.commonRemove) }
             partial -> TextButton(onClick = onResume) { Text(s.downloadsResume) }
@@ -1228,12 +1249,15 @@ private fun CachedRow(
         if (!queued) add(RowMenuEntry(s.downloadsSave, TmIcons.Download, action = onSave))
         add(RowMenuEntry(s.downloadsDeleteCached, TmIcons.Delete, danger = true, action = onDelete))
     }
+    val item = remember(record) { record.toMediaItem() }
+    val name = com.tmplayer.ui.browse.rememberVideoName(item)
+    val fileName = remember(item, name) { com.tmplayer.ui.browse.fileNameLine(item, name) }
     VideoRow(onClick = onPlay, menu = menu) {
-        Thumb(record.toMediaItem().copy(title = correctedTitle(record.chatId, record.messageId, record.title)))
+        Thumb(item.copy(title = correctedTitle(record.chatId, record.messageId, record.title)))
         Words(
-            correctedTitle(record.chatId, record.messageId, record.title),
+            name,
             listOf(size, record.chatTitle).filter { it.isNotBlank() }.joinToString("  ·  "),
-        )
+        ) { fileName?.let { FileNameLine(it) } }
         if (queued) {
             Text(s.downloadsSaving, style = MaterialTheme.typography.bodySmall, color = Tone.muted, modifier = Modifier.padding(end = 12.dp))
         } else {

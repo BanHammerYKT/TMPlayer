@@ -346,7 +346,8 @@ private fun HoldMenu(
     }
     val actions = rows.map { MenuAction(it.label, it.icon, it.detail, it.destructive, it.onSelect) }
     TvMenu(
-        title = item.title,
+        // The name the tile it was held on goes by, not the file's release name.
+        title = rememberVideoName(item),
         subtitle = subtitle,
         // Details right under the way to play, where a viewer holding a tile to learn more looks.
         actions = if (details == null) actions else actions.take(1) + details + actions.drop(1),

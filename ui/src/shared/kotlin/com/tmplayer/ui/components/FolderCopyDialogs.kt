@@ -21,8 +21,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tmplayer.data.FolderCopy
 import com.tmplayer.ui.i18n.LocalStrings
@@ -46,12 +49,13 @@ fun <T> FolderCopyConfirmDialog(
     val someFit = plan.fitting.isNotEmpty()
     // Everything chosen was skipped (unfinished, or not allowed to be saved): the reasons and Cancel.
     val nothing = plan.items.isEmpty()
+    val bodyMax = dialogBodyMax(CONFIRM_BODY_MAX)
     TmAlertDialog(
         onDismissRequest = onCancel,
         title = { Text(s.downloadsSaveToFolderConfirmTitle(folder = plan.folder), maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             Column(
-                Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(if (nothing) s.downloadsSaveToFolderNone else plan.summary, style = MaterialTheme.typography.bodyLarge)
@@ -110,12 +114,16 @@ fun <T> FolderCopyConfirmDialog(
 @Composable
 fun FolderCopyProgressDialog(progress: FolderCopy.Progress, onCancel: () -> Unit) {
     val s = LocalStrings.current
+    val bodyMax = dialogBodyMax(CONFIRM_BODY_MAX)
     TmAlertDialog(
         // Only Cancel ends it: a tap beside the dialog must not leave a copy running unseen.
         onDismissRequest = {},
         title = { Text(s.downloadsSaveToFolderTitle) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(progress.line, style = MaterialTheme.typography.bodyMedium)
                 Text(
                     progress.title,
@@ -146,12 +154,13 @@ fun FolderCopyProgressDialog(progress: FolderCopy.Progress, onCancel: () -> Unit
 @Composable
 fun FolderCopyResultDialog(outcome: FolderCopy.Outcome, onClose: () -> Unit) {
     val s = LocalStrings.current
+    val bodyMax = dialogBodyMax(RESULT_BODY_MAX)
     TmAlertDialog(
         onDismissRequest = onClose,
         title = { Text(outcome.headline) },
         text = {
             Column(
-                Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()),
+                Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 outcome.lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) }
@@ -176,3 +185,33 @@ fun FolderCopyPreparingDialog() {
         confirmButton = {},
     )
 }
+
+/**
+ * The most a Save to folder dialog's words may take of this window: [cap], or less where the window
+ * is short, so the title and the buttons stay on screen and the words scroll between them. A phone
+ * held sideways is about 390 dp tall, and a 420 dp body there pushed the dialog past the window and
+ * cut the confirmation off part way through the line under the removal tick, with nothing to scroll
+ * (2026-10-22). Read from the app's window before the dialog opens: inside it, the window is the
+ * dialog's own.
+ */
+@Composable
+private fun dialogBodyMax(cap: Dp): Dp {
+    val height = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    if (height <= 0.dp) return cap
+    return (height - DIALOG_CHROME).coerceIn(DIALOG_BODY_MIN, cap)
+}
+
+/** The confirmation's and the progress dialog's words at most, on a window tall enough for all of it. */
+private val CONFIRM_BODY_MAX = 420.dp
+
+/** The summary's list at most. */
+private val RESULT_BODY_MAX = 320.dp
+
+/**
+ * What a dialog keeps around its words: the window's margins, the dialog's padding, a title of up
+ * to two lines and the row of buttons.
+ */
+private val DIALOG_CHROME = 232.dp
+
+/** Never less than this for the words, which still scroll, on the shortest window. */
+private val DIALOG_BODY_MIN = 96.dp

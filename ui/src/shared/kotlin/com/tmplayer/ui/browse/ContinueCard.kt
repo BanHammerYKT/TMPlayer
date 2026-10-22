@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,6 +27,7 @@ import com.tmplayer.data.LessonSteps
 import com.tmplayer.data.MediaItem
 import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.SeriesShelf
+import com.tmplayer.data.VideoCorrections
 import com.tmplayer.i18n.Messages
 import com.tmplayer.ui.components.GeneratedCover
 import com.tmplayer.ui.components.MediaArt
@@ -78,6 +80,28 @@ fun ContinueCardArt(record: ResumeRecord, item: MediaItem, modifier: Modifier = 
 fun continueCardTitle(item: MediaItem, s: Messages): String {
     val words = ContinueWords.of(item, s)
     return listOfNotNull(words.label, words.title.ifBlank { null }).joinToString("  ·  ")
+}
+
+/**
+ * The clean name a list row or a hold menu gives a video, the same the rest of the app shows for
+ * it ([continueCardTitle]): "Michael" rather than "Michael.2026.480p.AMZN.WEB-DL.DUAL.AAC2.0.H.264-x.mkv",
+ * "S1 E3  ·  Harbour Notes" for an episode. A rename shows at once. Only the words on screen:
+ * the file on the disk and every stored name stay as they are.
+ */
+@Composable
+fun rememberVideoName(item: MediaItem): String {
+    val s = LocalStrings.current
+    val renamed = VideoCorrections.state.collectAsState().value[item.id]?.title
+    return remember(item, renamed, s) { continueCardTitle(item, s).ifBlank { item.title } }
+}
+
+/**
+ * The file's own name, for a quieter line under [rememberVideoName] where telling two copies apart
+ * helps (a Downloads row), or null when it would only say the name again.
+ */
+fun fileNameLine(item: MediaItem, name: String): String? {
+    val file = item.fileName.ifBlank { item.title }.trim()
+    return file.takeIf { it.isNotEmpty() && !it.equals(name.trim(), ignoreCase = true) }
 }
 
 /** What a continue card says of its video: "S1 E3", "Part 4" or nothing, then the name. */
