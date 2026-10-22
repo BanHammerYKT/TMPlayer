@@ -625,6 +625,14 @@ internal fun AboutRows(state: ShellState, version: String, onShowAbout: () -> Un
             s.settingsSupportDetail,
             TmIcons.Favorite,
         ) { supporting = true }
+        // The coffee button in the corner (web/.../ui/WebOffers.kt): its x hides it for the
+        // session, this for good. Gone with the rest once the viewer said they support.
+        if (!supportCounters.finished) {
+            val coffeeButton by com.tmplayer.web.ui.WebOffers.coffeeButtonOn.collectAsState()
+            Toggle(s.webCoffeeSetting, s.webCoffeeSettingDetail, coffeeButton, icon = TmIcons.Favorite) { on ->
+                com.tmplayer.web.ui.WebOffers.setCoffeeButton(on)
+            }
+        }
     }
     Action(s.settingsAbout, s.settingsAboutDetail(version), TmIcons.Info) { onShowAbout() }
     Text(

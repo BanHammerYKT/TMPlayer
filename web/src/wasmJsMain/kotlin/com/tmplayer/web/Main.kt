@@ -144,6 +144,9 @@ fun main() {
             SettingsCategory.Lock,
             SettingsCategory.About,
         )
+        // The coffee window offers "I already support" here, beside the coffee button
+        // (web/.../ui/WebOffers.kt), which is in sight all the time.
+        com.tmplayer.desktop.ui.coffeeOffersSupporter = true
         com.tmplayer.desktop.ui.settingsSummaryOverride = { category ->
             if (category == SettingsCategory.Notifications) com.tmplayer.i18n.L.webNotifySummary else null
         }
@@ -193,6 +196,9 @@ fun main() {
                                 },
                             )
                         }
+                        // The coffee button and the install suggestion, offers only, never over
+                        // a video or the setup (WebOffers.kt).
+                        com.tmplayer.web.ui.WebOffersHost(shell)
                         // Another tab holds the account (TdTabs): this one waits over its own
                         // screens, kept as they were, until the viewer uses it here again.
                         val elsewhere by TdTabs.elsewhere.collectAsState()

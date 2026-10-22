@@ -55,6 +55,11 @@ external object TmHost : JsAny {
     fun isStandalone(): Boolean
     fun canInstall(): Boolean
     fun install(): Promise<JsBoolean>
+    fun installedHere(): Boolean
+    fun appPlatform(): String
+    fun sessionGet(key: String): String?
+    fun sessionSet(key: String, value: String)
+    fun offerDebug(): String
     fun coarsePointer(): Boolean
     fun finePointer(): Boolean
     fun onPointerChange(handler: () -> Unit)

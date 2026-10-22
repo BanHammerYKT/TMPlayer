@@ -170,6 +170,14 @@ fun WebPlayerScreen(
                     if (leaving && watched != null) {
                         com.tmplayer.desktop.setWatched(watched, settings, item, request.chatTitle, watched = true)
                     }
+                    // Watched to the end: one of the finished videos the coffee window waits for
+                    // (SupportReminder), which setWatched's mark, made as a manual one, does not count.
+                    if (leaving) {
+                        com.tmplayer.data.SupportReminder.watchFinished(
+                            com.tmplayer.data.ProgressKeys.of(item.chatId, item.messageId),
+                            com.tmplayer.platform.nowMillis(),
+                        )
+                    }
                 } else {
                     settings.saveResumePosition(item.chatId, item.messageId, position, duration, description)
                 }

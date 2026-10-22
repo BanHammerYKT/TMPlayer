@@ -48,13 +48,32 @@
   // Installing: Chromium offers its own prompt, kept here until the app's Install button asks
   // for it; iOS has none, so the app shows how to add it to the Home Screen instead.
   let installPrompt = null;
+  let installedNow = false;
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     installPrompt = e;
   });
   window.addEventListener('appinstalled', () => {
     installPrompt = null;
+    installedNow = true;
   });
+
+  // What lasts for this tab's session only (the coffee button's x): sessionStorage where the
+  // browser allows it, else a map that lasts as long as the page.
+  const sessionStore = (() => {
+    try {
+      const k = '__tm_probe__';
+      window.sessionStorage.setItem(k, '1');
+      window.sessionStorage.removeItem(k);
+      return window.sessionStorage;
+    } catch (e) {
+      const mem = new Map();
+      return {
+        getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+        setItem: (k, v) => mem.set(k, String(v)),
+      };
+    }
+  })();
   window.addEventListener('popstate', () => {
     // The player's own history entry (web/player/player.js) is not one of the app's screens.
     if (window.__tmSkipPop) {
@@ -403,6 +422,51 @@
         return false;
       }
     },
+    // The app was installed while this page was open (Chromium's appinstalled).
+    installedHere() {
+      return installedNow;
+    },
+    // The platform the "Get the app" offer names: an iPad that says it is a Mac is iOS, a TV
+    // browser on Android (Google TV, Fire TV, Android TV, a Bravia) is androidtv, and a
+    // Chromebook is other, since TMPlayer has no ChromeOS build of its own.
+    appPlatform() {
+      try {
+        const ua = navigator.userAgent || '';
+        if (this.isIos()) return 'ios';
+        if (/CrOS/i.test(ua)) return 'other';
+        if (/Android/i.test(ua)) {
+          return /Android TV|GoogleTV|Google TV|AFT[A-Z0-9]|BRAVIA|SMART-TV|SmartTV|\bTV\b|AndroidTV/i.test(ua) ? 'androidtv' : 'android';
+        }
+        if (/Windows/i.test(ua)) return 'windows';
+        if (/Mac OS X|Macintosh/i.test(ua)) return 'macos';
+        if (/Linux|X11/i.test(ua)) return 'linux';
+      } catch (e) {}
+      return 'other';
+    },
+    sessionGet(key) {
+      try {
+        return sessionStore.getItem(key);
+      } catch (e) {
+        return null;
+      }
+    },
+    sessionSet(key, value) {
+      try {
+        sessionStore.setItem(key, value);
+      } catch (e) {}
+    },
+    // `?tm-offer=...` forces the coffee button, the install offer or the coffee window for a
+    // screenshot, on a development server only (localhost); the live site ignores it.
+    offerDebug() {
+      try {
+        const h = location.hostname;
+        if (h !== 'localhost' && h !== '127.0.0.1' && h !== '[::1]') return '';
+        return new URLSearchParams(location.search).get('tm-offer') || '';
+      } catch (e) {
+        return '';
+      }
+    },
+
     coarsePointer() {
       try {
         return window.matchMedia('(pointer: coarse)').matches;

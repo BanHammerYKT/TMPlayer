@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -139,6 +140,7 @@ fun CoffeeDialog(
     asking: Boolean,
     onLater: () -> Unit,
     onNever: () -> Unit,
+    onSupporter: (() -> Unit)? = null,
 ) {
     val s = LocalStrings.current
     TmAlertDialog(
@@ -150,17 +152,34 @@ fun CoffeeDialog(
                     if (asking) About.reminderText(1, counters) else About.SUPPORT_NOTE,
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    // The card is the Buy Me a Coffee link as well as its code, so the window has one
-                    // way to it rather than a card and a button saying the same (user, 2026-10-18).
-                    CoffeeCode(onOpen = { OpenExternal.browse(About.COFFEE) })
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { OpenExternal.browse(About.SPONSORS) }) { Text(s.supportSponsorGithub) }
-                        // A star costs nothing and is worth asking for too (user, 2026-10-18).
-                        TextButton(onClick = { OpenExternal.browse(About.SOURCE) }) {
-                            Icon(TmIcons.StarOutline, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(s.supportStarGithub)
+                val links: @Composable () -> Unit = {
+                    TextButton(onClick = { OpenExternal.browse(About.SPONSORS) }) { Text(s.supportSponsorGithub) }
+                    // A star costs nothing and is worth asking for too (user, 2026-10-18).
+                    TextButton(onClick = { OpenExternal.browse(About.SOURCE) }) {
+                        Icon(TmIcons.StarOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(s.supportStarGithub)
+                    }
+                    // The browser build's way out for a viewer who already gives: no more
+                    // windows, no coffee button, and About says thank you (coffeeOffersSupporter).
+                    if (onSupporter != null) {
+                        TextButton(onClick = onSupporter) { Text(s.webCoffeeAlready) }
+                    }
+                }
+                // The card is the Buy Me a Coffee link as well as its code, so the window has one
+                // way to it rather than a card and a button saying the same (user, 2026-10-18).
+                // On a phone's width (the browser build) the links go under the card, not beside it.
+                BoxWithConstraints {
+                    if (maxWidth >= STACK_BELOW) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                            CoffeeCode(onOpen = { OpenExternal.browse(About.COFFEE) })
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) { links() }
+                        }
+                    } else {
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            CoffeeCode(onOpen = { OpenExternal.browse(About.COFFEE) })
+                            Spacer(Modifier.size(8.dp))
+                            links()
                         }
                     }
                 }
@@ -320,9 +339,27 @@ fun SupportAskHost(state: ShellState) {
                 asking = false
                 if (SupportReminder.forcedRung == 0) Background.scope.launch { runCatching { settings.markSupportNever() } }
             },
+            onSupporter = if (coffeeOffersSupporter) {
+                {
+                    asking = false
+                    if (SupportReminder.forcedRung == 0) Background.scope.launch { runCatching { settings.markSupporter() } }
+                }
+            } else {
+                null
+            },
         )
     }
 }
+
+/**
+ * Whether the asking window offers "I already support" as well. Off in the desktop app, whose
+ * window ends with "Don't show again"; the browser build turns it on (web Main.kt), since its
+ * coffee button is in sight all the time and a viewer who already gives needs a way to say so.
+ */
+var coffeeOffersSupporter: Boolean = false
+
+/** Below this width the coffee window's links sit under the card. */
+private val STACK_BELOW = 400.dp
 
 private val PLATE = 180.dp
 private const val QR_PIXELS = 400
