@@ -38,9 +38,11 @@ val generateBuildInfo = tasks.register("generateBuildInfo") {
     val apiId = secret("TG_API_ID").ifBlank { "0" }
     val apiHash = secret("TG_API_HASH")
     val tmdbKey = secret("TMDB_API_KEY")
+    val omdbKey = secret("OMDB_API_KEY")
     inputs.property("apiId", apiId)
     inputs.property("apiHash", apiHash)
     inputs.property("tmdbKey", tmdbKey)
+    inputs.property("omdbKey", omdbKey)
     inputs.property("version", webVersion)
     outputs.dir(out)
     doLast {
@@ -54,6 +56,7 @@ val generateBuildInfo = tasks.register("generateBuildInfo") {
             |    const val TG_API_ID = $apiId
             |    const val TG_API_HASH = "$apiHash"
             |    const val TMDB_API_KEY = "$tmdbKey"
+            |    const val OMDB_API_KEY = "$omdbKey"
             |}
             |""".trimMargin(),
         )
@@ -137,7 +140,7 @@ val patchTdweb = tasks.register("patchTdweb") {
         // Open the disk files of the last session before TDLib's files directory is made...
         edit(
             "return ifs.idb;",
-            "return Promise.all([ifs.idb, self.TmSparse.prepare()]).then(function (r) { return r[0]; });",
+            "self.TmSparse.inbound = ifs;\n                return Promise.all([ifs.idb, self.TmSparse.prepare()]).then(function (r) { return r[0]; });",
         )
         // ...and make that directory sparse once it exists.
         edit("ifs.FS.mkdir(root);", "ifs.FS.mkdir(root);\n                self.TmSparse.mount(ifs.FS, root);")
@@ -147,6 +150,24 @@ val patchTdweb = tasks.register("patchTdweb") {
             "value: function saveFile(pid, file) {",
             "value: function saveFile(pid, file) {\n      if ((file.size || file.expected_size || 0) > 8388608) {\n        return file;\n      }",
         )
+
+        // Room on the disk (sparse-fs.js, storage-keeper.js). A failed save of TDLib's database,
+        // where the sign in lives, is reported instead of dropped, and the file store emptied so
+        // the next save fits; a file the store refused is reported; the page can empty the store
+        // (tmClearFileStore); and deleteIdbKey, a no-op in stock tdweb, deletes the file's Blob.
+        edit(
+            "_this2.FS.syncfs(false, function () {",
+            "_this2.FS.syncfs(false, function (tmError) {\n                    if (tmError) self.TmSparse.onSyncError(tmError, _this2);",
+        )
+        edit(
+            "logger.error('Failed persist ' + path + ' ', _context2.t0);",
+            "logger.error('Failed persist ' + path + ' ', _context2.t0);\n                self.TmSparse.onPersistError(_context2.t0);",
+        )
+        edit(
+            "if (query['@type'] === 'deleteIdbKey') {",
+            "if (query['@type'] === 'tmClearFileStore') {\n        var tmThis = this;\n        self.TmSparse.clearFileStore().then(function (n) {\n          tmThis.callback({ '@type': 'tmFileStoreCleared', '@extra': query['@extra'], count: n });\n        }, function (e) {\n          tmThis.callback({ '@type': 'error', '@extra': query['@extra'], code: 500, message: String(e) });\n        });\n        return;\n      }\n      if (query['@type'] === 'deleteIdbKey') {",
+        )
+        edit("function deleteIdbKey(query) {\n      try {}", "function deleteIdbKey(query) {\n      try { self.TmSparse.deleteKey(query.idb_key); }")
 
         // TDLib's file reads and writes past 2 GiB: the emscripten glue hands the position on as
         // its low 32 bits only, read as a signed number, so a part at 3.9 GB into a 4 GB video
@@ -242,12 +263,84 @@ val copyCatalogs = tasks.register<Sync>("copyCatalogs") {
     into(layout.buildDirectory.dir("catalogs/i18n"))
 }
 
+// The manifest's install screenshots (manifest.webmanifest), the site's own demo shots, served
+// under screenshots/ rather than kept twice in the repository.
+val copyScreenshots = tasks.register<Sync>("copyScreenshots") {
+    from(rootProject.file("site/public/screenshots")) { include("desktop-grid.webp", "phone-grid.webp", "phone-chats.webp") }
+    into(layout.buildDirectory.dir("shots/screenshots"))
+}
+
+// The splash's one line and the page's lang and dir in the viewer's language before the app has
+// loaded (index.html runs splash-words.js at once): web.loading_player from every catalog, English
+// where one has no translation yet, and the language picked in Settings ahead of the browser's.
+val splashWords = tasks.register("splashWords") {
+    val catalogs = rootProject.file("core/src/commonMain/resources/i18n")
+    val out = layout.buildDirectory.dir("splash")
+    inputs.dir(catalogs)
+    outputs.dir(out)
+    doLast {
+        @Suppress("UNCHECKED_CAST")
+        fun loading(file: File): String? {
+            val root = groovy.json.JsonSlurper().parse(file) as? Map<String, Any?> ?: return null
+            return ((root["web"] as? Map<String, Any?>)?.get("loading_player") as? String)?.takeIf { it.isNotBlank() }
+        }
+        val english = loading(File(catalogs, "en.json")) ?: "Loading the player"
+        val words = catalogs.listFiles { f -> f.name.endsWith(".json") }!!.sortedBy { it.name }
+            .associate { it.name.removeSuffix(".json") to (loading(it) ?: english) }
+        val map = groovy.json.JsonOutput.toJson(words)
+        val dir = out.get().asFile.apply { mkdirs() }
+        dir.resolve("splash-words.js").writeText(
+            """
+            |// Written by web/build.gradle.kts (splashWords) from core's catalogs: do not edit.
+            |(function () {
+            |  'use strict';
+            |  var W = $map;
+            |  var RTL = { ar: 1, fa: 1, ur: 1, he: 1 };
+            |  var tags = Object.keys(W);
+            |  function match(t) {
+            |    if (!t) return '';
+            |    t = String(t).replace('_', '-');
+            |    for (var i = 0; i < tags.length; i++) if (tags[i].toLowerCase() === t.toLowerCase()) return tags[i];
+            |    var base = t.split('-')[0].toLowerCase();
+            |    if (base === 'in') base = 'id';
+            |    if (base === 'zh') return /hant|tw|hk|mo/i.test(t) ? 'zh-TW' : 'zh-CN';
+            |    for (var j = 0; j < tags.length; j++) if (tags[j].split('-')[0] === base) return tags[j];
+            |    return '';
+            |  }
+            |  var tag = '';
+            |  try {
+            |    var saved = JSON.parse(window.localStorage.getItem('tm.settings') || '{}').language;
+            |    if (saved && saved[1]) tag = match(saved[1]);
+            |  } catch (e) {}
+            |  if (!tag) {
+            |    var list = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || 'en'];
+            |    for (var k = 0; k < list.length && !tag; k++) tag = match(list[k]);
+            |  }
+            |  if (!tag) tag = 'en';
+            |  var html = document.documentElement;
+            |  html.lang = tag;
+            |  html.dir = RTL[tag.split('-')[0]] ? 'rtl' : 'ltr';
+            |  var note = document.getElementById('splash-note');
+            |  if (note && W[tag]) note.textContent = W[tag];
+            |})();
+            |""".trimMargin(),
+        )
+    }
+}
+
 // The Noto subsets the desktop ships for CJK, Indic and Arabic text, reused rather than copied
 // into this module; the Latin, Cyrillic and Greek face and the emoji live in web/fonts.
 val copyFonts = tasks.register<Sync>("copyFonts") {
     from(rootProject.file("ui/src/jvmMain/resources/fonts")) { include("*.ttf") }
     from(layout.projectDirectory.dir("fonts")) { include("*.ttf") }
     into(layout.buildDirectory.dir("fonts/fonts"))
+}
+
+// The setup's and the tour's pictures, the desktop's own files, served under onboarding/ and
+// fetched by the page the first time the setup or the tour shows (ui's SetupImage.wasm.kt).
+val copyOnboarding = tasks.register<Sync>("copyOnboarding") {
+    from(rootProject.file("ui/src/jvmMain/resources/onboarding")) { include("*.webp") }
+    into(layout.buildDirectory.dir("onboarding/onboarding"))
 }
 
 // The desktop app's own screens and player controls (desktop/src/main/kotlin), compiled for the
@@ -300,6 +393,9 @@ kotlin {
             resources.srcDir(playerSite)
             resources.srcDir(copyCatalogs.map { layout.buildDirectory.dir("catalogs").get() })
             resources.srcDir(copyFonts.map { layout.buildDirectory.dir("fonts").get() })
+            resources.srcDir(copyOnboarding.map { layout.buildDirectory.dir("onboarding").get() })
+            resources.srcDir(copyScreenshots.map { layout.buildDirectory.dir("shots").get() })
+            resources.srcDir(splashWords.map { layout.buildDirectory.dir("splash").get() })
             dependencies {
                 implementation(project(":core"))
                 implementation(project(":ui"))
@@ -318,3 +414,31 @@ kotlin {
     }
 }
 
+
+// The page names the app's two big wasm files (the app itself and Skia) as preloads, under the
+// content-hashed names this build gave them, so the browser starts fetching them while it parses
+// the page instead of once tmweb.js has run (and the app's only once Skia's has been compiled).
+// The loader fetches each with a plain fetch() of the same URL, credentials same-origin, which is
+// what `crossorigin` (anonymous) on the link matches; a preload that differed would go unused.
+tasks.named("wasmJsBrowserDistribution") {
+    val dist = layout.buildDirectory.dir("dist/wasmJs/productionExecutable")
+    doLast {
+        val dir = dist.get().asFile
+        val page = dir.resolve("index.html")
+        val script = dir.resolve("tmweb.js")
+        if (!page.exists() || !script.exists()) return@doLast
+        val names = Regex(""""([0-9a-f]{16,}\.wasm)"""").findAll(script.readText()).map { it.groupValues[1] }
+            .distinct().filter { dir.resolve(it).exists() }.toList()
+        if (names.isEmpty()) {
+            logger.warn("web: no hashed wasm named in tmweb.js, index.html left without preloads")
+            return@doLast
+        }
+        val html = page.readText().replace(Regex("""\s*<link rel="preload" href="[0-9a-f]+\.wasm"[^>]*>"""), "")
+        val links = names.joinToString("") { "\n  <link rel=\"preload\" href=\"$it\" as=\"fetch\" type=\"application/wasm\" crossorigin>" }
+        if (!html.contains("</head>")) {
+            logger.warn("web: index.html has no </head>, left without preloads")
+            return@doLast
+        }
+        page.writeText(html.replaceFirst("</head>", "$links\n</head>"))
+    }
+}

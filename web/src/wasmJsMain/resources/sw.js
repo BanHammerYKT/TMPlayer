@@ -16,6 +16,7 @@ const SHELL_FILES = [
   './',
   'index.html',
   'app.css',
+  'storage-keeper.js',
   'td-bridge.js',
   'web-host.js',
   'tdweb.js',
@@ -26,7 +27,24 @@ const SHELL_FILES = [
   'icon-512.png',
   'fonts/NotoSans.ttf',
   'i18n/en.json',
+  'splash-words.js',
 ];
+
+// A write the site's quota refused: the pages' storage keeper (storage-keeper.js) frees room.
+let lastFull = 0;
+function full(e) {
+  const now = Date.now();
+  if (now - lastFull < 10000) return;
+  lastFull = now;
+  const error = String((e && (e.name || e.message)) || e);
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then((all) => all.forEach((c) => c.postMessage({ type: 'tm-storage-full', error: error })))
+    .catch(() => {});
+}
+
+function keep(cache, request, response) {
+  return cache.put(request, response).catch(full);
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -162,7 +180,7 @@ async function shell(request) {
     try {
       const fresh = await fetch(request);
       const cache = await caches.open(SHELL);
-      cache.put('index.html', fresh.clone());
+      keep(cache, 'index.html', fresh.clone());
       return fresh;
     } catch (e) {
       const cached = await caches.match('index.html');
@@ -177,7 +195,7 @@ async function shell(request) {
     const fresh = await fetch(request);
     if (fresh.ok && request.method === 'GET' && url.origin === self.location.origin) {
       const cache = await caches.open(immutable ? RUNTIME : SHELL);
-      cache.put(request, fresh.clone());
+      keep(cache, request, fresh.clone());
     }
     return fresh;
   } catch (e) {
@@ -195,4 +213,21 @@ self.addEventListener('fetch', (event) => {
   }
   if (event.request.method !== 'GET') return;
   event.respondWith(shell(event.request));
+});
+
+// A press on a notification (web-host.js, notifyTap): the open page comes to the front and is told
+// which one, or TMPlayer opens when no page is.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const id = event.notification.data && event.notification.data.tmTap;
+  event.waitUntil((async () => {
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const page = all.find((c) => c.focused) || all.find((c) => c.visibilityState === 'visible') || all[0];
+    if (page) {
+      try { await page.focus(); } catch (e) {}
+      if (id) page.postMessage({ type: 'tm-notification-tap', id: id });
+    } else if (self.clients.openWindow) {
+      await self.clients.openWindow('./');
+    }
+  })());
 });

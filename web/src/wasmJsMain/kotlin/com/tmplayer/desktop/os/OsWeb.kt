@@ -12,6 +12,9 @@ object OsInfo {
     val isWindows: Boolean get() = "win" in platform
     val isLinux: Boolean get() = !isMac && !isWindows
     val osTag: String get() = if (isMac) "macos" else if (isWindows) "windows" else "linux"
+
+    /** A phone or tablet in the hand rather than a computer: it signs in by its number, not a QR code it shows itself. */
+    val isHandheld: Boolean by lazy { runCatching { TmHost.isHandheld() }.getOrDefault(false) }
 }
 
 /** Links open in a new tab; files are not the page's to open. */

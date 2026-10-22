@@ -116,7 +116,10 @@ private fun Content(app: WebAppState, nav: Nav, route: Route, bottomPadding: Dp)
             }
         }
         Route.Home -> {
-            TopTitle(s.browseTabHomeHeading)
+            // Home is headed by the app's mark and name rather than the word "Home".
+            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                com.tmplayer.ui.components.BrandLockup(layout = com.tmplayer.ui.components.BrandLayout.Row)
+            }
             HomeScreen(app, bottomPadding) { nav.push(Route.Chat(it.id)) }
         }
         Route.Search -> {

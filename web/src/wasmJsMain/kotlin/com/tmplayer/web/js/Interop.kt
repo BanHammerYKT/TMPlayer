@@ -28,6 +28,8 @@ external object TmHost : JsAny {
     fun openUrl(url: String)
     fun copyText(text: String): Promise<JsBoolean>
     fun language(): String
+    fun languages(): String
+    fun setLanguage(tag: String, rtl: Boolean)
     fun userAgent(): String
     fun deviceKind(): String
     fun platform(): String
@@ -46,7 +48,10 @@ external object TmHost : JsAny {
     fun notify(title: String, body: String): Boolean
     fun askNotify(): Promise<JsString>
     fun notifyPermission(): String
+    fun notifyTap(title: String, body: String, tag: String, onTap: () -> Unit): Boolean
+    fun inFront(): Boolean
     fun isIos(): Boolean
+    fun isHandheld(): Boolean
     fun isStandalone(): Boolean
     fun canInstall(): Boolean
     fun install(): Promise<JsBoolean>

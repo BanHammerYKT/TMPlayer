@@ -54,6 +54,9 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Storage keeper test
+        run: node --test web/tools/storage-keeper.test.mjs
+
       - name: Core tests on Node
         run: ./gradlew :core:wasmJsTest --max-workers=2
 
@@ -64,6 +67,7 @@ jobs:
           TG_API_ID: ${{ github.event_name == 'push' && secrets.TG_API_ID || '' }}
           TG_API_HASH: ${{ github.event_name == 'push' && secrets.TG_API_HASH || '' }}
           TMDB_API_KEY: ${{ github.event_name == 'push' && secrets.TMDB_API_KEY || '' }}
+          OMDB_API_KEY: ${{ github.event_name == 'push' && secrets.OMDB_API_KEY || '' }}
         run: ./gradlew :web:wasmJsBrowserDistribution --max-workers=2
 
       - name: Player test on generated files

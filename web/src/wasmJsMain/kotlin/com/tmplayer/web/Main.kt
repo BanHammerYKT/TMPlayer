@@ -79,12 +79,17 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalComposeUiApi::class)
 fun main() {
+    com.tmplayer.web.ui.installBrowserDefaults()
     val scope = MainScope()
     scope.launch {
         val settings = SettingsStore(LocalDataStore("tm.settings"))
         val watched = WatchedStore(LocalDataStore("tm.watched"))
         val bookmarks = BookmarkStore(LocalDataStore("tm.bookmarks"))
-        val system = listOf(TmHost.language())
+        DesktopServices.settings = settings
+        DesktopServices.watched = watched
+        // Every language the browser is set to, in order, as the apps read the system's list.
+        val system = runCatching { TmHost.languages() }.getOrDefault("").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            .ifEmpty { listOf(TmHost.language()) }
         val saved = runCatching { settings.language.first() }.getOrDefault("")
         val tag = Languages.resolve(saved, system)
         // TDLib first: its wasm loads and its database opens while the strings and the font come,
@@ -102,6 +107,7 @@ fun main() {
         Translator.provide(Languages.ENGLISH, english.await())
         chosen.await().takeIf { it.isNotBlank() }?.let { Translator.provide(tag, it) }
         Translator.select(saved, system)
+        TmHost.setLanguage(Translator.messages.tag, Translator.messages.rtl)
         val family = text.await()
         val firstFallbacks = first.mapNotNull { it.await() }
         com.tmplayer.web.player.WebPlayer.installStrings()
@@ -111,6 +117,9 @@ fun main() {
         VideoCorrections.follow(settings)
         // Posters, backdrops, title logos and overviews, as on the apps (web/.../data/WebMetadata.kt).
         com.tmplayer.online.OnlineMetadata.current = com.tmplayer.web.data.webOnlineMetadata()
+        // The decoded pictures' share: Skia decodes them at full size here, as on the desktop, and
+        // the default of a dozen posters' worth meant a row scrolled away and back drew them again.
+        com.tmplayer.data.Thumbnails.budget(pictureBudget())
         Background.scope.launch {
             settings.language.collect { chosen ->
                 val want = Languages.resolve(chosen, system)
@@ -118,22 +127,27 @@ fun main() {
                     runCatching { TmHost.fetchText("i18n/$want.json").text() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { Translator.provide(want, it) }
                 }
                 Translator.select(chosen, system)
+                TmHost.setLanguage(Translator.messages.tag, Translator.messages.rtl)
             }
         }
         // Settings: every page the apps have that means something in a browser
         // (desktop/ui/SettingsPagesWeb.kt has the rows). Left out: Setup choices, whose answers
-        // are the desktop's (performance, crash reports) or live on Library and Storage here, and
-        // Notifications, whose checks the browser build does not run.
+        // are the desktop's (performance, crash reports) or live on Library and Storage here.
+        // Notifications are the checks run while the tab is open (DesktopUiWeb.kt, DesktopChecks).
         settingsCategories = listOf(
             SettingsCategory.Appearance,
             SettingsCategory.Playback,
             SettingsCategory.Subtitles,
             SettingsCategory.Mouse,
             SettingsCategory.Library,
+            SettingsCategory.Notifications,
             SettingsCategory.Storage,
             SettingsCategory.Lock,
             SettingsCategory.About,
         )
+        com.tmplayer.desktop.ui.settingsSummaryOverride = { category ->
+            if (category == SettingsCategory.Notifications) com.tmplayer.i18n.L.webNotifySummary else null
+        }
 
         val shell = ShellState(
             settings,
@@ -153,7 +167,8 @@ fun main() {
                     for (f in firstFallbacks) runCatching { resolver.preload(f) }
                     val loaded = HashSet(firstNames)
                     while (loaded.size < WebFonts.FALLBACKS.size) {
-                        for (name in WebFonts.due(tag)) {
+                        // The language shown now, which Settings may have changed since the start.
+                        for (name in WebFonts.due(Translator.messages.tag)) {
                             if (!loaded.add(name)) continue
                             val bytes = WebFonts.bytes("fonts/$name.ttf") ?: continue
                             runCatching { resolver.preload(WebFonts.family(name, bytes)) }
@@ -245,3 +260,18 @@ private fun OtherTab(onUseHere: () -> Unit) {
 
 /** "Chrome on Windows", "Safari on iPhone": the name Telegram's Devices list shows for this session. */
 private fun deviceModel(): String = runCatching { TmHost.deviceKind() }.getOrDefault("Browser").ifBlank { "Browser" }
+
+/**
+ * The bytes the decoded pictures may take in this tab: ten screens of pixels, between 96 and 192
+ * MB. A phone (an iPhone is 1170 by 2532) lands near 120 MB, a laptop at the floor and a 4K
+ * screen at the ceiling, where one carousel picture alone is 33 MB.
+ */
+private fun pictureBudget(): Int {
+    val ratio = kotlinx.browser.window.devicePixelRatio.takeIf { it > 0.0 } ?: 1.0
+    val screen = kotlinx.browser.window.screen
+    val pixels = screen.width * ratio * screen.height * ratio
+    return (pixels * 4 * PICTURE_SCREENS).toLong().coerceIn(96L shl 20, 192L shl 20).toInt()
+}
+
+/** How many screens of decoded pictures [pictureBudget] keeps. */
+private const val PICTURE_SCREENS = 10

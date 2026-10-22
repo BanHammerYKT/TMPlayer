@@ -17,7 +17,9 @@
 //
 // It is loaded into tdweb's worker by web/build.gradle.kts (patchTdweb), which also wires the two
 // calls below into tdweb's InboundFileSystem.create: prepare(FS) before the directory is made,
-// mount(FS, root) after. Nothing else in tdweb or TDLib changes.
+// mount(FS, root) after. The same patch wires in the room keeping at the end of this file (the
+// file store emptied on a quota error or on the page's asking). Nothing else in tdweb or TDLib
+// changes.
 self.TmSparse = (function () {
   'use strict';
 
@@ -428,9 +430,92 @@ self.TmSparse = (function () {
     restored.clear();
   }
 
+  // --- room on the disk (storage-keeper.js on the page) ----------------------------------------
+  //
+  // tdweb keeps every finished file up to 8 MiB (thumbnails, photos) as a Blob in the IndexedDB
+  // database named after the instance, and never deletes one: its deleteIdbKey does nothing. That
+  // store is the one thing here that grows. TDLib's database is a separate IndexedDB database
+  // (IDBFS under <instance>/dbfs) and is never touched.
+
+  let inbound = null; // tdweb's InboundFileSystem, set by the patched InboundFileSystem.create
+  let lastTold = 0;
+  let lastSyncFix = 0;
+
+  function ask(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /** Empties the file store and forgets its keys, so a file asked for again is fetched afresh. */
+  async function clearFileStore() {
+    if (!inbound) return 0;
+    const idb = await inbound.idb;
+    const n = await ask(idb.transaction(['keyvaluepairs'], 'readonly').objectStore('keyvaluepairs').count());
+    if (n > 0) await ask(idb.transaction(['keyvaluepairs'], 'readwrite').objectStore('keyvaluepairs').clear());
+    // An empty set, not null: tdweb's has() takes a missing set for "everything is there".
+    inbound.pids = new Set();
+    return n;
+  }
+
+  /** One file let go (TDLib's deleteFile through tdweb, TmTd.forget). */
+  function deleteKey(key) {
+    if (inbound && key) inbound.unlink(key);
+  }
+
+  function errorText(e) {
+    return String((e && (e.name || e.message)) || e);
+  }
+
+  /** Tells the page's keeper, at most every 10 s. */
+  function tell(reason, e, freed) {
+    const now = Date.now();
+    if (now - lastTold < 10000) return;
+    lastTold = now;
+    try {
+      self.postMessage({ '@type': 'updateTmStorage', reason: reason, error: errorText(e), freed: freed || 0 });
+    } catch (err) {}
+  }
+
+  /**
+   * TDLib's database could not be saved (IDBFS's sync failed, the quota as a rule). The sign in
+   * lives in it, so room is made here at once, without waiting for the page, and the save tried
+   * again; IDBFS saves whatever changed since the last save that worked, so nothing is lost while
+   * the tab stays open.
+   */
+  function onSyncError(e, dbfs) {
+    console.warn('[tm-storage] TDLib\'s database was not saved: ' + errorText(e));
+    const now = Date.now();
+    if (now - lastSyncFix < 10000) return;
+    lastSyncFix = now;
+    clearFileStore().catch(() => 0).then((n) => {
+      console.warn('[tm-storage] TDLib file store emptied for the database: ' + n + ' files');
+      tell('database', e, n);
+      setTimeout(() => {
+        try {
+          dbfs.sync(true);
+        } catch (err) {}
+      }, 0);
+    });
+  }
+
+  /** A finished file could not be put in the file store: it stays in memory; the page frees room. */
+  function onPersistError(e) {
+    const name = (e && e.name) || '';
+    if (name === 'QuotaExceededError' || name === 'AbortError' || /quota/i.test(String(e && e.message))) tell('files', e, 0);
+  }
+
   return {
     prepare: prepare,
     mount: mount,
     stats: () => Object.assign({}, stats, { files: open.size }),
+    set inbound(ifs) {
+      inbound = ifs;
+    },
+    clearFileStore: clearFileStore,
+    deleteKey: deleteKey,
+    onSyncError: onSyncError,
+    onPersistError: onPersistError,
   };
 })();

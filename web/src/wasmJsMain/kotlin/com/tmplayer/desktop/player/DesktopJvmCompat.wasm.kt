@@ -8,9 +8,16 @@ internal object System {
     fun currentTimeMillis(): Long = com.tmplayer.platform.nowMillis()
     fun nanoTime(): Long = com.tmplayer.platform.monotonicMillis() * 1_000_000
     fun identityHashCode(x: Any?): Int = x.hashCode()
-    /** No system properties or environment in a page: every switch read from them is off. */
-    @Suppress("UNUSED_PARAMETER")
-    fun getProperty(key: String): String? = null
+    /**
+     * No system properties or environment in a page: every switch read from them is off. The
+     * three a report names the computer by (the player's Copy details) say it is a browser.
+     */
+    fun getProperty(key: String): String? = when (key) {
+        "os.name" -> "Browser"
+        "os.version" -> runCatching { com.tmplayer.web.js.TmHost.platform() }.getOrNull()
+        "os.arch" -> "wasm"
+        else -> null
+    }
     @Suppress("UNUSED_PARAMETER")
     fun getProperty(key: String, default: String): String = default
     @Suppress("UNUSED_PARAMETER")

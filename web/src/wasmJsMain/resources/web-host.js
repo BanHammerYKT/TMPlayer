@@ -28,6 +28,23 @@
 
   let popHandler = null;
 
+  // The handlers of the notifications shown (notifyTap), by id; the Service Worker hands a press
+  // back as a message with the id (sw.js, notificationclick).
+  const taps = new Map();
+  let tapSeq = 0;
+  function runTap(id) {
+    const f = taps.get(id);
+    taps.delete(id);
+    if (f) {
+      try { f(); } catch (e) {}
+    }
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'tm-notification-tap') runTap(String(e.data.id));
+    });
+  }
+
   // Installing: Chromium offers its own prompt, kept here until the app's Install button asks
   // for it; iOS has none, so the app shows how to add it to the Home Screen instead.
   let installPrompt = null;
@@ -49,6 +66,8 @@
   });
 
   const TmHost = {
+    // The keeper trims the metadata shelves here directly.
+    rawStore: store,
     ready() {
       const s = document.getElementById('splash');
       if (s) {
@@ -68,9 +87,12 @@
         return null;
       }
     },
+    // A full local storage never loses the write silently nor throws into Wasm: the storage
+    // keeper (storage-keeper.js) frees the metadata answers and writes it again.
     setItem(key, value) {
       try {
-        store.setItem(key, value);
+        if (window.TmKeeper) window.TmKeeper.setItemKept(store, key, value);
+        else store.setItem(key, value);
       } catch (e) {}
     },
     removeItem(key) {
@@ -144,6 +166,18 @@
     language() {
       return (navigator.languages && navigator.languages[0]) || navigator.language || 'en';
     },
+    // Every language the browser is set to, in order, comma separated: the app takes the first it
+    // has a catalog for, as the apps do with the system's list.
+    languages() {
+      const list = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || 'en'];
+      return list.join(',');
+    },
+    // The page's own lang and dir, and the splash line, in the language the app shows.
+    setLanguage(tag, rtl) {
+      const html = document.documentElement;
+      html.setAttribute('lang', tag || 'en');
+      html.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    },
     userAgent() {
       return navigator.userAgent || '';
     },
@@ -176,14 +210,14 @@
       } catch (e) {}
     },
     setThemeColor(color, dark) {
-      const m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.setAttribute('content', color);
+      // Both of index.html's theme colours (light and dark) take the app's own ground.
+      document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', color));
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
       // The ground around the canvas (the notch, the home indicator) matches the app's own.
       document.documentElement.style.setProperty('--bg', color);
     },
     setTitle(text) {
-      document.title = text ? text + ' - TMPlayer Beta' : 'TMPlayer Beta';
+      document.title = text ? text + ' - TMPlayer Web' : 'TMPlayer Web';
     },
 
     // The browser's back button walks the app's own back stack: each screen pushes one entry.
@@ -201,6 +235,7 @@
 
     async persist() {
       try {
+        if (window.TmKeeper) return await window.TmKeeper.persist('settings');
         if (navigator.storage && navigator.storage.persist) {
           return await navigator.storage.persist();
         }
@@ -274,6 +309,47 @@
         return false;
       }
     },
+    // Whether the viewer is looking at the page: the new video checks notify only when not, as the
+    // desktop's do while its window is not in front.
+    inFront() {
+      try {
+        return document.visibilityState === 'visible' && document.hasFocus();
+      } catch (e) {
+        return true;
+      }
+    },
+    // A notification whose press brings the page to the front and calls onTap. Through the Service
+    // Worker where there is one (Chrome on Android has no page notifications, and an installed
+    // iPhone app shows them only from there), else from the page.
+    notifyTap(title, body, tag, onTap) {
+      try {
+        if (!('Notification' in window) || Notification.permission !== 'granted') return false;
+        const id = String(++tapSeq);
+        taps.set(id, onTap);
+        if (taps.size > 20) taps.delete(taps.keys().next().value);
+        const options = { body: body, icon: 'icon-192.png', badge: 'icon-192.png', tag: tag || id, data: { tmTap: id } };
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.ready
+            .then((reg) => reg.showNotification(title, options))
+            .catch(() => TmHost.notifyPage(title, options, id));
+        } else {
+          TmHost.notifyPage(title, options, id);
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    },
+    notifyPage(title, options, id) {
+      try {
+        const n = new Notification(title, options);
+        n.onclick = () => {
+          try { window.focus(); } catch (e) {}
+          n.close();
+          runTap(id);
+        };
+      } catch (e) {}
+    },
     async askNotify() {
       try {
         if (!('Notification' in window)) return 'unsupported';
@@ -293,6 +369,17 @@
     isIos() {
       return /iPhone|iPad|iPod/.test(navigator.userAgent) ||
         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    },
+    // A phone or tablet in the hand: it cannot scan a QR code it is showing itself.
+    isHandheld() {
+      try {
+        if (this.isIos() || /Android.+Mobile|Mobi/i.test(navigator.userAgent)) return true;
+        if (navigator.userAgentData && navigator.userAgentData.mobile) return true;
+        const coarse = window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches;
+        return coarse && Math.min(screen.width, screen.height) < 820;
+      } catch (e) {
+        return false;
+      }
     },
     isStandalone() {
       try {

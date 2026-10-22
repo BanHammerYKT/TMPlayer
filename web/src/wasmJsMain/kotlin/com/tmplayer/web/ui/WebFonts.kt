@@ -46,13 +46,20 @@ object WebFonts {
     /** The text face; null only when the file could not be fetched, and Skia's default is used. */
     suspend fun main(): FontFamily? = bytes("fonts/NotoSans.ttf")?.let { family("NotoSans", it) }
 
+    /**
+     * A few kilobytes each: only the glyphs of 简体中文, 繁體中文, 日本語 and 한국어, cut from the desktop's
+     * subsets (pyftsubset --text, kept in web/fonts), so the language picker names every language in itself
+     * without waiting for megabytes of East Asian type nobody has asked for yet.
+     */
+    private val NAMES = listOf("NotoSansSC-Names", "NotoSansTC-Names", "NotoSansJP-Names", "NotoSansKR-Names")
+
     /** The fallbacks, in the order Skia should try them: emoji, then the script subsets. */
     val FALLBACKS = listOf(
         "NotoColorEmoji",
         "NotoSansArabicUI-Subset", "NotoSansDevanagari-Subset", "NotoSansBengali-Subset",
         "NotoSansMalayalam-Subset", "NotoSansJP-Subset", "NotoSansSC-Subset", "NotoSansTC-Subset",
         "NotoSansKR-Subset",
-    )
+    ) + NAMES
 
     /**
      * The fallbacks worth loading now: the small ones (emoji once one has been seen, the Arabic
@@ -70,7 +77,7 @@ object WebFonts {
             val traditional = language.contains("TW", ignoreCase = true) || language.contains("Hant")
             out += if (traditional) "NotoSansTC-Subset" else "NotoSansSC-Subset"
         }
-        return out + firstFor(language)
+        return out + firstFor(language) + NAMES
     }
 
     /** Which subsets a language needs at once rather than in the background. */

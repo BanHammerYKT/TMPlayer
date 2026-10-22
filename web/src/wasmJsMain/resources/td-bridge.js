@@ -12,8 +12,11 @@
 //                                         background read takes only what TDLib already has
 //   TmTd.fileInfo(fileId)                 Promise<object>: TDLib's file object
 //   TmTd.warm(fileId, size, head, tail)   fetches a file's head and tail ahead of a play
+//     [, at, span]                        (and `span` bytes from a resumed video's place `at`)
 //   TmTd.stop(fileId)                     stops fetching ahead once a video closes
 //   TmTd.forget(fileId)                   drops what TDLib holds of a file (cache trimming)
+//   TmTd.clearFileStore()                 Promise<number>: empties tdweb's store of finished small
+//                                         files (storage-keeper.js), never TDLib's database
 //   TmTd.close()
 //
 // Streaming follows the apps' TdByteWindow: TDLib is pointed at the byte the player wants with a
@@ -297,10 +300,39 @@
     }
   }
 
+  // The store tdweb keeps finished files in (InboundFileSystem: one Blob per file under
+  // "keyvaluepairs" in the database named after the instance), emptied from the page.
+  async function clearFileStoreDirect(name) {
+    if (indexedDB.databases) {
+      const all = await indexedDB.databases();
+      if (!all.some((d) => d.name === name)) return 0;
+    }
+    const db = await new Promise((resolve, reject) => {
+      const r = indexedDB.open(name);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.onupgradeneeded = () => r.result.createObjectStore('keyvaluepairs');
+    });
+    try {
+      if (!db.objectStoreNames.contains('keyvaluepairs')) return 0;
+      const ask = (req) => new Promise((resolve, reject) => {
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const n = await ask(db.transaction(['keyvaluepairs'], 'readonly').objectStore('keyvaluepairs').count());
+      if (n > 0) await ask(db.transaction(['keyvaluepairs'], 'readwrite').objectStore('keyvaluepairs').clear());
+      return n;
+    } finally {
+      db.close();
+    }
+  }
+
+  let options = null;
+
   const TmTd = {
     start(optionsJson, onUpdate) {
       if (client) return;
-      const options = JSON.parse(optionsJson);
+      options = JSON.parse(optionsJson);
       const TdClient = window.tdweb && window.tdweb.default;
       if (!TdClient) throw new Error('tdweb did not load');
       client = new TdClient({
@@ -323,10 +355,19 @@
           if (type === 'updateAuthorizationState' &&
               update.authorization_state['@type'] === 'authorizationStateReady') {
             // The sign in is kept against the browser clearing the site's storage. The videos
-            // themselves are never written to it (tdweb/sparse-fs.js, memory only).
+            // themselves are never written to it (tdweb/sparse-fs.js, memory only). Asked on
+            // every start while signed in, since the browser's answer can change (an install,
+            // more use of the site); the keeper logs it.
             try {
-              if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+              if (window.TmKeeper) window.TmKeeper.persist('signed in');
+              else if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
             } catch (e) {}
+          }
+          // tdweb's worker could not save TDLib's database or a file (tdweb/sparse-fs.js): it has
+          // emptied its file store already; the keeper frees the rest. Not TDLib's own update.
+          if (type === 'updateTmStorage') {
+            if (window.TmKeeper) window.TmKeeper.quotaError(update.reason === 'database' ? "TDLib's database" : "TDLib's files", update.error);
+            return;
           }
           let text;
           try {
@@ -405,11 +446,14 @@
 
     // A video about to be played (a card held under the pointer or the focus for a moment, the
     // next episode near the end of this one): its head, then its last megabyte, where MP4 and MKV
-    // often keep their index, so the first frame needs almost nothing more after the press.
-    warm(fileId, size, head, tail) {
+    // often keep their index, so the first frame needs almost nothing more after the press. A
+    // video with a saved place also passes the byte to fetch `span` bytes from (`at`), asked for
+    // once the head and the tail are in, since TDLib's next request for the file replaces its last.
+    warm(fileId, size, head, tail, at, span) {
       // Not in the file's read queue: a warm-up must never hold up a play that starts meanwhile,
       // and a read that arrives points TDLib at its own window, which replaces this one.
       if (queues.has(fileId) || windows.has(fileId)) return Promise.resolve();
+      const resume = at > head && span > 0 && (!(size > 0) || at < size);
       const job = async () => {
         try {
           if ((await prefix(fileId, 0)) < head) {
@@ -420,7 +464,13 @@
           }
           if (queues.has(fileId) || windows.has(fileId)) return;
           if (size > head + tail && tail > 0 && (await prefix(fileId, size - tail)) < tail) {
-            await call({ '@type': 'downloadFile', file_id: fileId, priority: 8, offset: size - tail, limit: tail, synchronous: false });
+            const request = { '@type': 'downloadFile', file_id: fileId, priority: 8, offset: size - tail, limit: tail, synchronous: resume };
+            if (resume) await Promise.race([call(request), new Promise((r) => setTimeout(r, 8000))]);
+            else await call(request);
+          }
+          if (!resume || queues.has(fileId) || windows.has(fileId)) return;
+          if ((await prefix(fileId, at)) < span) {
+            await call({ '@type': 'downloadFile', file_id: fileId, priority: 8, offset: at, limit: span, synchronous: false });
           }
         } catch (e) {}
       };
@@ -435,6 +485,22 @@
       heads.delete(fileId);
       clearTimeout(backTimers.get(fileId));
       return call({ '@type': 'cancelDownloadFile', file_id: fileId, only_if_pending: false }).catch(() => {});
+    },
+
+    // Empties tdweb's IndexedDB store of finished small files (thumbnails, photos), never TDLib's
+    // database: through the worker, which forgets the keys with them, so a file asked for again
+    // is fetched afresh. The number of files let go.
+    async clearFileStore() {
+      if (client) {
+        // A worker that stopped (a fatal error) never answers: the keeper's pass goes on.
+        const r = await Promise.race([
+          client.sendInternal({ '@type': 'tmClearFileStore' }),
+          new Promise((resolve, reject) => setTimeout(() => reject(new Error('no answer')), 15000)),
+        ]);
+        return (r && r.count) || 0;
+      }
+      // No TDLib running (signed out, or not started yet): nothing holds the store open.
+      return clearFileStoreDirect(options && options.instanceName || 'tmplayer');
     },
 
     forget(fileId) {

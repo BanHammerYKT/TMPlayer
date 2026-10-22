@@ -62,6 +62,10 @@ object DesktopServices {
     val updates: UpdateScheduler? get() = null
     val watchCache: DesktopWatchCache? get() = null
     val selfUpdate: SelfUpdate? get() = null
+
+    /** The page's stores, set at start (com.tmplayer.web.Main), for Send logs to scrub names with. */
+    var settings: SettingsStore? = null
+    var watched: com.tmplayer.data.WatchedStore? = null
 }
 
 /** Whether there is a network, from the browser's own online and offline events. */

@@ -295,6 +295,10 @@ fun WebPlayerScreen(
         controlsUp = false
     }
     LaunchedEffect(fullscreen) { videoFullscreen(fullscreen) }
+    // In full screen the pointer goes with the controls while a video plays, as on the desktop.
+    val pointerHidden = fullscreen && started && status.playing && !controlsUp && menu == null
+    LaunchedEffect(pointerHidden) { hidePointer(pointerHidden) }
+    DisposableEffect(Unit) { onDispose { hidePointer(false) } }
 
     fun togglePlay() {
         engine.togglePlay()
@@ -387,6 +391,7 @@ fun WebPlayerScreen(
             PlayerAction.Stats -> showDetails = !showDetails
             PlayerAction.ShortcutSheet -> showShortcuts = !showShortcuts
             PlayerAction.Back, PlayerAction.Quit -> onClose()
+            PlayerAction.MiniPlayer -> if (engine.canPip()) engine.pip()
             else -> Unit
         }
     }
@@ -420,6 +425,10 @@ fun WebPlayerScreen(
                 .focusable()
                 .onPointerEvent(PointerEventType.Move, PointerEventPass.Initial) { poke() }
                 .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { poke() }
+                // The pointer leaving the page takes the controls down at once, as on the desktop.
+                .onPointerEvent(PointerEventType.Exit, PointerEventPass.Initial) {
+                    if (status.playing && menu == null) controlsUp = false
+                }
                 // The wheel: volume, or a seek with Settings, Mouse's switch (Shift the other).
                 .onPointerEvent(PointerEventType.Scroll) { event ->
                     val delta = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
@@ -466,7 +475,7 @@ fun WebPlayerScreen(
                 fullscreen = fullscreen,
                 menu = menu,
                 ignoreClicks = false,
-                miniPlayerAvailable = false,
+                miniPlayerAvailable = started && engine.canPip(),
                 alwaysOnTopAvailable = false,
                 fromTelegram = true,
                 savable = false,
@@ -488,7 +497,7 @@ fun WebPlayerScreen(
                 onVolume = ::setVolume,
                 onToggleMute = ::toggleMute,
                 onToggleFullscreen = onToggleFullscreen,
-                onMiniPlayer = {},
+                onMiniPlayer = { dispatch(PlayerAction.MiniPlayer) },
                 onOpenMenu = { menu = it },
                 onCloseMenu = {
                     menu = null
@@ -630,3 +639,29 @@ private const val SUBTITLE_STEP_MS = 100L
 /** What the page's video wants ahead of the start point before it plays, as the card's buffer. */
 private const val WEB_START_BUFFER_MS = 1_000L
 
+/**
+ * Hides the pointer over the page or gives it back: a class on Compose's canvas, which sits in a
+ * shadow root of the app's element, and a style added there once that sets it to no cursor at
+ * all. Compose for Web sets the cursor only to its own named ones, none of them blank.
+ */
+@JsFun(
+    """(hidden) => {
+        const app = document.getElementById('app');
+        if (!app) return;
+        const roots = [document];
+        for (const el of app.querySelectorAll('*')) if (el.shadowRoot) roots.push(el.shadowRoot);
+        for (const root of roots) {
+            const canvas = root.querySelector('canvas');
+            if (!canvas) continue;
+            if (root !== document && !root.getElementById('tm-no-pointer')) {
+                const style = document.createElement('style');
+                style.id = 'tm-no-pointer';
+                style.textContent = 'canvas.tm-no-pointer { cursor: none !important; }';
+                root.appendChild(style);
+            }
+            canvas.classList.toggle('tm-no-pointer', hidden);
+            canvas.style.cursor = hidden ? 'none' : canvas.style.cursor === 'none' ? '' : canvas.style.cursor;
+        }
+    }""",
+)
+private external fun hidePointer(hidden: Boolean)

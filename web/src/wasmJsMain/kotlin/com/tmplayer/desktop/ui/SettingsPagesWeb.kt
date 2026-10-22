@@ -474,13 +474,65 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
 }
 
 /**
- * Notifications: not listed in the browser. The checks behind them (new episodes and videos,
- * finished downloads, missing pieces, low storage, updates) are the apps' (DesktopChecks is empty
- * here), so a switch would promise a notification that never comes.
+ * Notifications, as far as a browser tab can give them: the browser's own permission first, then
+ * the switches of the checks the page runs while it is open (DesktopChecks in DesktopUiWeb.kt).
+ * Left out: finished downloads, low storage and updates, which a page does not have.
  */
-@Suppress("UNUSED_PARAMETER")
 @Composable
-internal fun NotificationRows(state: ShellState) {}
+internal fun NotificationRows(state: ShellState) {
+    val s = LocalStrings.current
+    val settings = state.settings
+    val scope = rememberCoroutineScope()
+    val toast = rememberToast()
+    var permission by remember { mutableStateOf(runCatching { TmHost.notifyPermission() }.getOrDefault("unsupported")) }
+    // A choice made in the browser's own site settings shows here while the page is open.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(1_500)
+            permission = runCatching { TmHost.notifyPermission() }.getOrDefault(permission)
+        }
+    }
+    val supportCounters by settings.supportCounters.collectAsState(initial = SupportReminder.Counters())
+
+    Action(
+        s.webNotifyAllow,
+        when (permission) {
+            "granted" -> s.webNotifyAllowOn
+            "denied" -> s.webNotifyAllowBlocked
+            "unsupported" -> s.webNotifyAllowUnsupported
+            else -> s.webNotifyAllowAsk
+        },
+        TmIcons.Bell,
+        end = RowEnd.None,
+        enabled = permission == "default",
+    ) {
+        // Asked for in the press itself, which browsers need before they show their prompt.
+        val asked = TmHost.askNotify()
+        scope.launch {
+            permission = runCatching { asked.await<kotlin.js.JsString>().toString() }.getOrDefault("denied")
+            if (permission == "denied") toast(s.webNotifyAllowBlocked)
+        }
+    }
+    val rows = buildList {
+        add(Triple(com.tmplayer.data.Notice.NewEpisodes, s.settingsAlertEpisodes, s.webNotifyEpisodesDetail))
+        add(Triple(com.tmplayer.data.Notice.NewVideos, s.settingsNewVideos, s.webNotifyNewVideosDetail))
+        add(Triple(com.tmplayer.data.Notice.MissingPieces, s.settingsAlertPieces, s.settingsAlertPiecesDetail))
+        if (SupportReminder.enabled && !supportCounters.finished) {
+            add(Triple(com.tmplayer.data.Notice.Support, s.settingsSponsorReminders, s.settingsSponsorRemindersDetail))
+        }
+    }
+    for ((notice, title, detail) in rows) {
+        val on by settings.noticeOn(notice).collectAsState(initial = notice.defaultOn)
+        Toggle(title, detail, on, icon = TmIcons.Bell) { next ->
+            scope.launch { settings.setNoticeOn(notice, next) }
+            // Turning one on is the moment to ask the browser, as the phone asks Android.
+            if (next && permission == "default") {
+                val asked = TmHost.askNotify()
+                scope.launch { permission = runCatching { asked.await<kotlin.js.JsString>().toString() }.getOrDefault(permission) }
+            }
+        }
+    }
+}
 
 /** App lock, as on the desktop: the PIN and its switches live in the settings store. */
 @Composable

@@ -37,6 +37,7 @@ internal fun webOnlineMetadata(): OnlineMetadata = OnlineMetadata(
     store = WebMetaSettings(),
     cache = WebMetaCache(),
     appVersion = BuildInfo.VERSION,
+    omdbKey = BuildInfo.OMDB_API_KEY,
 ).also { metadata ->
     // No warmUp(): its bare requests answer 401 and 404 and show as errors in the console. The
     // page opens the same two connections with preconnect hints instead (index.html).
@@ -63,6 +64,8 @@ private class WebMetaSettings : MetaSettingsStore {
             ownKey = p.optString("own_key"),
             refusedKey = p.optString("refused_key"),
             refusedAt = p.optString("refused_at").toLongOrNull() ?: 0L,
+            omdbKey = p.optString("omdb_key"),
+            omdbRefusedKey = p.optString("omdb_refused_key"),
             skipTimes = p.optString("skip_times") != "false",
             offByChoice = p.optString("off_by_choice") == "true",
         )
@@ -74,6 +77,8 @@ private class WebMetaSettings : MetaSettingsStore {
             .put("own_key", s.ownKey)
             .put("refused_key", s.refusedKey)
             .put("refused_at", s.refusedAt.toString())
+            .put("omdb_key", s.omdbKey)
+            .put("omdb_refused_key", s.omdbRefusedKey)
             .put("skip_times", s.skipTimes.toString())
             .put("off_by_choice", s.offByChoice.toString())
         TmHost.setItem(KEY, p.toString())

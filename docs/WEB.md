@@ -153,7 +153,8 @@ waiting (mostly for the `:core` and `:ui` moves); where a browser cannot, the cl
 | Picture in picture | yes | | yes (mini player) | Built where the browser allows; hidden in an installed iOS app (bug 303885) | Built |
 | Casting | yes | | yes | AirPlay from Safari's own player; Remote Playback where offered | Remote Playback (Chrome) |
 | Lock screen controls | yes | | MPRIS, SMTC | Built (Media Session) | Built |
-| Notifications | yes | yes | yes | Web Push needs a push server: a notice while a tab is open | same |
+| Notifications | yes | yes | yes | Built while a tab is open: new videos, new episodes, missing parts and the support ask, through the Notification API (from the Service Worker where the browser needs it); with the tab closed Web Push would need a push server | same |
+| What's new, the language card, the tour offer, Send logs | yes | yes | yes | Built (the desktop's; logs to the browser's downloads) | same |
 | Downloads for offline | yes | yes | yes | What was played stays on OPFS and plays again offline; no Downloads folder | same |
 | Warm a video on hover or focus, and the next episode | partly | partly | partly | Built | Built |
 | Installable | Play, APK | stores | packages | Built (Add to Home Screen) | Built (Chromium install) |
@@ -373,6 +374,18 @@ offset arithmetic SplitPieces already does for the apps), reading each piece's f
 | Finished downloads | IndexedDB blobs (tdweb) | the browser's quota: up to about 60% of free disk in Chromium, 10% of disk in Firefox, about 1 GB before asking on Safari, and evictable unless `navigator.storage.persist()` is granted |
 | Partial downloads while streaming | MEMFS in tdweb's worker, dense | RAM: a seek far into a large file allocates up to that offset |
 | Settings, Watched, Watch later, bookmarks | IndexedDB through the storage interface | small |
+
+What the site keeps today, and which part holds the sign in, is listed at the top of
+`web/src/wasmJsMain/resources/storage-keeper.js`. TDLib's database (IndexedDB `/tmplayer/dbfs`)
+holds the sign in and is never deleted by the app; videos stay in memory; tdweb's store of
+finished small files (IndexedDB `tmplayer`), the runtime Cache Storage and the metadata answers
+in localStorage are caches. The storage keeper checks `navigator.storage.estimate()` at start and
+every minute, and past 70 % of the quota, or on any quota error (a localStorage write, a Cache
+Storage write in sw.js, a refused save of TDLib's database or file store in tdweb's worker), it
+frees those caches in that order until the site is under 50 %, logging one `[tm-storage]` line
+per pass. A refused database save empties the file store inside the worker at once and saves
+again. `navigator.storage.persist()` is asked on every signed in start and on install, and the
+answer logged, since a site that is not persistent can be cleared whole under disk pressure.
 
 The MEMFS limit means stock tdweb streams videos up to a few hundred MB well and fails on the
 2 to 4 GB files common in channels. Phase 3 fixes it in our own tdweb build: TDLib's files

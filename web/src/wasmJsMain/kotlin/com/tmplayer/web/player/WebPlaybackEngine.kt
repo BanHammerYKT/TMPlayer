@@ -78,6 +78,12 @@ private external fun videoRetry()
 @JsFun("(on) => window.TmVideo.fullscreen(on)")
 internal external fun videoFullscreen(on: Boolean)
 
+@JsFun("() => window.TmVideo.canPip()")
+private external fun videoCanPip(): Boolean
+
+@JsFun("() => { try { const p = window.TmVideo.pip(); if (p && p.catch) p.catch(() => {}); } catch (e) {} }")
+private external fun videoPip()
+
 /** A Telegram video the page streams: what the browser's PlaybackEngine opens. */
 class WebMedia(val item: MediaItem) : MediaData
 
@@ -365,6 +371,16 @@ class WebPlaybackEngine : PlaybackEngine {
     }
 
     /** Tries the engines again from where the video got to, after a failure. */
+    /**
+     * Whether the browser can float this video in a picture in picture window, the browser's
+     * mini player: its own player can where the browser allows it, movi-player through Document
+     * Picture in Picture, and never in a Home Screen app on iOS (web/player/player.js).
+     */
+    fun canPip(): Boolean = runCatching { videoCanPip() }.getOrDefault(false)
+
+    /** Into the picture in picture window, or back out of it. Called from the press itself. */
+    fun pip() = videoPip()
+
     fun retry() {
         _failure.value = null
         videoRetry()
