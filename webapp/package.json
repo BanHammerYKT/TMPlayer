@@ -1,0 +1,30 @@
+{
+  "name": "tmplayer-webapp",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.1.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 8091",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mediabunny/ac3": "1.62.0",
+    "@mediabunny/dts": "1.62.0",
+    "@mtcute/web": "0.32.6",
+    "@videojs/html": "10.1.0",
+    "mediabunny": "1.62.0",
+    "solid-js": "1.9.17",
+    "uqr": "0.1.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vite-plugin-solid": "2.11.14"
+  }
+}
