@@ -221,7 +221,7 @@ const itemList = {
   <Band wave id="apple-tv" title={t(a('apple_title'))}>
     <div class="section-body prose-band" data-reveal>
       <p>{t(a('apple_p1'))}</p>
-      <p><T k={a('apple_p2')} vars={{ ...tevegram.price, price: tvForTelegram.price.price! }}><a href={tevegram.also!.url} rel={nofollow} slot="a1">{tevegram.name}</a><a href={tvForTelegram.url} rel={nofollow} slot="a2">{tvForTelegram.name}</a></T></p>
+      <p><T k={a('apple_p2')} vars={{ monthly: tevegram.price.monthly!, yearly: tevegram.price.yearly!, lifetime: tevegram.price.lifetime!, price: tvForTelegram.price.price! }}><a href={tevegram.also!.url} rel={nofollow} slot="a1">{tevegram.name}</a><a href={tvForTelegram.url} rel={nofollow} slot="a2">{tvForTelegram.name}</a></T></p>
     </div>
   </Band>
 
