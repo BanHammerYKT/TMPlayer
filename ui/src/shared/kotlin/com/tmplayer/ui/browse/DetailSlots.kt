@@ -141,10 +141,12 @@ internal fun DetailMetaLines(
     modifier: Modifier = Modifier,
     style: TextStyle = MaterialTheme.typography.bodyMedium,
     yearPending: Boolean = false,
+    runtime: Boolean = true,
+    seasons: Boolean = true,
 ) {
     val s = LocalStrings.current
     val value = extras.value
-    val facts = listOfNotNull(year?.toString(), value?.let { metaFactsLine(it, s) }).joinToString("  ·  ").ifBlank { null }
+    val facts = listOfNotNull(year?.toString(), value?.let { metaFactsLine(it, s, runtime = runtime, seasons = seasons) }).joinToString("  ·  ").ifBlank { null }
     val scored = value != null && (value.scores.isNotEmpty() || value.rating != null)
     val waiting = !extras.settled || yearPending
     if (!hold && facts == null && !scored) return

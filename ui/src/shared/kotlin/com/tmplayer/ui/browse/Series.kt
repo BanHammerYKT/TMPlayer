@@ -948,6 +948,8 @@ fun SeriesPanel(
                     year = meta?.year?.takeIf { !yearInFacts },
                     hold = holdMetaLines,
                     yearPending = !yearInFacts && !metaState.settled,
+                    // The facts line above already counts the seasons.
+                    seasons = false,
                 )
                 // How far through the whole show; the facts line says it in words.
                 if (progress.watched > 0) ProgressLine(progress.watched.toFloat() / progress.total, Modifier.widthIn(max = 240.dp))

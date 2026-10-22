@@ -248,6 +248,8 @@ fun WideDetailPanel(
                             year = matchYear.takeIf { !yearInFacts },
                             hold = holdMetaLines,
                             yearPending = !yearInFacts && parsed.year == null && metaComing,
+                            // The file's own length is on the facts line already.
+                            runtime = item.durationSec <= 0,
                         )
                         ResumeLine(watched, finished, item.durationSec)
                         PiecesMissingLine(item)

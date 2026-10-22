@@ -312,7 +312,8 @@ fun MediaDetailPanel(
                     Fact(s.detailWatchedLine, accent = true).takeIf { finished },
                 ),
             )
-            MetaFactsLines(extras)
+            // The file's own length is on the facts line already.
+            MetaFactsLines(extras, runtime = item.durationSec <= 0)
             ResumeLine(watched, finished, item.durationSec)
             PiecesMissingLine(item)
         }

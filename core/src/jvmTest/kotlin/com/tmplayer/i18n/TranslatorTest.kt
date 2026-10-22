@@ -249,6 +249,20 @@ class TranslatorTest {
     }
 
     @Test
+    fun `a size range whose ends read the same is one size`() {
+        val gb = 1024L * 1024 * 1024
+        val en = Translator.english().formatter
+        assertEquals("1.4 GB to 2.2 GB", en.sizeSpan((1.4 * gb).toLong(), (2.2 * gb).toLong()))
+        // 2.20 GB and 2.24 GB both round to 2.2 GB.
+        assertEquals("2.2 GB", en.sizeSpan((2.2 * gb).toLong(), (2.24 * gb).toLong()))
+        assertEquals("2.2 GB", en.sizeSpan((2.24 * gb).toLong(), (2.2 * gb).toLong()))
+        assertEquals("350 MB", en.sizeSpan(350L * 1024 * 1024, 350L * 1024 * 1024))
+        assertEquals("350 MB", en.sizeSpan(0, 350L * 1024 * 1024))
+        assertEquals("", en.sizeSpan(0, 0))
+        assertEquals("1.4 GB to 2.2 GB", en.sizeSpan((2.2 * gb).toLong(), (1.4 * gb).toLong()))
+    }
+
+    @Test
     fun `track languages are named in the ui language from any iso code`() {
         val en = Translator.english().formatter
         assertEquals("German", en.trackLanguage("de"))

@@ -6111,35 +6111,76 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * Never into the centre buttons, though: a phone held sideways has little room between the
      * bar and the transport, and two lines of large subtitles lifted clear of the bar landed in
      * the middle of the picture among the buttons. The climb stops two lines' height below the
-     * centre cluster, and whatever of the cue is still low sits under the bottom scrim.
+     * centre cluster (one on a television, whose centre is the lone play disc), and only where
+     * even the least climb that clears the row does not fit do they stand down while the row is
+     * up. A television keeps its 48 dp off the edge while the row is down, and while it is up sits
+     * the lines just over the row's top line rather than hiding them ([SubtitleLift]).
      */
     private fun liftSubtitles() {
         val cluster = findViewById<View>(R.id.controls_cluster)
         cluster.post {
-            val reach = (cluster.height - subtitleGapBelow).coerceAtLeast(0)
-            val room = roomUnderCentre()
-            val lift = if (room == null) reach else reach.coerceAtMost(room.coerceAtLeast(0))
-            // Where the climb cannot clear the row, or the cue would sit among the centre buttons
-            // and their episode captions, the cue stands down while the row is up rather than
-            // running through the timebar. It comes back with the row. Never while a track
-            // picker is open, though: the subtitles behind it are what its look lines preview
-            // and what says a track just chosen works, and the picker covers the row anyway.
-            val blocked = controlsUp && !pickerOpen && room != null && (room < 0 || room < reach)
+            val tv = FormFactor.isTv(this)
+            val place = SubtitleLift.place(
+                controlsUp = controlsUp,
+                pickerOpen = pickerOpen,
+                textBottom = subtitleTextBottom(),
+                rowTop = rowTop(cluster),
+                reach = cluster.height - subtitleGapBelow,
+                room = roomUnderCentre(lines = if (tv) 1 else 2),
+                gap = (8 * resources.displayMetrics.density).toInt(),
+                tv = tv,
+            )
             subtitleView.animate()
-                .alpha(if (blocked) 0f else 1f)
-                .translationY(if (controlsUp) -lift.toFloat() else 0f)
+                .alpha(if (place.hidden) 0f else 1f)
+                .translationY(-place.lift.toFloat())
                 .setDuration(SUBTITLE_LIFT_MS)
                 .start()
         }
     }
 
     /**
-     * How far subtitles can climb before two lines of them would reach the centre cluster, in
-     * pixels, or null when the cluster is not showing. Measured from where the view draws its
-     * bottom line: its height less the bottom padding fraction, with each line about 1.25 times
-     * the fractional text size.
+     * The top line of the raised row in the player's root, in pixels: the highest of the cluster's
+     * showing children, less any slide they are part way through. Null when none is showing.
      */
-    private fun roomUnderCentre(): Int? {
+    private fun rowTop(cluster: View): Int? {
+        val group = cluster as? android.view.ViewGroup ?: return null
+        if (cluster.visibility != View.VISIBLE) return null
+        val root = findViewById<View>(R.id.player_root)
+        val origin = IntArray(2)
+        val at = IntArray(2)
+        root.getLocationInWindow(origin)
+        var top: Int? = null
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i)
+            if (child.visibility != View.VISIBLE || child.height == 0) continue
+            child.getLocationInWindow(at)
+            val y = at[1] - origin[1] - child.translationY.toInt() - cluster.translationY.toInt()
+            top = minOf(top ?: y, y)
+        }
+        return top
+    }
+
+    /**
+     * Where the subtitles' lowest line draws at rest, in the player's root: the view's top, less
+     * its climb, plus its height less the bottom padding fraction.
+     */
+    private fun subtitleTextBottom(): Int {
+        val root = findViewById<View>(R.id.player_root)
+        val origin = IntArray(2)
+        val at = IntArray(2)
+        root.getLocationInWindow(origin)
+        subtitleView.getLocationInWindow(at)
+        val height = subtitleView.height.takeIf { it > 0 } ?: subtitleView.layoutParams?.height?.coerceAtLeast(0) ?: 0
+        val viewTop = at[1] - origin[1] - subtitleView.translationY.toInt()
+        return (viewTop + height * (1f - subtitleBottomFraction())).toInt()
+    }
+
+    /**
+     * How far subtitles can climb before [lines] lines of them would reach the centre cluster, in
+     * pixels, or null when the cluster is not showing. Measured from where the view draws its
+     * bottom line, with each line about 1.25 times the fractional text size.
+     */
+    private fun roomUnderCentre(lines: Int): Int? {
         val centre = findViewById<View>(R.id.controls_center)
         if (centre.visibility != View.VISIBLE || centre.height == 0) return null
         val root = findViewById<View>(R.id.player_root)
@@ -6148,13 +6189,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         root.getLocationInWindow(origin)
         centre.getLocationInWindow(at)
         val centreBottom = at[1] - origin[1] + centre.height
-        subtitleView.getLocationInWindow(at)
         val height = subtitleView.height
-        val viewTop = at[1] - origin[1] - subtitleView.translationY.toInt()
-        val textBottom = viewTop + height * (1f - subtitleBottomFraction())
-        val twoLines = 2.5f * subtitleTextFraction() * height
+        val textBottom = subtitleTextBottom()
+        val reserved = 1.25f * lines * subtitleTextFraction() * height
         val gap = 8 * resources.displayMetrics.density
-        return (textBottom - twoLines - gap - centreBottom).toInt()
+        return (textBottom - reserved - gap - centreBottom).toInt()
     }
 
     /**

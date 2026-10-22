@@ -488,6 +488,8 @@ private fun FactsBlock(page: DetailPage, holds: Holds) {
             year = matchYear.takeIf { !holds.yearInFacts },
             hold = holds.metaLines,
             yearPending = !holds.yearInFacts && parsedYear == null && !page.metaState.settled,
+            // The file's own length is on the facts line already.
+            runtime = page.item.durationSec <= 0,
         )
         ResumeLine(page.watched, page.finished, page.item.durationSec)
         PiecesMissingLine(page.item)

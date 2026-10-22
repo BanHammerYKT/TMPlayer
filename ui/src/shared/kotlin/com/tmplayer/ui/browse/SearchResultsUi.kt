@@ -127,13 +127,7 @@ fun resultFacts(group: ResultGroup): String {
     val year = if (group.isShow) null else SeriesShelf.episodeOf(group.lead).year?.toString()?.takeIf { it !in title }
     val episodes = if (group.isShow) L.searchEpisodes(group.episodeCount) else null
     val duration = group.lead.durationSec.takeIf { it > 0 && !group.isShow }?.let(MediaMapper::formatDuration)
-    val size = group.sizeRange?.let { range ->
-        if (range.first == range.last) {
-            MediaMapper.formatSize(range.first)
-        } else {
-            L.searchSizeRange(MediaMapper.formatSize(range.first), MediaMapper.formatSize(range.last))
-        }
-    }
+    val size = group.sizeRange?.let { range -> L.messages.formatter.sizeSpan(range.first, range.last).ifEmpty { null } }
     return listOfNotNull(year, episodes, group.bestQuality, duration, size).joinToString("  ·  ")
 }
 

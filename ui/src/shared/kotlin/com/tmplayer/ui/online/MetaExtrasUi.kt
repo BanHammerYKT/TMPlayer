@@ -117,12 +117,14 @@ fun rememberMetaExtrasState(info: MetaInfo?, infoSettled: Boolean): MetaState<Me
 
 /**
  * "Drama, Crime  ·  56 min  ·  5 seasons  ·  TV-MA", or null with nothing to say. The scores are
- * not in it: [MetaScoresRow] draws them under it, each with its site's mark.
+ * not in it: [MetaScoresRow] draws them under it, each with its site's mark. A page whose own
+ * facts line already says the length or the number of seasons leaves them out here
+ * ([runtime], [seasons] false), so neither is said twice.
  */
-fun metaFactsLine(extras: MetaExtras, s: Messages): String? = listOfNotNull(
+fun metaFactsLine(extras: MetaExtras, s: Messages, runtime: Boolean = true, seasons: Boolean = true): String? = listOfNotNull(
     extras.genres.take(3).joinToString(", ").ifBlank { null },
-    extras.runtimeMin?.let { s.formatter.duration(it * 60L) },
-    extras.seasons?.let { s.metadataSeasons(it) },
+    extras.runtimeMin?.takeIf { runtime }?.let { s.formatter.duration(it * 60L) },
+    extras.seasons?.takeIf { seasons }?.let { s.metadataSeasons(it) },
     extras.certification,
 ).joinToString("  ·  ").ifBlank { null }
 
@@ -133,12 +135,15 @@ fun metaPeopleLine(extras: MetaExtras, s: Messages): String? = when {
     else -> null
 }
 
-/** The facts line, the scores under it, and the director or creators. */
+/**
+ * The facts line, the scores under it, and the director or creators. [runtime] false leaves the
+ * length out, for a page that has already said the file's own.
+ */
 @Composable
-fun MetaFactsLines(extras: MetaExtras?, modifier: Modifier = Modifier, maxLines: Int = 2) {
+fun MetaFactsLines(extras: MetaExtras?, modifier: Modifier = Modifier, maxLines: Int = 2, runtime: Boolean = true) {
     extras ?: return
     val s = LocalStrings.current
-    val facts = metaFactsLine(extras, s)
+    val facts = metaFactsLine(extras, s, runtime = runtime)
     val people = metaPeopleLine(extras, s)
     val scored = extras.scores.isNotEmpty() || extras.rating != null
     if (facts == null && people == null && !scored) return

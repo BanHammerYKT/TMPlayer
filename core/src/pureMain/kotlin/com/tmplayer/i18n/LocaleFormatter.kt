@@ -42,6 +42,17 @@ class LocaleFormatter internal constructor(private val messages: Messages) {
     }
 
     /**
+     * The sizes of several copies, smallest to largest: `1.4 GB to 2.2 GB`, or one size when both
+     * ends come out as the same text (`2.2 GB`, never `2.2 GB to 2.2 GB`), and "" when neither is
+     * known. The ends may come in either order.
+     */
+    fun sizeSpan(minBytes: Long, maxBytes: Long): String {
+        val low = size(minOf(minBytes, maxBytes).takeIf { it > 0 } ?: maxOf(minBytes, maxBytes))
+        val high = size(maxOf(minBytes, maxBytes))
+        return if (low == high) high else messages.searchSizeRange(low, high)
+    }
+
+    /**
      * A transfer's running total: `0 MB`, `640 KB`, `12.5 MB`, `1.42 GB`. Finer than [size], since
      * it is watched while it counts up.
      */
