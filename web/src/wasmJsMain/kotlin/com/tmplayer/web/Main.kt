@@ -52,7 +52,6 @@ import com.tmplayer.i18n.Translator
 import com.tmplayer.platform.Background
 import com.tmplayer.platform.Credentials
 import com.tmplayer.platform.DeviceInfo
-import com.tmplayer.ui.components.LocalBlankLoader
 import com.tmplayer.ui.theme.TmMaterialTheme
 import com.tmplayer.ui.theme.UiScaled
 import com.tmplayer.ui.theme.rememberUiScale
@@ -178,7 +177,7 @@ fun main() {
                 }
                 // The wait for Telegram is a blank ground, as the page's own splash is: words only
                 // if it runs long (user, 2026-10-21).
-                CompositionLocalProvider(LocalVideoBehindPage provides true, LocalBlankLoader provides true) {
+                CompositionLocalProvider(LocalVideoBehindPage provides true) {
                     Box(Modifier.fillMaxSize().trackFocusVisibility()) {
                         DesktopShell(shell) { request, close ->
                             WebPlayerScreen(

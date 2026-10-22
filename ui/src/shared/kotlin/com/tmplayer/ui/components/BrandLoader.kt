@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Text
@@ -69,28 +70,19 @@ import kotlinx.coroutines.delay
 import kotlin.math.tan
 
 /**
- * True where the wait should be a plain ground rather than the mark (the browser, user
- * 2026-10-21: "just use a blank screen until if needed"): nothing is drawn but the theme's colour,
- * and the words and any help come only once the wait has gone on for [BLANK_MS].
- */
-val LocalBlankLoader = staticCompositionLocalOf { false }
-
-/**
- * The first thing anybody sees after the system's splash, and for a few seconds the only thing.
- *
- * Opening TMPlayer means waiting on TDLib to open its database, find a socket and say hello to
- * Telegram, which on a cold start over a slow connection is long enough to wonder whether the press
- * registered. So the wait shows the name, "TM" in the accent and "Player" in the text colour, with
- * a tilted band of light passing over the letters like light over glass, and under it a line that
- * changes as the wait goes on. A message that never moves reads as a hang after about five seconds.
+ * The wait while TMPlayer connects, the same on every platform and kept quiet (user, 2026-10-22:
+ * "a splash screen if needed and nothing else, or just a simple rotating loader"): the window's
+ * own ground, which the system's splash hands over to with no flash, then after [SPINNER_MS] a
+ * small spinner in the accent, and only once the wait has gone on for [WORDS_MS] the words under
+ * it, [label] and a second line that changes as the wait goes on ([lines]), so a slow start over
+ * a poor connection does not read as a hang. A warm start is over before anything shows.
  *
  * The ground is the app's own near-black or near-white, never the wallpaper's tint, because it is
- * the colour the window was painted before the first frame (`window_background`), so the system
- * splash hands over to this with no flash. Nothing else on it has a colour but the accent.
+ * the colour the window was painted before the first frame (`window_background`).
  *
- * Phone, television and desktop share it; the sizes follow [deviceForm]. [sweepAt] places the logo's playhead, for a test
- * at one point of its loop (0 to 1), for drawing frames in a test. [below] is room under the lines
- * for a Retry once the wait has gone on too long.
+ * [sweepAt] is kept for tests that draw a frame at once: any value shows the spinner and the
+ * words without waiting. [below] is room under the lines for a Retry once the wait has gone on
+ * too long.
  */
 @Composable
 fun BrandLoader(
@@ -113,12 +105,15 @@ fun BrandLoader(
         }
     }
 
-    val blank = LocalBlankLoader.current
-    var reveal by remember { mutableStateOf(!blank) }
-    if (blank) {
+    val immediate = sweepAt != null
+    var spinner by remember { mutableStateOf(immediate) }
+    var words by remember { mutableStateOf(immediate) }
+    if (!immediate) {
         LaunchedEffect(Unit) {
-            delay(BLANK_MS)
-            reveal = true
+            delay(SPINNER_MS)
+            spinner = true
+            delay(WORDS_MS - SPINNER_MS)
+            words = true
         }
     }
 
@@ -129,19 +124,28 @@ fun BrandLoader(
             .padding(horizontal = size.side),
         contentAlignment = Alignment.Center,
     ) {
-        if (!reveal) return@Box
+        if (!spinner) return@Box
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // The app's mark, standing still (user, 2026-10-19: the moving playhead went), with
-            // the name under it (user, 2026-10-22); a blank loader that has waited long enough to
-            // speak shows only its words.
-            if (!blank) {
-                BrandLockup(
-                    size = BrandSize(size.logo, (size.logo.value * NAME_SHARE).sp, 20.dp),
-                    layout = BrandLayout.Stacked,
-                    mark = { side -> LogoMark(size = side, progress = { sweepAt?.takeIf { it >= 0f } ?: RESTING }) },
+            val spinnerModifier = Modifier.size(size.spinner).semantics { contentDescription = label }
+            if (sweepAt != null) {
+                // A test's still frame: an endless spin never lets a test's clock settle.
+                androidx.compose.material3.CircularProgressIndicator(
+                    progress = { sweepAt.coerceIn(0f, 1f) },
+                    color = Tone.accent,
+                    trackColor = Color.Transparent,
+                    strokeWidth = size.stroke,
+                    modifier = spinnerModifier,
                 )
-                Spacer(Modifier.height(size.gap))
+            } else {
+                androidx.compose.material3.CircularProgressIndicator(
+                    color = Tone.accent,
+                    trackColor = Color.Transparent,
+                    strokeWidth = size.stroke,
+                    modifier = spinnerModifier,
+                )
             }
+            if (!words) return@Column
+            Spacer(Modifier.height(size.gap))
             Crossfade(label, animationSpec = tween(LINE_FADE_MS, easing = Motion.Standard), label = "loaderLabel") {
                 Text(
                     it,
@@ -223,18 +227,19 @@ fun connectingLines(): List<String> = listOf(
 @Composable
 private fun loaderGround(): Color = TmSchemes.of(LocalDarkTheme.current, LocalPureBlack.current).background
 
-/** The loader's figures for each kind of device: the mark large on a television and a desktop. */
+/** The loader's figures for each kind of device: the spinner larger on a television, seen from across the room. */
 private class LoaderSizes(
-    val logo: androidx.compose.ui.unit.Dp,
+    val spinner: androidx.compose.ui.unit.Dp,
+    val stroke: androidx.compose.ui.unit.Dp,
     val label: TextUnit,
     val line: TextUnit,
     val gap: androidx.compose.ui.unit.Dp,
     val side: androidx.compose.ui.unit.Dp,
 ) {
     companion object {
-        private val Phone = LoaderSizes(76.dp, 15.sp, 13.sp, 24.dp, 16.dp)
-        private val Tv = LoaderSizes(104.dp, 18.sp, 15.sp, 30.dp, 72.dp)
-        private val Desktop = LoaderSizes(104.dp, 17.sp, 14.sp, 30.dp, 48.dp)
+        private val Phone = LoaderSizes(32.dp, 3.dp, 15.sp, 13.sp, 24.dp, 16.dp)
+        private val Tv = LoaderSizes(44.dp, 4.dp, 18.sp, 15.sp, 30.dp, 72.dp)
+        private val Desktop = LoaderSizes(36.dp, 3.dp, 17.sp, 14.sp, 30.dp, 48.dp)
 
         fun of(form: DeviceForm): LoaderSizes = when (form) {
             DeviceForm.Phone -> Phone
@@ -244,9 +249,6 @@ private class LoaderSizes(
     }
 }
 
-/** The name's type under the loader's mark, as a share of the mark's side. */
-private const val NAME_SHARE = 0.38f
-
 private const val LINE_FADE_MS = 500
 private const val LINE_ALPHA = 0.72f
 private const val EXIT_MS = 420
@@ -255,5 +257,8 @@ private const val EXIT_MS = 420
 private const val FIRST_STEP_MS = 1_200L
 private const val STEP_MS = 5_000L
 
-/** How long a blank loader stays blank: a warm start is over well before it. */
-private const val BLANK_MS = 4_000L
+/** How long the ground stays bare: a warm start is over before the spinner would show. */
+private const val SPINNER_MS = 500L
+
+/** When the words join the spinner: long enough to be worth saying what is happening. */
+private const val WORDS_MS = 4_000L

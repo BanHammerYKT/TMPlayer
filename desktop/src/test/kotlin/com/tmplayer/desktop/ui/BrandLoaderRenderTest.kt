@@ -27,30 +27,33 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The loader after the splash, on a desktop window: the light lands only on the letters, it moves
- * between frames, and with less motion asked for it stands still. With TMPLAYER_SHOTS=<dir> the
+ * The loader after the splash, on a desktop window: a small spinner in the middle of the ground,
+ * and nothing else moving. With TMPLAYER_SHOTS=<dir> the
  * frames are written there as PNGs, at 1366 by 768 and 1920 by 1080 in both themes, plus a run of
  * frames through one whole loop for an animated preview.
  */
 class BrandLoaderRenderTest {
 
     @Test
-    fun `the playhead moves only the mark, never the ground`() {
+    fun `the spinner turns in the middle and leaves the ground alone`() {
         for (dark in listOf(true, false)) {
-            val unlit = pixels(render(1366, 768, dark, sweepAt = -1f))
             val ground = TmSchemes.of(dark).background.toArgb()
+            val w = 1366
+            val h = 768
+            val first = pixels(render(w, h, dark, sweepAt = 0.3f))
+            val later = pixels(render(w, h, dark, sweepAt = 0.7f))
             var moved = 0
-            for (at in listOf(0.3f, 0.5f, 0.7f)) {
-                val lit = pixels(render(1366, 768, dark, sweepAt = at))
-                for (i in lit.indices) {
-                    if (lit[i] == unlit[i]) continue
-                    moved++
-                    // Every pixel the light changed was a letter's (or its antialiased edge's)
-                    // before the light got there, never the ground around the word.
-                    assertTrue("dark=$dark at=$at pixel $i is ground", unlit[i] != ground)
-                }
+            for (i in first.indices) {
+                if (first[i] == later[i]) continue
+                moved++
+                // Only the spinner moves, and it stands in the middle of the window.
+                val x = i % w
+                val y = i / w
+                assertTrue("dark=$dark pixel ($x, $y) moved outside the middle", x in w / 2 - 80..w / 2 + 80 && y in h / 2 - 160..h / 2 + 160)
             }
-            assertTrue("the light shows on the word (dark=$dark)", moved > 500)
+            assertTrue("the spinner shows (dark=$dark)", moved > 50)
+            assertEquals(ground, first[0])
+            assertEquals(ground, first[first.lastIndex])
         }
     }
 
