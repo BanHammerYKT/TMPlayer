@@ -816,7 +816,7 @@ class MediaListViewModel(
     /** Draws the extras kept from the last visit; true when they are fresh enough not to count again. */
     private fun restoreExtras(): Boolean {
         val kept = cache.peek<Extras>(QueryKey.ChatExtras(chatId), PageQueries.CHAT_STALE_MS) ?: return false
-        _audioCount.value = kept.data.audio
+        _audioCount.value = 0
         _roundCount.value = kept.data.round
         _pinned.value = kept.data.pinned
         return !kept.stale
@@ -842,19 +842,12 @@ class MediaListViewModel(
     }
 
     /**
-     * Counts the chat's audio once, beside the first page. A chat with audio and no videos is a
-     * listing of the audio entry alone, never "No playable videos" over a chat of lectures.
+     * Reads what sits over the listing besides the videos, once, beside the first page: the round
+     * videos and the pinned post.
      */
     private fun countAudio() {
-        viewModelScope.launch {
-            val session = Td.awaitAuthorizedSession()
-            val count = runCatching { com.tmplayer.data.ChatAudio.count(session.client, chatId) }.getOrDefault(0)
-            if (!session.isCurrent()) return@launch
-            keepExtras { it.copy(audio = count) }
-            _audioCount.value = count
-            if (count <= 0) return@launch
-            showExtrasInsteadOfEmpty()
-        }
+        // A chat's audio is no longer offered (user, 2026-10-22: TMPlayer plays videos), so it is
+        // not counted either: the count stays 0, which leaves the entry out on every platform.
         // The chat's round videos and its pinned post (CP81), beside the first page the same way.
         viewModelScope.launch {
             val session = Td.awaitAuthorizedSession()

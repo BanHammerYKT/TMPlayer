@@ -103,6 +103,11 @@ object FolderExport {
         _state.value = State(preparing = true)
         runCatching { app.contentResolver.takePersistableUriPermission(tree, GRANT) }
         val offer = runCatching { plan(app, tree, chosen, settings) }.getOrElse { error ->
+            // Cancelled is not a lost folder: nothing is said, and nothing is left preparing.
+            if (error is kotlinx.coroutines.CancellationException) {
+                _state.value = State()
+                throw error
+            }
             // Never left "preparing" (which would refuse every later Save to folder): said, and the grant given back.
             Log.w(TAG, "Save to folder could not be prepared", error)
             runCatching { app.contentResolver.releasePersistableUriPermission(tree, GRANT) }

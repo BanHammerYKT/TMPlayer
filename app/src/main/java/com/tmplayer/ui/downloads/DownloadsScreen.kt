@@ -699,14 +699,16 @@ fun DownloadsScreen(
         FolderExport.pendingKeys = null
         val chosenNow = rows.filter { it.key in keys }
         if (chosenNow.isEmpty()) return@LaunchedEffect
-        FolderExport.prepare(
-            context,
-            tree,
-            chosenNow.map { row ->
-                FolderExport.Candidate(row.key, row.record, row.fileId, row.title, whole = !row.cached && !row.missing && row.complete)
-            },
-            settings,
-        )
+        val candidates = chosenNow.map { row ->
+            FolderExport.Candidate(row.key, row.record, row.fileId, row.title, whole = !row.cached && !row.missing && row.complete)
+        }
+        // Off the screen's own scope: the list is measured again on the way back from the picker,
+        // which restarts this effect, and a preparation tied to it was cancelled half way and
+        // reported as a lost folder (POCO M2 Pro, 2026-10-22). Its answer arrives through
+        // FolderExport.state whatever the screen does meanwhile.
+        com.tmplayer.platform.Background.scope.launch {
+            FolderExport.prepare(context.applicationContext, tree, candidates, settings)
+        }
     }
 
     // The end of a run: a toast when every video went, the dialog otherwise. The list is measured
@@ -2051,8 +2053,14 @@ private fun DownloadCard(
                     }
                     else -> {
                         PrimaryAction(s.navWatch, TmIcons.Play, onPlay)
-                        SecondaryAction(s.commonShare, TmIcons.Share, onShare)
-                        onSaveToFolder?.let { IconOnlyAction(s.downloadsSaveToFolder, TmIcons.Folder, it) }
+                        // With Save to folder beside it there is no room for two words on a
+                        // phone: both "Watch" and "Share" were cut to a letter. Share goes to an icon.
+                        if (onSaveToFolder != null) {
+                            IconOnlyAction(s.commonShare, TmIcons.Share, onShare)
+                            IconOnlyAction(s.downloadsSaveToFolder, TmIcons.Folder, onSaveToFolder)
+                        } else {
+                            SecondaryAction(s.commonShare, TmIcons.Share, onShare)
+                        }
                         IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
                     }
                 }
