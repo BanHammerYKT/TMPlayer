@@ -57,7 +57,7 @@ object AppLogo {
         "M960 1002.666667H64a42.666667 42.666667 0 0 1-42.666667-42.666667V64a42.666667 42.666667 0 0 1 " +
             "42.666667-42.666667h896a42.666667 42.666667 0 0 1 42.666667 42.666667v896a42.666667 " +
             "42.666667 0 0 1-42.666667 42.666667z"
-    private const val SCREEN = "M64 64h896v682.666667H64z"
+    private const val SCREEN = "M184 64h656a120 120 0 0 1 120 120v442.666667a120 120 0 0 1-120 120H184a120 120 0 0 1-120-120V184a120 120 0 0 1 120-120z"
     private const val TRACK =
         "M896 896H597.333333a21.333333 21.333333 0 1 1 0-42.666667h298.666667a21.333333 21.333333 0 1 1 " +
             "0 42.666667z"
@@ -215,4 +215,4 @@ fun BrandLockup(
 }
 
 /** The mark's corner as a share of its side, as the desktop has always clipped it. */
-private const val MARK_CORNER = 0.22f
+private const val MARK_CORNER = TILE_CORNER

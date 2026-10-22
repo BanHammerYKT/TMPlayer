@@ -31,8 +31,8 @@ fun AppMark(size: Dp, modifier: Modifier = Modifier) {
     )
 }
 
-/** The source tile's corner radius as a fraction of its side, so it survives any scaling. */
-private const val CORNER = 42f / 1024f
+/** The tile's corner as a fraction of its side, as everywhere the mark is drawn ([TILE_CORNER]). */
+private const val CORNER = TILE_CORNER
 
 /** What the mark measures where it introduces the app, sized for the device holding it. */
 object MarkSize {

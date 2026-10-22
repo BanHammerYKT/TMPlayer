@@ -34,8 +34,10 @@ fun LogoMark(size: Dp, modifier: Modifier = Modifier, progress: () -> Float = { 
         val u = this.size.width / VIEWPORT
         fun at(x: Float, y: Float) = Offset(x * u, y * u)
 
-        drawRoundRect(TILE, at(21.33f, 21.33f), Size(981.33f * u, 981.33f * u), CornerRadius(42.67f * u))
-        drawRect(SCREEN, at(64f, 64f), Size(896f * u, 682.67f * u))
+        // Rounded as [BrandLockup] clips the drawn mark, and the screen rounded inside it, so the
+        // dark screen's corners do not stand square inside a round tile.
+        drawRoundRect(TILE, Offset.Zero, this.size, CornerRadius(this.size.width * TILE_CORNER))
+        drawRoundRect(SCREEN, at(64f, 64f), Size(896f * u, 682.67f * u), CornerRadius(SCREEN_CORNER * u))
 
         val play = Path().apply {
             moveTo(426.67f * u, 277.33f * u)
@@ -60,6 +62,12 @@ fun LogoMark(size: Dp, modifier: Modifier = Modifier, progress: () -> Float = { 
 const val RESTING = (640f - 128f) / (896f - 128f)
 
 private const val VIEWPORT = 1024f
+
+/** The tile's corner as a share of its side: the lockup's (`MARK_CORNER`) and [AppMark]'s. */
+const val TILE_CORNER = 0.22f
+
+/** The screen's corner in viewport units, as in art/player.svg. */
+private const val SCREEN_CORNER = 120f
 private const val BAR_START = 128f
 private const val BAR_END = 896f
 private const val BAR_Y = 874.67f
