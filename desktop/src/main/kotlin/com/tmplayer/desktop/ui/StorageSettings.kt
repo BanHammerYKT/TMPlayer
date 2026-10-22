@@ -46,6 +46,7 @@ import com.tmplayer.desktop.DesktopSettings
 import com.tmplayer.desktop.DesktopStorage
 import com.tmplayer.desktop.DownloadIndex
 import com.tmplayer.desktop.os.FolderPicker
+import com.tmplayer.ui.components.jumpTarget
 import com.tmplayer.ui.components.rememberToast
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.theme.Tone
@@ -72,6 +73,10 @@ internal data class StorageFigures(
     val diskTotalBytes: Long = 0,
     val diskFreeBytes: Long = 0,
 ) {
+    /** Nothing at all Free up space could take: its button is off, with a line saying so. */
+    val nothingToFree: Boolean
+        get() = downloadsBytes + cachedBytes + picturesBytes + unfinishedBytes <= 0
+
     /** The storage ring's figures. The desktop has no unmatched files of its own to list. */
     fun chart(): com.tmplayer.data.StorageChart.Figures = com.tmplayer.data.StorageChart.Figures(
         downloads = downloadsBytes,
@@ -85,17 +90,22 @@ internal data class StorageFigures(
 }
 
 /**
- * The Storage group of Settings (B6, D1): the card, where the files live and the button that moves
- * them, the cache's limit, the cached videos, the clear buttons and the folder scan.
+ * The Storage group of Settings (B6, D1), settings only (user, 2026-10-22): what TMPlayer uses with
+ * the one Free up space, which opens its review over the Downloads page; where the files live and
+ * the button that moves them; the cache's limit; Remove after watching; Low storage mode; and the
+ * folder scan. The rows that cleared one part each (the cached videos, the cache, the pictures,
+ * everything but downloads) are groups in Free up space's review.
  */
 @Composable
-internal fun StorageGroup(state: ShellState) {
+internal fun StorageGroup(state: ShellState, jumps: Map<com.tmplayer.ui.onboarding.SetupStep, com.tmplayer.ui.components.JumpTarget>) {
     val s = LocalStrings.current
     val settings = state.settings
     val scope = rememberCoroutineScope()
     val toast = rememberToast()
     val desktop by state.extras.prefs.state.collectAsState()
     val moving by DesktopStorage.relocationProgress.collectAsState()
+    val removeAfterWatching by settings.removeAfterWatching.collectAsState(initial = false)
+    val lowStorage by settings.lowStorageMode.collectAsState(initial = false)
     var refresh by remember { mutableIntStateOf(0) }
     var figures by remember { mutableStateOf<StorageFigures?>(null) }
     var dialog by remember { mutableStateOf<StorageDialog?>(null) }
@@ -103,7 +113,10 @@ internal fun StorageGroup(state: ShellState) {
     LaunchedEffect(refresh) { figures = measureStorage(state) }
 
     // The page's own heading names it, so the card comes first, as on the phone's Storage page.
-    StorageCard(figures)
+    StorageCard(figures, nothingToFree = figures?.nothingToFree == true) {
+        state.downloadsOpenFreeUp = true
+        state.go(Destination.Downloads)
+    }
 
     val root = desktop.storageRoot.takeIf { it.isNotBlank() }?.let(::File)
     val idle = busy == null && moving == null
@@ -153,36 +166,20 @@ internal fun StorageGroup(state: ShellState) {
             )
         }
     }
-
-    val f = figures
-    // The videos watching left behind: the row opens them, on the Downloads page.
-    Action(
-        s.storageCachedVideos,
-        when {
-            f == null -> s.storageMeasuring
-            f.cachedCount == 0 -> s.storageCachedNone
-            else -> s.storageCachedSummary(f.cachedCount, StorageRelocationPlan.size(f.cachedBytes))
-        },
-        TmIcons.Download,
-    ) {
-        state.downloadsOpenRecent = true
-        state.go(Destination.Downloads)
+    // Here rather than among the downloads it acts on: on is asked first, since from then on files
+    // go without a press; off deletes nothing.
+    Toggle(REMOVE_AFTER_WATCHING, REMOVE_AFTER_WATCHING_DETAIL, removeAfterWatching, icon = TmIcons.Delete) { on ->
+        if (on) dialog = StorageDialog.RemoveAfterWatching else scope.launch { settings.setRemoveAfterWatching(false) }
     }
-    state.extras.watchCache?.let {
-        Action(s.storageClearCache, s.storageClearCacheDetail, TmIcons.Delete, end = RowEnd.None) { dialog = StorageDialog.ClearCache }
-    }
-    Action(s.downloadsFreePictures, s.storageClearPicturesDetail, TmIcons.Image, end = RowEnd.None) {
-        scope.launch {
-            val ok = runCatching { Td.clearPicturesAndPreviews() }.isSuccess
-            runCatching { withContext(Dispatchers.IO) { com.tmplayer.online.OnlineMetadata.current?.purgeImages() } }
-            refresh++
-            // Only claimed when it happened; a failure says so, and the row is still there to try.
-            toast(if (ok) s.storagePicturesCleared else s.settingsClearFailed)
-        }
-    }
-    Action(s.storageClearAll, s.storageClearAllDetail, TmIcons.Delete, iconTint = Tone.danger, end = RowEnd.None) {
-        dialog = StorageDialog.ClearAllButDownloads
-    }
+    // A rolling window of the video on disk, for a drive with less room than the video; the line
+    // under it says the cost.
+    Toggle(
+        s.settingsLowStorage,
+        if (lowStorage) s.settingsLowStorageOn else s.settingsLowStorageOff,
+        lowStorage,
+        Modifier.jumpTarget(jumps[com.tmplayer.ui.onboarding.SetupStep.Storage]),
+        icon = TmIcons.Archive,
+    ) { on -> scope.launch { settings.setLowStorageMode(on) } }
     Action(s.storageScan, s.storageScanDetail(DesktopPaths.downloadsDir.path), TmIcons.Search, end = RowEnd.None) {
         scope.launch {
             val found = DownloadIndex.scan(settings)
@@ -227,93 +224,54 @@ internal fun StorageGroup(state: ShellState) {
                 }
             },
         )
-        StorageDialog.ClearCache -> ConfirmDialog(
-            title = s.storageClearCacheTitle,
-            message = s.storageClearCacheMessage,
-            detail = s.storageClearCacheNote,
-            confirmLabel = s.commonClear,
+        StorageDialog.RemoveAfterWatching -> ConfirmDialog(
+            title = s.confirmRemoveAfterWatchingTitle,
+            message = s.confirmRemoveAfterWatchingMessage,
+            detail = s.confirmRemoveAfterWatchingDetail,
+            confirmLabel = s.confirmTurnOn,
             onDismiss = { dialog = null },
             onConfirm = {
                 dialog = null
-                scope.launch {
-                    val freed = runCatching { state.extras.watchCache?.clearAll() ?: 0L }.getOrDefault(0L)
-                    refresh++
-                    toast(if (freed > 0) s.storageFreed(StorageRelocationPlan.size(freed)) else s.storageNothingToClear)
-                }
-            },
-        )
-        StorageDialog.ClearAllButDownloads -> ConfirmDialog(
-            title = s.storageClearAllTitle,
-            message = s.storageClearAllMessage,
-            detail = s.storageClearAllNote,
-            confirmLabel = s.commonClear,
-            onDismiss = { dialog = null },
-            onConfirm = {
-                dialog = null
-                scope.launch {
-                    runCatching { state.extras.watchCache?.clearAll() }
-                    // TDLib's own clear takes everything in its directory, which is safe only
-                    // once no download is left in there from before they had a folder.
-                    val migrated = runCatching { settings.downloadsMigratedNow() }.getOrDefault(false)
-                    if (migrated) runCatching { Td.clearEverythingCached() } else runCatching { Td.clearPicturesAndPreviews() }
-                    refresh++
-                    toast(s.storageClearedAll)
-                }
+                scope.launch { settings.setRemoveAfterWatching(true) }
             },
         )
     }
 }
 
 /**
- * The figures in one card: the storage ring with its legend (the phone's and the television's,
- * user 2026-10-18), then the drives' free space.
- *
- * With [inDownloads] it is the Downloads page's card, with [footer] (Free up space) at its foot
- * and [actions] on the legend's rows. A wide card sets the ring beside its legend.
+ * The figures and the one Free up space, as the Downloads page and Settings' Storage both show
+ * them: the shared [com.tmplayer.ui.components.StorageOverview] (the small ring, what TMPlayer
+ * uses, what is free, the button), then each drive's free space.
  */
 @Composable
 internal fun StorageCard(
     figures: StorageFigures?,
-    inDownloads: Boolean = false,
-    actions: Map<com.tmplayer.data.StorageChart.Part, () -> Unit> = emptyMap(),
-    footer: (@Composable () -> Unit)? = null,
+    nothingToFree: Boolean,
+    busy: Boolean = false,
+    result: String? = null,
+    onFreeUp: () -> Unit,
 ) {
-    val s = LocalStrings.current
     Surface(shape = RoundedCornerShape(Corner.Large), color = Tone.surface, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.padding(16.dp)) {
-            val wide = maxWidth >= ACROSS_FROM
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (figures == null) {
-                    Text(s.storageMeasuring, color = Tone.muted)
-                    footer?.invoke()
-                    return@Column
-                }
-                com.tmplayer.ui.components.StorageDonutPanel(
-                    figures = figures.chart(),
-                    wide = wide,
-                    actions = actions,
-                    ringSize = if (wide) 168.dp else 184.dp,
-                )
-                Spacer(Modifier.height(4.dp))
-                figures.drives.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = Tone.muted) }
-                if (footer != null) {
-                    Spacer(Modifier.height(4.dp))
-                    footer()
-                }
-            }
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            com.tmplayer.ui.components.StorageOverview(
+                figures = figures?.chart() ?: com.tmplayer.data.StorageChart.Figures(0, 0, 0, 0, 0, 0, 0),
+                measured = figures != null,
+                nothingToFree = nothingToFree,
+                onFreeUp = onFreeUp,
+                busy = busy,
+                result = result,
+            )
+            // Each drive TMPlayer writes to, when there are two.
+            figures?.drives?.takeIf { it.size > 1 }?.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = Tone.muted) }
         }
     }
 }
-
-/** The card's width from which the ring and its legend sit side by side. */
-private val ACROSS_FROM = 520.dp
 
 /** The dialogs the Storage group can raise. */
 internal sealed interface StorageDialog {
     data class Refused(val reason: String) : StorageDialog
     data class Confirm(val root: File?, val title: String, val body: String, val warning: String?, val adopt: Boolean) : StorageDialog
-    data object ClearCache : StorageDialog
-    data object ClearAllButDownloads : StorageDialog
+    data object RemoveAfterWatching : StorageDialog
 }
 
 private fun setLimit(state: ShellState, bytes: Long) {

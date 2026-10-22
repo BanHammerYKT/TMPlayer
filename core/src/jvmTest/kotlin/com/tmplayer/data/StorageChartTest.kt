@@ -95,36 +95,6 @@ class FreeUpSpaceTest {
     private val gb = 1024L * 1024 * 1024
 
     @Test
-    fun `low storage mode leads the sheet while it is off and the device is short`() {
-        val lines = FreeUpSpace.lines(
-            lowStorageOn = false, short = true,
-            recentBytes = gb, recentCount = 1, unfinishedBytes = gb, unfinishedCount = 2,
-            picturesBytes = 1000, downloadCount = 3,
-        )
-        assertEquals(
-            listOf(FreeUpSpace.Kind.LowStorage, FreeUpSpace.Kind.Recent, FreeUpSpace.Kind.Unfinished, FreeUpSpace.Kind.Pictures, FreeUpSpace.Kind.ChooseDownloads),
-            lines.map { it.kind },
-        )
-        assertTrue(lines.all { it.enabled })
-        assertEquals(2, lines.single { it.kind == FreeUpSpace.Kind.Unfinished }.count)
-    }
-
-    @Test
-    fun `low storage mode is not offered once it is on, nor on a device with room`() {
-        val on = FreeUpSpace.lines(true, true, 0, 0, 0, 0, 0, 0)
-        val roomy = FreeUpSpace.lines(false, false, 0, 0, 0, 0, 0, 0)
-        assertFalse(on.any { it.kind == FreeUpSpace.Kind.LowStorage })
-        assertFalse(roomy.any { it.kind == FreeUpSpace.Kind.LowStorage })
-    }
-
-    @Test
-    fun `lines with nothing to free stay, greyed, and unfinished goes when there is none`() {
-        val lines = FreeUpSpace.lines(true, false, 0, 0, 0, 0, 0, 0)
-        assertEquals(listOf(FreeUpSpace.Kind.Recent, FreeUpSpace.Kind.Pictures, FreeUpSpace.Kind.ChooseDownloads), lines.map { it.kind })
-        assertTrue(lines.none { it.enabled })
-    }
-
-    @Test
     fun `short means asked for room, under three gigabytes, or under a tenth of the disk`() {
         assertTrue(FreeUpSpace.isShort(100 * gb, 200 * gb, askedForRoom = true))
         assertTrue(FreeUpSpace.isShort(2 * gb, 200 * gb, askedForRoom = false))

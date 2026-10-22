@@ -211,14 +211,11 @@ private suspend fun FocusRequester.settle(): Boolean {
 }
 
 private sealed interface Prompt {
-    /** The one video watching left behind. */
-    data object ClearCache : Prompt
-
-    /** Everything else TMPlayer is holding: previews, thumbnails and the database. */
-    data object ClearOther : Prompt
-
-    /** Cache and pictures together, in one press. */
-    data object ClearAllButDownloads : Prompt
+    /**
+     * Remove after watching being switched on, from Storage: from then on a download goes without
+     * a press once it is watched, so it is asked first. Off deletes nothing and is not asked.
+     */
+    data object RemoveAfterWatching : Prompt
     data object ClearHistory : Prompt
     data object ClearWatched : Prompt
     data object ClearFavorites : Prompt
@@ -272,8 +269,11 @@ fun SettingsScreen(
     onLoggedOut: () -> Unit,
     /** Leaving Settings. On a phone this is the app bar's arrow as well as the hardware key. */
     onBack: () -> Unit = {},
-    /** The Cached videos row: the list of them, with Save to Downloads and Delete on each. */
-    onOpenCachedVideos: () -> Unit = {},
+    /**
+     * Storage's Free up space: the Downloads page with its review already up, the one place
+     * anything TMPlayer holds is cleared.
+     */
+    onFreeUpSpace: () -> Unit = {},
     /** Settings, then About: the licence, the notices and every link. */
     onOpenAbout: () -> Unit = {},
     /**
@@ -299,6 +299,7 @@ fun SettingsScreen(
     val cached by settings.cachedVideos.collectAsStateWithLifecycle(initialValue = emptyList())
     val downloadFirst by settings.downloadBeforePlaying.collectAsStateWithLifecycle(initialValue = false)
     val lowStorage by settings.lowStorageMode.collectAsStateWithLifecycle(initialValue = false)
+    val removeAfterWatching by settings.removeAfterWatching.collectAsStateWithLifecycle(initialValue = false)
     val autoplayNext by settings.autoplayNext.collectAsStateWithLifecycle(initialValue = true)
     val resumeRewindMs by settings.resumeRewindMs.collectAsStateWithLifecycle(initialValue = ResumeRewind.DEFAULT_MS)
     val detailFirst by settings.detailFirst.collectAsStateWithLifecycle(initialValue = true)
@@ -657,7 +658,7 @@ fun SettingsScreen(
                         place = { step ->
                             val target = when (step) {
                                 SetupStep.Posters -> SettingsPage.Library
-                                SetupStep.Storage -> SettingsPage.Playback
+                                SetupStep.Storage -> SettingsPage.Storage
                                 SetupStep.Performance -> SettingsPage.Appearance
                                 SetupStep.MobileData -> SettingsPage.Storage
                                 // Its settings are on three pages; each row above has its own.
@@ -903,19 +904,8 @@ fun SettingsScreen(
                         },
                     )
                 }
-                // Streams through a rolling window of the video, for a device with less room than
-                // the film. Its subtitle says the cost: going back fetches again, and a short pause
-                // comes now and then as the window moves on.
-                item {
-                    ToggleRow(
-                        title = s.settingsLowStorage,
-                        modifier = Modifier.jumpTarget(jumps.getValue(SetupStep.Storage)),
-                        subtitle = if (lowStorage) s.settingsLowStorageOn else s.settingsLowStorageOff,
-                        icon = TmIcons.Archive,
-                        checked = lowStorage,
-                        onToggle = { scope.launch { settings.setLowStorageMode(!lowStorage) } },
-                    )
-                }
+                // Low storage mode is on the Storage page, with the rest of what decides the room
+                // TMPlayer takes (user, 2026-10-22).
                 // On both devices, defaulting the way each always has: a phone folds surround to stereo
                 // for its speaker and headphones, a television passes it to whatever is wired up. The
                 // switch is for the exceptions, a soundbar that cannot take the film's track or a phone
@@ -1390,89 +1380,54 @@ fun SettingsScreen(
             }
 
             SettingsPage.Storage -> {
+                // Settings only, and the same Free up space the Downloads page has (user,
+                // 2026-10-22): the ring with what TMPlayer uses and what is free, and the button,
+                // which opens its review over the Downloads page. The rows that cleared one part
+                // each (Recently played, Clear cache, pictures, Clear all) are groups in that review.
+                val measured = splitRead && disk.totalBytes > 0
+                val nothingToFree = split.downloadBytes + split.cachedBytes + split.pictureBytes + split.unfinishedBytes <= 0
+                // On a television the remote lands on Free up space, or, when there is nothing to
+                // free and the button is off, on the first switch under it.
+                val landOnFreeUp = measured && !nothingToFree
                 settingsNote {
-                    StorageCard(split = split, disk = disk, measured = splitRead && disk.totalBytes > 0)
-                }
-                // The videos watching left behind, named and measured, each with Save to Downloads and
-                // Delete: the row opens the list of them, which is the Downloads screen's third tab.
-                item {
-                    val held = cached.firstOrNull()
-                    ActionRow(
-                        title = s.settingsCachedVideos,
-                        modifier = Modifier.focusRequester(landing),
-                        subtitle = when {
-                            split.cachedBytes <= 0 -> s.settingsCachedNone
-                            // More than one means episodes an older version of the app left behind, so
-                            // the count is quoted rather than claiming "1 video" beside two gigabytes.
-                            split.cachedCount > 1 ->
-                                s.settingsCachedCount(split.cachedCount, s.formatter.bytes(split.cachedBytes))
-                            held != null -> s.settingsCachedOne(held.title, s.formatter.bytes(split.cachedBytes))
-                            else -> s.formatter.bytes(split.cachedBytes)
-                        },
-                        icon = TmIcons.Download,
-                        onClick = onOpenCachedVideos,
+                    StorageCard(
+                        split = split,
+                        disk = disk,
+                        measured = measured,
+                        nothingToFree = nothingToFree,
+                        onFreeUp = onFreeUpSpace,
+                        focus = if (landOnFreeUp) landing else null,
                     )
                 }
-                // The space back now, without choosing: the cache is one video and the next press of
-                // Play replaces it anyway.
+                // Here rather than among the downloads it acts on: it is a setting, and the
+                // Downloads page is the list. Turning it on is asked first; off deletes nothing.
                 item {
-                    ActionRow(
-                        title = s.settingsClearCache,
-                        subtitle = s.settingsClearCacheDetail,
+                    ToggleRow(
+                        title = s.downloadsRemoveAfterWatching,
+                        subtitle = s.downloadsRemoveAfterWatchingBody,
                         icon = TmIcons.Delete,
-                        onClick = {
-                            // Nothing to delete is not a dialog. The row stays focusable and in the same
-                            // place every time, and says so instead.
-                            if (split.cachedBytes <= 0) {
-                                toast(s.settingsNothingCached)
+                        checked = removeAfterWatching,
+                        modifier = if (landOnFreeUp) Modifier else Modifier.focusRequester(landing),
+                        onToggle = {
+                            if (removeAfterWatching) {
+                                scope.launch { settings.setRemoveAfterWatching(false) }
                             } else {
-                                prompt = Prompt.ClearCache
+                                prompt = Prompt.RemoveAfterWatching
                             }
                         },
                     )
                 }
-                // Thumbnails, the database, the previews the browse screens keep. Always on the screen,
-                // not only once there is a lot to reclaim: this is the only control for that space, and a
-                // button that appears only on a full disk is one nobody can find on purpose.
+                // Streams through a rolling window of the video, for a device with less room than
+                // the film. Its subtitle says the cost: going back fetches again, and a short pause
+                // comes now and then as the window moves on.
                 item {
-                    ActionRow(
-                        // Named for what it clears, beside the row above it that clears videos: two rows
-                        // that both sound like the general answer to a full disk cannot be told apart.
-                        title = s.downloadsFreePictures,
-                        subtitle = if (split.pictureBytes <= 0) {
-                            s.settingsClearPicturesNone
-                        } else {
-                            s.downloadsFreePicturesDetail(s.formatter.bytes(split.pictureBytes))
-                        },
-                        icon = TmIcons.Delete,
-                        onClick = {
-                            if (split.pictureBytes <= 0) {
-                                toast(s.settingsNothingToClear)
-                            } else {
-                                prompt = Prompt.ClearOther
-                            }
-                        },
-                    )
-                }
-                // Everything above in a single press, for a full disk and no patience for two of them.
-                // Downloads are not in it: they are the viewer's, and no button on this screen may take
-                // one away. They are deleted from the Downloads screen instead.
-                item {
-                    ActionRow(
-                        title = s.settingsClearAll,
-                        subtitle = if (split.cachedBytes + split.pictureBytes <= 0) {
-                            s.settingsClearAllNone
-                        } else {
-                            s.settingsClearAllDetail(s.formatter.bytes(split.cachedBytes + split.pictureBytes))
-                        },
-                        icon = TmIcons.Delete,
-                        onClick = {
-                            if (split.cachedBytes + split.pictureBytes <= 0) {
-                                toast(s.settingsNothingToClear)
-                            } else {
-                                prompt = Prompt.ClearAllButDownloads
-                            }
-                        },
+                    ToggleRow(
+                        title = s.settingsLowStorage,
+                        modifier = Modifier.jumpTarget(jumps.getValue(SetupStep.Storage)),
+                        subtitle = if (lowStorage) s.settingsLowStorageOn else s.settingsLowStorageOff,
+                        icon = TmIcons.Archive,
+                        checked = lowStorage,
+                        onToggle = { scope.launch { settings.setLowStorageMode(!lowStorage) } },
                     )
                 }
                 // A phone's row only. A television is on the wall and a stick is behind it, both plugged
@@ -2146,69 +2101,14 @@ fun SettingsScreen(
     }
 
     when (prompt) {
-        Prompt.ClearCache -> TvConfirm(
-            title = s.settingsClearCacheTitle,
-            message = s.settingsClearCacheMessage(split.cachedCount, s.formatter.bytes(split.cachedBytes)),
-            // Says what it will not touch, so it cannot be mistaken for the clear-everything row
-            // a little further down.
-            detail = s.settingsDownloadsUntouched,
-            confirmLabel = s.commonClear,
+        Prompt.RemoveAfterWatching -> TvConfirm(
+            title = s.confirmRemoveAfterWatchingTitle,
+            message = s.confirmRemoveAfterWatchingMessage,
+            detail = s.confirmRemoveAfterWatchingDetail,
+            confirmLabel = s.confirmTurnOn,
             onConfirm = {
                 prompt = null
-                scope.launch {
-                    busy = s.settingsClearing
-                    val freed = split.cachedBytes
-                    val ok = runCatching { WatchCache.clearAll(context) }.isSuccess
-                    refresh()
-                    busy = null
-                    // Only what was freed is claimed; a failure says so, and the row is still there.
-                    toast(if (ok) s.settingsFreed(s.formatter.bytes(freed)) else s.settingsClearFailed)
-                }
-            },
-            onDismiss = { prompt = null },
-        )
-
-        Prompt.ClearOther -> TvConfirm(
-            title = s.downloadsFreePicturesTitle,
-            message = s.downloadsFreePicturesMessage(s.formatter.bytes(split.pictureBytes)),
-            detail = s.settingsClearPicturesUntouched,
-            confirmLabel = s.settingsClearPicturesConfirm,
-            onConfirm = {
-                prompt = null
-                scope.launch {
-                    busy = s.settingsDeleting
-                    val freed = split.pictureBytes
-                    // Pictures only. Nothing here may touch the download index or the videos on
-                    // disk: this row is named for thumbnails.
-                    val ok = runCatching { Td.clearPicturesAndPreviews() }.isSuccess
-                    runCatching { withContext(Dispatchers.IO) { com.tmplayer.online.OnlineMetadata.current?.purgeImages() } }
-                    refresh()
-                    busy = null
-                    toast(if (ok) s.settingsFreed(s.formatter.bytes(freed)) else s.settingsClearFailed)
-                }
-            },
-            onDismiss = { prompt = null },
-        )
-
-        Prompt.ClearAllButDownloads -> TvConfirm(
-            title = s.settingsClearAllTitle,
-            message = s.settingsClearAllMessage(s.formatter.bytes(split.cachedBytes + split.pictureBytes)),
-            detail = s.settingsClearAllUntouched,
-            confirmLabel = s.commonClear,
-            onConfirm = {
-                prompt = null
-                scope.launch {
-                    busy = s.settingsClearing
-                    val freed = split.cachedBytes + split.pictureBytes
-                    // The videos first, through the one thing that knows which of them are the
-                    // viewer's downloads, and then the pictures, which cannot be anybody's.
-                    val videos = runCatching { WatchCache.clearAll(context) }.isSuccess
-                    val pictures = runCatching { Td.clearPicturesAndPreviews() }.isSuccess
-                    runCatching { withContext(Dispatchers.IO) { com.tmplayer.online.OnlineMetadata.current?.purgeImages() } }
-                    refresh()
-                    busy = null
-                    toast(if (videos && pictures) s.settingsFreed(s.formatter.bytes(freed)) else s.settingsClearFailed)
-                }
+                scope.launch { settings.setRemoveAfterWatching(true) }
             },
             onDismiss = { prompt = null },
         )
@@ -2893,14 +2793,17 @@ private fun AccentRow(
 }
 
 /**
- * What the device holds, as the same storage ring and legend the Downloads page draws, from the
- * same measurement, so the two cannot disagree; then the bargain this device keeps.
+ * What the device holds and the one Free up space, the same [StorageOverview] the Downloads page
+ * draws from the same measurement, so the two cannot disagree; then the bargain this device keeps.
  */
 @Composable
 private fun StorageCard(
     split: StorageSplit,
     disk: DiskInfo,
     measured: Boolean,
+    nothingToFree: Boolean,
+    onFreeUp: () -> Unit,
+    focus: FocusRequester?,
 ) {
     val s = LocalStrings.current
     val touch = isTouch()
@@ -2909,29 +2812,26 @@ private fun StorageCard(
         colors = CardDefaults.cardColors(containerColor = Tone.surface),
         shape = if (touch) M3Theme.shapes.large else RoundedCornerShape(Corner.Large),
     ) {
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.padding(if (touch) 16.dp else 20.dp)) {
-            val wide = !touch || maxWidth >= 560.dp
-            Column {
-                com.tmplayer.ui.components.StorageDonutPanel(
-                    figures = split.chart(disk),
-                    wide = wide,
-                    measured = measured,
-                    ringSize = if (!touch) 176.dp else if (wide) 168.dp else 196.dp,
-                    large = !touch,
-                )
-                Spacer(Modifier.height(if (touch) 12.dp else 16.dp))
-                Text(
-                    // The two devices keep different bargains, so the wording has to name the one in
-                    // hand: a phone also holds downloads the viewer deletes themselves.
-                    if (touch) {
-                        s.settingsStorageNotePhone
-                    } else {
-                        s.settingsStorageNoteTv
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Tone.muted,
-                )
-            }
+        Column(Modifier.padding(if (touch) 16.dp else 20.dp)) {
+            com.tmplayer.ui.components.StorageOverview(
+                figures = split.chart(disk),
+                measured = measured,
+                nothingToFree = nothingToFree,
+                onFreeUp = onFreeUp,
+                focus = focus,
+            )
+            Spacer(Modifier.height(if (touch) 12.dp else 16.dp))
+            Text(
+                // The two devices keep different bargains, so the wording has to name the one in
+                // hand: a phone also holds downloads the viewer deletes themselves.
+                if (touch) {
+                    s.settingsStorageNotePhone
+                } else {
+                    s.settingsStorageNoteTv
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = Tone.muted,
+            )
         }
     }
 }

@@ -14,16 +14,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
 import com.tmplayer.data.FormFactor
-import com.tmplayer.data.FreeUpSpace
+import com.tmplayer.data.FreeUpReview
 import com.tmplayer.data.StorageChart
-import com.tmplayer.data.StorageChart.Part
-import com.tmplayer.ui.components.ChoiceList
-import com.tmplayer.ui.components.ChoiceSheet
+import com.tmplayer.ui.components.FreeUpReviewDialog
+import com.tmplayer.ui.components.LowStorageOffer
 import com.tmplayer.ui.theme.TMPlayerTheme
 import com.tmplayer.ui.theme.Tone
 import org.junit.After
@@ -40,8 +37,9 @@ import java.io.File
 import java.time.Duration
 
 /**
- * The storage ring on the Downloads page, on a phone and a television, light and dark, and the
- * Free up space sheet over it, for checking by eye. PNGs under `build/device-test/review/`.
+ * The top of the Downloads page (the small ring, what TMPlayer uses, what is free, Free up space)
+ * on a phone and a television, light and dark, and Free up space's review over it, for checking by
+ * eye. PNGs under `build/device-test/review/`.
  *
  * The figures are a stick that is nearly full, as a friend's was: a download, a paused one, the
  * last video played, an unmatched file, the pictures, and a sliver of posters.
@@ -63,19 +61,31 @@ class StorageChartRenderTest {
         deviceFree = 1 * gb + 100 * mb,
     )
 
-    private val lines = FreeUpSpace.lines(
-        lowStorageOn = false,
-        short = true,
-        recentBytes = figures.recent + figures.unmatched,
-        recentCount = 2,
-        unfinishedBytes = figures.unfinished,
-        unfinishedCount = 1,
-        picturesBytes = figures.pictures,
-        downloadCount = 4,
-    )
-
-    private val actions: Map<Part, () -> Unit> = mapOf(
-        Part.Downloads to {}, Part.Unfinished to {}, Part.Recent to {}, Part.Unmatched to {}, Part.Pictures to {},
+    private val sections = listOf(
+        FreeUpReview.Section(
+            FreeUpReview.Group.Unfinished, 900 * mb,
+            items = listOf(
+                FreeUpReview.Item("1", "Harbour Lights S01E04", 900 * mb),
+                FreeUpReview.Item("2", "Mountain railway, the full ride 1080p", 600 * mb, FreeUpReview.Lock.Downloading),
+            ),
+        ),
+        FreeUpReview.Section(
+            FreeUpReview.Group.Recent, 1 * gb + 400 * mb, count = 1,
+            items = listOf(FreeUpReview.Item("r", "Night market walk 1080p", 1 * gb + 400 * mb)),
+        ),
+        FreeUpReview.Section(
+            FreeUpReview.Group.Unmatched, 2 * gb + 500 * mb,
+            items = listOf(FreeUpReview.Item("s", "8812345678.mp4", 2 * gb + 500 * mb)),
+        ),
+        FreeUpReview.Section(FreeUpReview.Group.Pictures, 40 * mb),
+        FreeUpReview.Section(
+            FreeUpReview.Group.Downloads, 3 * gb + 200 * mb,
+            items = listOf(
+                FreeUpReview.Item("a", "Coast walk at dawn 2160p", 2 * gb),
+                FreeUpReview.Item("b", "Harbour Lights S01E01", 800 * mb),
+                FreeUpReview.Item("c", "Lecture 7, sorting algorithms", 400 * mb),
+            ),
+        ),
     )
 
     @After
@@ -131,27 +141,19 @@ class StorageChartRenderTest {
     }
 
     @Composable
-    private fun Page(tv: Boolean, selected: Part? = null) {
+    private fun Page(tv: Boolean, nothing: Boolean = false, result: String? = null) {
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = if (tv) 32.dp else 0.dp, vertical = if (tv) 24.dp else 48.dp)
                 .then(if (tv) Modifier.width(720.dp) else Modifier),
         ) {
-            StorageSummary(figures = figures, measured = true, actions = actions, onFreeUp = {}, selected = selected)
-        }
-    }
-
-    @Composable
-    private fun Sheet() {
-        ChoiceSheet(title = "Free up space", note = "Nothing is removed from Telegram. You can play or download any of it again.", onDismiss = {}, onClose = {}) {
-            val first = remember { FocusRequester() }
-            ChoiceList { FreeUpLines(lines, first) {} }
+            StorageSummary(figures = figures, measured = true, nothingToFree = nothing, onFreeUp = {}, result = result)
         }
     }
 
     private fun render(tv: Boolean, name: String) {
-        val activity = activity(tv) { Page(tv) }
+        val activity = activity(tv) { Page(tv, result = "Freed 2.4 GB") }
         idle(1500)
         shot(activity, "storage-$name.png")
     }
@@ -159,7 +161,12 @@ class StorageChartRenderTest {
     private fun renderSheet(tv: Boolean, name: String) {
         val activity = activity(tv) {
             Page(tv)
-            Sheet()
+            FreeUpReviewDialog(
+                sections = sections,
+                onFree = {},
+                onDismiss = {},
+                lowStorage = LowStorageOffer("Low storage mode", 64 * mb, on = false) {},
+            )
         }
         idle(1500)
         shot(activity, "storage-sheet-$name.png", dialog = true)
@@ -181,21 +188,13 @@ class StorageChartRenderTest {
     @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-night-mdpi")
     fun tvDark() = render(true, "tv-dark")
 
-    /** A part chosen on the ring: it lifts, the rest dim, and the centre says what it holds. */
+    /** Nothing anywhere to free: the button is off and a line says so. */
     @Test
     @Config(sdk = [35], qualifiers = "w411dp-h891dp-port-night-xhdpi")
-    fun phoneDarkChosen() {
-        val activity = activity(false) { Page(false, selected = Part.Unmatched) }
+    fun phoneDarkNothing() {
+        val activity = activity(false) { Page(false, nothing = true) }
         idle(1500)
-        shot(activity, "storage-phone-dark-chosen.png")
-    }
-
-    @Test
-    @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-notnight-mdpi")
-    fun tvLightChosen() {
-        val activity = activity(true) { Page(true, selected = Part.Recent) }
-        idle(1500)
-        shot(activity, "storage-tv-light-chosen.png")
+        shot(activity, "storage-phone-dark-nothing.png")
     }
 
     @Test
@@ -205,6 +204,11 @@ class StorageChartRenderTest {
     @Test
     @Config(sdk = [35], qualifiers = "w411dp-h891dp-port-notnight-xhdpi")
     fun phoneSheetLight() = renderSheet(false, "phone-light")
+
+    /** A small phone on its side: the list scrolls between the heading and the buttons. */
+    @Test
+    @Config(sdk = [35], qualifiers = "w640dp-h360dp-land-night-xhdpi")
+    fun phoneSheetLandscape() = renderSheet(false, "phone-landscape-dark")
 
     @Test
     @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-night-mdpi")

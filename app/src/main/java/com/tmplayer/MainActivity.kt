@@ -920,6 +920,9 @@ private fun Root() {
     // which is where "Not enough space" sends the viewer: straight to what can go, not to a tab
     // to work it out from. A count, so a second refusal while the page is up opens it again.
     var downloadsFreeUp by remember { mutableStateOf(0) }
+    // Whether that ask came from a video refused for room, which makes the review lead with Low
+    // storage mode, or from Settings' Storage, whose Free up space is the same review.
+    var downloadsAskedForRoom by remember { mutableStateOf(true) }
     // The Settings page open, kept here because Settings itself is gone while About or the cached
     // videos are showing, and coming back from either should land on the page that led there.
     var settingsPage by rememberSaveable { mutableStateOf<SettingsPage?>(null) }
@@ -935,6 +938,7 @@ private fun Root() {
         downloadsOnCached = false
         // The player's "Not enough space" asks for Free up space itself.
         downloadsFreeUp = if (requestedScreen == MainActivity.OPEN_FREE_UP_SPACE) downloadsFreeUp + 1 else 0
+        downloadsAskedForRoom = true
         screen = Screen.Downloads
         MainActivity.requestedScreen.value = null
     }
@@ -1871,6 +1875,7 @@ private fun Root() {
                         onBack = leaveDownloads,
                         openOnCached = downloadsOnCached,
                         openFreeUp = downloadsFreeUp > 0,
+                        askedForRoom = downloadsFreeUp > 0 && downloadsAskedForRoom,
                         // An empty Downloads page: to the chats, where Download is.
                         onBrowse = {
                             pickedTabKey = BrowseSection.encode(BrowseSection.of(BrowseTab.Chats))
@@ -1919,10 +1924,12 @@ private fun Root() {
                         screen = Screen.Chats
                     },
                     onBack = leaveSettings,
-                    onOpenCachedVideos = {
+                    // Storage's Free up space: the Downloads page with the review up, Back to Settings.
+                    onFreeUpSpace = {
                         downloadsCameFrom = Screen.Settings
-                        downloadsOnCached = true
-                        downloadsFreeUp = 0
+                        downloadsOnCached = false
+                        downloadsFreeUp += 1
+                        downloadsAskedForRoom = false
                         screen = Screen.Downloads
                     },
                     onOpenAbout = { screen = Screen.About },
@@ -2086,6 +2093,7 @@ private fun Root() {
                     if (screen !is Screen.Downloads) downloadsCameFrom = screen
                     downloadsOnCached = false
                     downloadsFreeUp += 1
+                    downloadsAskedForRoom = true
                     screen = Screen.Downloads
                 },
                 onDismiss = { roomPrompt = null },

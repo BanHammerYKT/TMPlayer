@@ -53,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.tmplayer.ui.components.jumpTarget
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.tmplayer.ui.i18n.LocalStrings
@@ -308,7 +309,10 @@ fun ShellNotices(state: ShellState, modifier: Modifier = Modifier) {
  * keep it, since a browser that clears it under pressure signs the viewer out.
  */
 @Composable
-internal fun StorageGroup(state: ShellState) {
+internal fun StorageGroup(
+    state: ShellState,
+    jumps: Map<com.tmplayer.ui.onboarding.SetupStep, com.tmplayer.ui.components.JumpTarget>,
+) {
     val s = LocalStrings.current
     val toast = com.tmplayer.ui.components.rememberToast()
     val scope = rememberCoroutineScope()
@@ -323,7 +327,13 @@ internal fun StorageGroup(state: ShellState) {
         }.getOrNull()
     }
 
-    Setting(s.settingsLowStorage, s.webLowStorageAlways, icon = TmIcons.Archive) {
+    // Setup choices' Storage answer lands here, as it does on the apps' Storage page.
+    Setting(
+        s.settingsLowStorage,
+        s.webLowStorageAlways,
+        modifier = Modifier.jumpTarget(jumps[com.tmplayer.ui.onboarding.SetupStep.Storage]),
+        icon = TmIcons.Archive,
+    ) {
         Switch(checked = true, onCheckedChange = null, enabled = false)
     }
     val on = kept == true

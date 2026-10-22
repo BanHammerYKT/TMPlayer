@@ -126,7 +126,9 @@ import com.tmplayer.ui.components.FolderCopyProgressDialog
 import com.tmplayer.ui.components.FolderCopyResultDialog
 import com.tmplayer.data.StorageChart
 import com.tmplayer.data.StorageSplit
-import com.tmplayer.ui.components.StorageDonutPanel
+import com.tmplayer.data.FreeUpReview
+import com.tmplayer.ui.components.FreeUpReviewDialog
+import com.tmplayer.ui.components.StorageOverview
 import com.tmplayer.data.Td
 import com.tmplayer.data.cancel
 import com.tmplayer.data.pause
@@ -203,9 +205,14 @@ private data class DownloadRow(
  * this screen from the drawer and a television from the rail, and every control on it has to be
  * findable with a D-pad as well as a thumb.
  *
- * Every row is a card, and every card carries its buttons underneath it at full width with their
- * names written on them: a card has an edge, so it is obvious where one video stops and the next
- * begins, and a named button is a thumb-sized target that cannot be mistaken for its neighbour.
+ * The page reads top to bottom (user, 2026-10-22): what TMPlayer uses and what is free, with the
+ * one Free up space, whose review is the only place anything here is cleared in bulk; what is
+ * coming down, while anything is; then the downloads with their order and Select. The settings
+ * that used to sit among them (Remove after watching) are in Settings' Storage.
+ *
+ * Every row is a card: a card has an edge, so it is obvious where one video stops and the next
+ * begins. On a phone a download's card plays on a tap and keeps the rest behind More; on a
+ * television its buttons stay underneath it with their names written on them.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -215,10 +222,15 @@ fun DownloadsScreen(
     /** Opens on the cached videos rather than the downloads, for Settings' Cached videos row. */
     openOnCached: Boolean = false,
     /**
-     * Opens with Free up space already up, for "Not enough space": a video was refused for room,
-     * so the device counts as short and Low storage mode is offered while it is off.
+     * Opens with Free up space's review already up: for "Not enough space", and for Settings'
+     * Storage, whose Free up space is this page's.
      */
     openFreeUp: Boolean = false,
+    /**
+     * A video was refused for room ("Not enough space"), so the device counts as short and the
+     * review leads with Low storage mode while it is off. False when Settings asked for the review.
+     */
+    askedForRoom: Boolean = openFreeUp,
     /** The way on from an empty page: the chats, where every video has its Download. */
     onBrowse: (() -> Unit)? = null,
 ) {
@@ -231,7 +243,6 @@ fun DownloadsScreen(
     val allowedChats by com.tmplayer.data.ChatGate.allowed.collectAsStateWithLifecycle()
     val allHistory by settings.downloadHistory.collectAsStateWithLifecycle(initialValue = emptyList())
     val history = remember(allHistory, allowedChats) { com.tmplayer.data.KidsLock.records(allHistory, allowedChats) }
-    val removeAfterWatching by settings.removeAfterWatching.collectAsStateWithLifecycle(initialValue = false)
     // The page's order, remembered once for the page: newest, by name, or the largest first.
     val downloadsSort by settings.downloadsSort.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.DownloadShelf.Sort.Newest)
     // What is arriving and what is behind it, which the finished-downloads record knows nothing
@@ -261,8 +272,6 @@ fun DownloadsScreen(
     // The same measurement the Settings card draws, so the two panels cannot disagree about a
     // disk they are both looking at.
     var split by remember { mutableStateOf(StorageSplit.EMPTY) }
-    var confirmingClearAll by remember { mutableStateOf(false) }
-    var confirmingRemoveAfterWatching by remember { mutableStateOf(false) }
     // Which row the viewer pressed Delete on, and therefore what the dialog is about to remove.
     // The row rather than a bare boolean, because the dialog has to name the video: nothing here
     // may be deleted without being named first.
@@ -291,19 +300,21 @@ fun DownloadsScreen(
     // Settings' Recently played row opens the page with that section unfolded and in view.
     var cachedOpen by rememberSaveable { mutableStateOf(openOnCached) }
     var freeingUp by remember { mutableStateOf(false) }
+    // A Free up space run under way, and the line it left: what it freed, and what it had to leave.
+    var freeUpBusy by remember { mutableStateOf(false) }
+    var freeUpResult by remember { mutableStateOf<String?>(null) }
+    // Turned on from the review: the line there then says it is on rather than vanishing.
+    var lowStorageTurned by remember { mutableStateOf(false) }
     // Deletes so far, for the television's page to put the remote back on its tab after each.
     var deleted by remember { mutableStateOf(0) }
-    var confirmingClearCached by remember { mutableStateOf(false) }
-    var confirmingClearPictures by remember { mutableStateOf(false) }
-    var confirmingDeleteUnfinished by remember { mutableStateOf(false) }
     // Initially on, so the line that offers it does not flash in before the setting is read.
     val lowStorageOn by settings.lowStorageMode.collectAsStateWithLifecycle(initialValue = true)
     // Free up space opened by "Not enough space" opens once, when the figures are in.
     var freeUpOpened by rememberSaveable { mutableStateOf(false) }
-    // The downloads that stopped part way or are still arriving, with what each holds here. What
-    // "Delete unfinished downloads" removes, and what the chart's Unfinished part measures.
+    // The downloads that stopped part way or are still arriving, with what each holds here: the
+    // review's Unfinished group, where the ones still coming down are listed as kept.
     val unfinished = remember(active) {
-        active.filter { it.stage != OfflineDownloads.Stage.Moving && it.downloadedBytes > 0 }
+        active.filter { it.downloadedBytes > 0 }
     }
     val listState = rememberLazyListState()
     // The list's own height, which an empty section's message takes a share of as its least.
@@ -584,37 +595,6 @@ fun DownloadsScreen(
     }
 
     /**
-     * Free up space: every recently played video, through the cache's own rules, and the
-     * unmatched files listed beside them. The cache's own sweep spares a file it cannot place and
-     * one written in the last minutes; the ones listed here were measured and shown, so they go.
-     */
-    fun clearCached() {
-        scope.launch {
-            val freed = split.cachedBytes
-            val strays = split.strays
-            withContext(Dispatchers.IO) {
-                runCatching { com.tmplayer.data.WatchCache.clearAll(context) }
-                strays.forEach { runCatching { com.tmplayer.data.WatchCache.forget(context, it) } }
-            }
-            refresh(history)
-            toast(L.settingsFreed(size = Translator.messages.formatter.bytes(freed)))
-        }
-    }
-
-    /** Free up space: thumbnails, previews and the online posters, which come back as the viewer browses. */
-    fun clearPictures() {
-        scope.launch {
-            val freed = split.pictureBytes
-            withContext(Dispatchers.IO) {
-                runCatching { Td.clearPicturesAndPreviews() }
-                runCatching { com.tmplayer.online.OnlineMetadata.current?.purgeImages() }
-            }
-            refresh(history)
-            toast(L.settingsFreed(size = Translator.messages.formatter.bytes(freed)))
-        }
-    }
-
-    /**
      * Stops a download and deletes what it had fetched. Cancelling alone leaves the part file on
      * the disk with nothing naming it, which is space the viewer can no longer find. A file that
      * is also the recently played video is left to that, since the same bytes are its.
@@ -627,22 +607,108 @@ fun DownloadsScreen(
         }
     }
 
-    /** Free up space: every unfinished download, stopped and its bytes deleted. */
-    fun deleteUnfinished() {
-        scope.launch {
-            val these = unfinished.toList()
-            val freed = these.sumOf { it.downloadedBytes }
-            these.forEach { dropUnfinished(it.fileId) }
-            refresh(history)
-            toast(L.settingsFreed(size = Translator.messages.formatter.bytes(freed)))
-        }
+    // Free up space's review, from the same measurement the page draws: the groups in the order
+    // the sheet lists them, each item keyed as its row is. A download still coming down, and a
+    // file open in the player, are listed as kept rather than left out, so the figures add up.
+    val reviewSections = remember(rows, cachedRows, split, unfinished) {
+        val coming = unfinished.map { it.fileId }.toSet()
+        fun playing(fileId: Int) = if (com.tmplayer.data.WatchCache.isPlaying(fileId)) FreeUpReview.Lock.Playing else null
+        val recent = cachedRows.filter { it.fileId !in coming && it.bytes > 0 }
+        val kept = rows.filter { !it.missing && it.bytes > 0 }.sortedByDescending { it.bytes }
+        listOf(
+            FreeUpReview.Section(
+                FreeUpReview.Group.Unfinished,
+                unfinished.sumOf { it.downloadedBytes },
+                items = unfinished.map { p ->
+                    val busy = p.stage == OfflineDownloads.Stage.Running || p.stage == OfflineDownloads.Stage.Moving
+                    FreeUpReview.Item(
+                        key = p.fileId.toString(),
+                        title = com.tmplayer.data.VideoCorrections.titleFor(p.request.chatId, p.request.messageId, p.title),
+                        bytes = p.downloadedBytes,
+                        lock = if (busy) FreeUpReview.Lock.Downloading else null,
+                    )
+                },
+            ),
+            FreeUpReview.Section(
+                FreeUpReview.Group.Recent,
+                recent.sumOf { it.bytes },
+                count = recent.size,
+                items = recent.map { FreeUpReview.Item(it.key, it.title, it.bytes, playing(it.fileId)) },
+            ),
+            FreeUpReview.Section(
+                FreeUpReview.Group.Unmatched,
+                split.strayBytes,
+                items = split.strays.map { FreeUpReview.Item(it.path, it.title, it.bytes) },
+            ),
+            FreeUpReview.Section(FreeUpReview.Group.Pictures, split.pictureBytes),
+            FreeUpReview.Section(
+                FreeUpReview.Group.Downloads,
+                kept.sumOf { it.bytes },
+                items = kept.map { FreeUpReview.Item(it.key, it.title, it.bytes, playing(it.fileId)) },
+            ),
+        )
     }
 
-    /** Free up space: Low storage mode on, which deletes nothing. */
-    fun turnOnLowStorage() {
+    /**
+     * Free up space: what the review has ticked, group by group, each through the one way this
+     * page removes that kind of thing. A download that started again, or a file the player opened,
+     * since the sheet was drawn is left and counted as left. Once started it runs to the end even
+     * if the page goes, so a file is never half handled; the line it leaves says what it freed.
+     */
+    fun freeUp(picks: FreeUpReview.Picks) {
+        if (freeUpBusy) return
+        val sections = reviewSections
+        val keptRows = rows
+        val recentRows = cachedRows
+        val strays = split.strays
+        freeingUp = false
+        freeUpBusy = true
+        freeUpResult = null
         scope.launch {
-            runCatching { settings.setLowStorageMode(true) }
-            toast(L.downloadsFreeLowStorageDone(mode = L.settingsLowStorage))
+            val outcome = withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) {
+                var freed = 0L
+                var skipped = 0
+                for (section in sections) {
+                    when (section.group) {
+                        FreeUpReview.Group.Unfinished -> FreeUpReview.picked(picks, section).forEach { item ->
+                            val now = OfflineDownloads.active.value.values.firstOrNull { it.fileId.toString() == item.key }
+                            when {
+                                now == null -> Unit
+                                now.stage == OfflineDownloads.Stage.Running || now.stage == OfflineDownloads.Stage.Moving -> skipped++
+                                else -> {
+                                    dropUnfinished(now.fileId)
+                                    freed += item.bytes
+                                }
+                            }
+                        }
+                        FreeUpReview.Group.Recent, FreeUpReview.Group.Downloads -> {
+                            val pool = if (section.group == FreeUpReview.Group.Recent) recentRows else keptRows
+                            FreeUpReview.picked(picks, section).forEach { item ->
+                                val row = pool.firstOrNull { it.key == item.key } ?: return@forEach
+                                when {
+                                    com.tmplayer.data.WatchCache.isPlaying(row.fileId) -> skipped++
+                                    runCatching { removeOne(row) }.getOrDefault(false) -> freed += item.bytes
+                                    else -> skipped++
+                                }
+                            }
+                        }
+                        FreeUpReview.Group.Unmatched -> FreeUpReview.picked(picks, section).forEach { item ->
+                            val stray = strays.firstOrNull { it.path == item.key } ?: return@forEach
+                            if (runCatching { com.tmplayer.data.WatchCache.forget(context, stray) }.getOrDefault(false)) freed += item.bytes else skipped++
+                        }
+                        FreeUpReview.Group.Pictures -> if (FreeUpReview.wholePicked(picks, section)) {
+                            if (runCatching { Td.clearPicturesAndPreviews() }.isSuccess) freed += section.bytes
+                            runCatching { com.tmplayer.online.OnlineMetadata.current?.purgeImages() }
+                        }
+                    }
+                }
+                FreeUpReview.Outcome(freed, skipped)
+            }
+            refresh(history)
+            freeUpBusy = false
+            freeUpResult = com.tmplayer.ui.components.freeUpResult(outcome)
+            // The button the remote was on may be off now (nothing left to free): back to the tab.
+            deleted++
         }
     }
 
@@ -765,48 +831,18 @@ fun DownloadsScreen(
             },
         )
     }
-    // What a press on each part of the storage chart's legend does: the part's own way to free it,
-    // or the list it is on. The device's other apps and its free space are not TMPlayer's to act on.
-    val chartActions: Map<StorageChart.Part, () -> Unit> = buildMap {
-        if (rows.isNotEmpty()) {
-            put(StorageChart.Part.Downloads) {
-                tab = COMPLETED
-                picking = true
-            }
-        }
-        if (unfinished.isNotEmpty()) put(StorageChart.Part.Unfinished) { confirmingDeleteUnfinished = true }
-        if (split.cachedBytes > 0) put(StorageChart.Part.Recent) { confirmingClearCached = true }
-        if (split.strays.isNotEmpty()) {
-            put(StorageChart.Part.Unmatched) {
-                tab = CACHED
-                if (onePage) {
-                    cachedOpen = true
-                    scope.launch {
-                        withFrameNanos { }
-                        if (cachedHeadingAt[0] > 0) runCatching { listState.animateScrollToItem(cachedHeadingAt[0]) }
-                    }
-                }
-            }
-        }
-        if (split.pictureBytes > 0) put(StorageChart.Part.Pictures) { confirmingClearPictures = true }
-    }
+    // The top of the page: what TMPlayer uses and what is free, and the one Free up space. Every
+    // way to clear a part of it (the chart's legend, the cards' Delete on Recently played and the
+    // unmatched files, Delete all) is in the review this opens.
     val storageCard: @Composable () -> Unit = {
         StorageSummary(
             figures = split.chart(disk),
             measured = counted && disk.totalBytes > 0,
-            actions = chartActions,
-            onFreeUp = { freeingUp = true },
+            nothingToFree = FreeUpReview.nothingToFree(reviewSections),
+            busy = freeUpBusy,
+            result = freeUpResult,
+            onFreeUp = { if (!freeUpBusy) freeingUp = true },
         )
-    }
-    // An unmatched file, measured and named by what the disk knows of it, with Delete.
-    val strayCard: @Composable (com.tmplayer.data.WatchCacheRules.Stray) -> Unit = { stray ->
-        StrayCard(stray) {
-            scope.launch {
-                val gone = withContext(Dispatchers.IO) { com.tmplayer.data.WatchCache.forget(context, stray) }
-                if (gone) toast(L.settingsFreed(size = Translator.messages.formatter.bytes(stray.bytes)))
-                refresh(history)
-            }
-        }
     }
     // What each of the television's tabs lists.
     val tabBody: LazyListScope.() -> Unit = body@{
@@ -871,6 +907,8 @@ fun DownloadsScreen(
                     modifier = Modifier.padding(start = TEXT_EDGE, end = TEXT_EDGE, top = 16.dp, bottom = 4.dp),
                 )
             }
+            // Watch and Save to Downloads, the two things only this list does. Clearing them, and
+            // the unmatched files beside them, is Free up space's review on the Downloaded tab.
             items(cachedRows, key = { it.key }) { row ->
                 DownloadCard(
                     row = row,
@@ -878,25 +916,12 @@ fun DownloadsScreen(
                     checked = false,
                     onPlay = { onPlay(row.record) },
                     onShare = { saveToDownloads(row) },
-                    onDelete = { confirmingDelete = row },
+                    onDelete = null,
                     onToggle = {},
                     onHold = null,
                 )
             }
-            // The videos on the disk no record names: counted in the storage figures, so they are
-            // listed too, each with a way to remove it (user, 2026-10-18).
-            if (split.strays.isNotEmpty()) {
-                item(key = "unmatched-note") {
-                    Text(
-                        L.downloadsUnmatchedNote,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = TEXT_EDGE, end = TEXT_EDGE, top = 20.dp, bottom = 4.dp),
-                    )
-                }
-                items(split.strays, key = { "stray_" + it.path }) { stray -> strayCard(stray) }
-            }
-            if (counted && cachedRows.isEmpty() && split.strays.isEmpty()) {
+            if (counted && cachedRows.isEmpty()) {
                 item {
                     EmptyState(0.6f, viewport) {
                         BigEmpty(
@@ -909,18 +934,8 @@ fun DownloadsScreen(
             return@body
         }
 
-        item { storageCard() }
-        item {
-            RemoveAfterWatchingRow(removeAfterWatching) { on ->
-                // Turning it on is asked first: from then on files go without a press.
-                // Turning it off deletes nothing, so it just happens.
-                if (on) {
-                    confirmingRemoveAfterWatching = true
-                } else {
-                    scope.launch { settings.setRemoveAfterWatching(false) }
-                }
-            }
-        }
+        // Free up space first, then the list: the remote steps down from the tabs onto the button.
+        item(key = "storage") { storageCard() }
         if (rows.size > 1) item(key = "sort") { sortChips() }
         // Grouped by show as the phone's page is, so the two read as one list. The headings take
         // no focus: the remote steps from card to card and each heading scrolls in with its first.
@@ -989,16 +1004,7 @@ fun DownloadsScreen(
         item(key = "h-done") {
             SectionHeading(if (rows.isEmpty()) L.downloadsDownloaded else L.downloadsTabDownloadedCount(count = rows.size))
         }
-        item(key = "remove-after") {
-            RemoveAfterWatchingRow(removeAfterWatching) { on ->
-                if (on) {
-                    confirmingRemoveAfterWatching = true
-                } else {
-                    scope.launch { settings.setRemoveAfterWatching(false) }
-                }
-            }
-        }
-        at += 2
+        at += 1
         if (rows.size > 1) {
             item(key = "sort") { sortChips() }
             at++
@@ -1039,10 +1045,9 @@ fun DownloadsScreen(
         }
         cachedHeadingAt[0] = at
         item(key = "h-cached") {
-            val held = cachedRows.size + split.strays.size
             CollapsibleHeading(
-                title = if (held == 0) L.downloadsCached else L.downloadsTabCachedCount(count = held),
-                detail = (cachedRows.sumOf { it.bytes } + split.strayBytes).takeIf { it > 0 }?.let { Translator.messages.formatter.bytes(it) },
+                title = if (cachedRows.isEmpty()) L.downloadsCached else L.downloadsTabCachedCount(count = cachedRows.size),
+                detail = cachedRows.sumOf { it.bytes }.takeIf { it > 0 }?.let { Translator.messages.formatter.bytes(it) },
                 open = cachedOpen,
                 onToggle = { cachedOpen = !cachedOpen },
             )
@@ -1050,12 +1055,13 @@ fun DownloadsScreen(
         if (cachedOpen) {
             item(key = "n-cached") {
                 Text(
-                    if (counted && cachedRows.isEmpty() && split.strays.isEmpty()) L.downloadsEmptyCached else L.downloadsCachedTabNote,
+                    if (counted && cachedRows.isEmpty()) L.downloadsEmptyCached else L.downloadsCachedTabNote,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = TEXT_EDGE, end = TEXT_EDGE, bottom = 4.dp),
                 )
             }
+            // Watch and Save to Downloads; clearing them is Free up space's review at the top.
             items(cachedRows, key = { it.key }) { row ->
                 DownloadCard(
                     row = row,
@@ -1063,21 +1069,10 @@ fun DownloadsScreen(
                     checked = false,
                     onPlay = { onPlay(row.record) },
                     onShare = { saveToDownloads(row) },
-                    onDelete = { confirmingDelete = row },
+                    onDelete = null,
                     onToggle = {},
                     onHold = null,
                 )
-            }
-            if (split.strays.isNotEmpty()) {
-                item(key = "unmatched-note") {
-                    Text(
-                        L.downloadsUnmatchedNote,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = TEXT_EDGE, end = TEXT_EDGE, top = 16.dp, bottom = 4.dp),
-                    )
-                }
-                items(split.strays, key = { "stray_" + it.path }) { stray -> strayCard(stray) }
             }
         }
     }
@@ -1108,7 +1103,6 @@ fun DownloadsScreen(
             allChosen = chosen.size >= shown.size,
             onBack = onBack,
             onSelect = { picking = true },
-            onDeleteAll = { confirmingClearAll = true },
             onLeavePicking = { leavePicking() },
             onSelectAll = { picked = shown.map { it.key }.toSet() },
             onShareChosen = { share(chosen) },
@@ -1130,7 +1124,6 @@ fun DownloadsScreen(
             allChosen = chosen.size >= shown.size,
             onBack = onBack,
             onSelect = { picking = true },
-            onDeleteAll = { confirmingClearAll = true },
             onLeavePicking = { leavePicking() },
             onSelectAll = { picked = shown.map { it.key }.toSet() },
             onShareChosen = { share(chosen) },
@@ -1186,13 +1179,10 @@ fun DownloadsScreen(
                             }
                             return@TopAppBar
                         }
+                        // Select, for Share, Save to folder and Delete on several at once. Delete all
+                        // went: Select all and Delete, or Free up space's review, say the same.
                         if (rows.isNotEmpty()) {
                             TextAction(L.downloadsSelect) { picking = true }
-                        }
-                        // Offered on the rows and nothing else: a screen headed "Downloads" must not
-                        // carry a button that empties the cache and the previews too.
-                        if (rows.isNotEmpty()) {
-                            TextAction(L.downloadsDeleteAll) { confirmingClearAll = true }
                         }
                     },
                 )
@@ -1319,124 +1309,27 @@ fun DownloadsScreen(
         )
     }
 
-    // Free up space, on the page rather than in Settings: what can go, how much each frees, and a
-    // way into the selection for the downloads themselves. Every line still asks before it clears.
+    // Free up space's review: every group with what it holds, caches ticked, downloads not, one
+    // Free up press, and a question first only when a download is ticked. Low storage mode leads
+    // it on a device short of room while it is off, as the one answer that deletes nothing.
     if (freeingUp) {
-        val lines = com.tmplayer.data.FreeUpSpace.lines(
-            lowStorageOn = lowStorageOn,
-            short = com.tmplayer.data.FreeUpSpace.isShort(disk.freeBytes, disk.totalBytes, askedForRoom = openFreeUp),
-            recentBytes = split.cachedBytes,
-            recentCount = split.cachedCount,
-            unfinishedBytes = unfinished.sumOf { it.downloadedBytes },
-            unfinishedCount = unfinished.size,
-            picturesBytes = split.pictureBytes,
-            downloadCount = rows.size,
-        )
-        com.tmplayer.ui.components.ChoiceSheet(
-            title = L.downloadsFreeUpSpace,
-            note = L.downloadsFreeUpSpaceNote,
+        val short = com.tmplayer.data.FreeUpSpace.isShort(disk.freeBytes, disk.totalBytes, askedForRoom = askedForRoom)
+        FreeUpReviewDialog(
+            sections = reviewSections,
+            onFree = { picks -> freeUp(picks) },
             onDismiss = { freeingUp = false },
-            onClose = { freeingUp = false },
-            ignoreRelease = !isTouch(),
-        ) {
-            val first = remember { FocusRequester() }
-            ChoiceList {
-                FreeUpLines(lines, first) { kind ->
-                    freeingUp = false
-                    when (kind) {
-                        com.tmplayer.data.FreeUpSpace.Kind.LowStorage -> turnOnLowStorage()
-                        com.tmplayer.data.FreeUpSpace.Kind.Recent -> confirmingClearCached = true
-                        com.tmplayer.data.FreeUpSpace.Kind.Unfinished -> confirmingDeleteUnfinished = true
-                        com.tmplayer.data.FreeUpSpace.Kind.Pictures -> confirmingClearPictures = true
-                        com.tmplayer.data.FreeUpSpace.Kind.ChooseDownloads -> {
-                            // The television's selection lives on its Downloaded tab.
-                            tab = COMPLETED
-                            picking = true
-                        }
-                    }
+            lowStorage = if (short && (!lowStorageOn || lowStorageTurned)) {
+                com.tmplayer.ui.components.LowStorageOffer(
+                    mode = L.settingsLowStorage,
+                    windowBytes = com.tmplayer.player.LowStorageWindow.WINDOW_BYTES,
+                    on = lowStorageTurned,
+                ) {
+                    lowStorageTurned = true
+                    scope.launch { runCatching { settings.setLowStorageMode(true) } }
                 }
-            }
-            com.tmplayer.ui.components.FocusOnOpen(first)
-        }
-    }
-
-    if (confirmingDeleteUnfinished) {
-        val freed = unfinished.sumOf { it.downloadedBytes }
-        TvConfirm(
-            title = L.downloadsFreeUnfinishedTitle(count = unfinished.size),
-            message = L.downloadsFreeUnfinishedMessage(count = unfinished.size, size = Translator.messages.formatter.bytes(freed)),
-            detail = L.mainNoRoomDetail,
-            confirmLabel = L.commonDelete,
-            onConfirm = {
-                confirmingDeleteUnfinished = false
-                deleteUnfinished()
+            } else {
+                null
             },
-            onDismiss = { confirmingDeleteUnfinished = false },
-        )
-    }
-
-    if (confirmingClearCached) {
-        TvConfirm(
-            title = L.settingsClearCacheTitle,
-            message = L.settingsClearCacheMessage(count = split.cachedCount, size = Translator.messages.formatter.bytes(split.cachedBytes)),
-            detail = L.settingsDownloadsUntouched,
-            confirmLabel = L.commonClear,
-            onConfirm = {
-                confirmingClearCached = false
-                clearCached()
-            },
-            onDismiss = { confirmingClearCached = false },
-        )
-    }
-
-    if (confirmingClearPictures) {
-        TvConfirm(
-            title = L.downloadsFreePicturesTitle,
-            message = L.downloadsFreePicturesMessage(size = Translator.messages.formatter.bytes(split.pictureBytes)),
-            detail = L.settingsClearPicturesUntouched,
-            confirmLabel = L.settingsClearPicturesConfirm,
-            onConfirm = {
-                confirmingClearPictures = false
-                clearPictures()
-            },
-            onDismiss = { confirmingClearPictures = false },
-        )
-    }
-
-    if (confirmingRemoveAfterWatching) {
-        TvConfirm(
-            title = L.confirmRemoveAfterWatchingTitle,
-            message = L.confirmRemoveAfterWatchingMessage,
-            detail = L.confirmRemoveAfterWatchingDetail,
-            confirmLabel = L.confirmTurnOn,
-            onConfirm = {
-                confirmingRemoveAfterWatching = false
-                scope.launch { settings.setRemoveAfterWatching(true) }
-            },
-            onDismiss = { confirmingRemoveAfterWatching = false },
-        )
-    }
-
-    if (confirmingClearAll) {
-        // The rows, and only the rows: the figure quoted here has to be what this button will
-        // actually delete. Cache and previews are counted and cleared in Settings.
-        val freed = rows.sumOf { it.bytes }
-        TvConfirm(
-            title = L.downloadsDeleteAllTitle,
-            message = L.downloadsDeleteAllBody(count = rows.size, size = Translator.messages.formatter.bytes(freed)),
-            confirmLabel = L.downloadsDeleteAll,
-            cancelLabel = L.downloadsKeepThem,
-            onConfirm = {
-                confirmingClearAll = false
-                scope.launch {
-                    // The downloads, one at a time, and nothing else. Each is only forgotten
-                    // once its bytes have actually gone.
-                    val stuck = rows.filterNot { removeOne(it) }
-                    stuck.firstOrNull()?.let { toast(L.downloadsDeleteFailed(file = it.title)) }
-                    refresh(history)
-                }
-            },
-            onDismiss = { confirmingClearAll = false },
         )
     }
 }
@@ -1475,60 +1368,6 @@ private fun Modifier.tvFocusRing(
                 Modifier
             },
         )
-}
-
-/**
- * "Remove after watching": one row, the whole of it the switch, so a remote lands on one thing and
- * OK flips it. The deleting itself happens in [com.tmplayer.data.RemoveAfterWatching], which runs
- * for the life of the process.
- */
-@Composable
-private fun RemoveAfterWatchingRow(checked: Boolean, onChange: (Boolean) -> Unit) {
-    val s = LocalStrings.current
-    if (!isTouch()) {
-        // Settings' own switch row on a television, so the one setting on this screen fills
-        // with the focus colour like every other setting does, rather than wearing a ring.
-        com.tmplayer.ui.settings.ToggleRow(
-            title = s.downloadsRemoveAfterWatching,
-            subtitle = s.downloadsRemoveAfterWatchingBody,
-            icon = TmIcons.Delete,
-            checked = checked,
-            onToggle = { onChange(!checked) },
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        return
-    }
-    val interactions = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(Corner.Medium)
-    val tick = com.tmplayer.ui.components.rememberToggleTick()
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = CARD_EDGE)
-            .clip(shape)
-            .tvFocusRing(interactions, shape)
-            .toggleable(
-                value = checked,
-                interactionSource = interactions,
-                indication = LocalIndication.current,
-                role = Role.Switch,
-                onValueChange = { on -> tick(on); onChange(on) },
-            )
-            .padding(horizontal = CARD_PAD, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(s.downloadsRemoveAfterWatching, style = MaterialTheme.typography.titleMedium)
-            Text(
-                s.downloadsRemoveAfterWatchingBody,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        // Drawn, not pressed: the row is the control, so the switch takes no focus of its own.
-        Switch(checked = checked, onCheckedChange = null)
-    }
 }
 
 /**
@@ -1593,123 +1432,38 @@ private fun QueueHeading(title: String, bulk: String?, onBulk: () -> Unit) {
 }
 
 /**
- * What this device holds, as the storage ring with its legend, and Free up space under it.
+ * What this device holds and the one way to give some of it back: the shared [StorageOverview]
+ * (the small ring, what TMPlayer uses, what is free, Free up space) on the page's own card.
  *
  * The whole device rather than the downloads alone: a friend saw 2.5 GB used with nothing on the
- * Cached tab, and a panel that names only part of the space is how that happens. Every part of
- * TMPlayer's own share is named and measured, and each that can be freed is a press away
- * ([actions]). A phone has the ring over its legend; a television and a wide screen put them side
- * by side, so the card does not push the list off a 540 dp screen.
+ * Cached tab, and a panel that names only part of the space is how that happens. Every part of it
+ * is named and measured in the review the button opens, which is also the one place any of it is
+ * cleared (user, 2026-10-22).
  */
 @Composable
 internal fun StorageSummary(
     figures: StorageChart.Figures,
     measured: Boolean,
-    actions: Map<StorageChart.Part, () -> Unit>,
+    nothingToFree: Boolean,
     onFreeUp: () -> Unit,
-    selected: StorageChart.Part? = null,
+    busy: Boolean = false,
+    result: String? = null,
 ) {
-    val s = LocalStrings.current
     val tv = !isTouch()
     Card(
         Modifier.fillMaxWidth().padding(CARD_EDGE),
         shape = if (tv) RoundedCornerShape(Corner.Large) else MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = Tone.surface),
     ) {
-        BoxWithConstraints(Modifier.padding(CARD_PAD)) {
-            val wide = tv || maxWidth >= 560.dp
-            Column {
-                StorageDonutPanel(
-                    figures = figures,
-                    wide = wide,
-                    measured = measured,
-                    actions = actions,
-                    ringSize = when {
-                        tv -> 184.dp
-                        wide -> 168.dp
-                        else -> 196.dp
-                    },
-                    large = tv,
-                    selected = selected,
-                )
-                CardActions {
-                    SecondaryAction(s.downloadsFreeUpSpace, TmIcons.Delete, onFreeUp)
-                }
-            }
-        }
-    }
-}
-
-/**
- * The lines of Free up space, each saying what it removes and what that frees ([FreeUpSpace]
- * picks them). Focus lands on the first that can be pressed.
- */
-@Composable
-internal fun FreeUpLines(lines: List<FreeUpSpace.Line>, first: FocusRequester, onPick: (FreeUpSpace.Kind) -> Unit) {
-    val s = LocalStrings.current
-    val f = s.formatter
-    val focusAt = lines.indexOfFirst { it.enabled }
-    lines.forEachIndexed { index, line ->
-        val title: String
-        val detail: String
-        val icon: ImageVector
-        when (line.kind) {
-            FreeUpSpace.Kind.LowStorage -> {
-                title = s.downloadsFreeLowStorage(mode = s.settingsLowStorage)
-                detail = s.downloadsFreeLowStorageDetail(size = f.bytes(com.tmplayer.player.LowStorageWindow.WINDOW_BYTES))
-                icon = TmIcons.Archive
-            }
-            FreeUpSpace.Kind.Recent -> {
-                title = s.downloadsFreeRecent
-                detail = if (line.enabled) s.downloadsFreeRecentDetail(size = f.bytes(line.bytes)) else s.downloadsNothingToFree
-                icon = TmIcons.Clock
-            }
-            FreeUpSpace.Kind.Unfinished -> {
-                title = s.downloadsFreeUnfinished
-                detail = s.downloadsFreeUnfinishedDetail(count = line.count, size = f.bytes(line.bytes))
-                icon = TmIcons.Download
-            }
-            FreeUpSpace.Kind.Pictures -> {
-                title = s.downloadsFreePictures
-                detail = if (line.enabled) s.downloadsFreePicturesDetail(size = f.bytes(line.bytes)) else s.downloadsNothingToFree
-                icon = TmIcons.Image
-            }
-            FreeUpSpace.Kind.ChooseDownloads -> {
-                title = s.downloadsChooseToDelete
-                detail = if (line.enabled) s.downloadsChooseToDeleteDetail else s.downloadsNothingToFree
-                icon = TmIcons.Checklist
-            }
-        }
-        com.tmplayer.ui.components.ChoiceLine(
-            title,
-            detail = detail,
-            icon = icon,
-            enabled = line.enabled,
-            modifier = if (index == focusAt) Modifier.focusRequester(first) else Modifier,
-        ) { onPick(line.kind) }
-    }
-}
-
-/**
- * A video file on the disk that no record names any more, on its own card like every other row
- * here, with the one thing to do about it.
- */
-@Composable
-private fun StrayCard(stray: com.tmplayer.data.WatchCacheRules.Stray, onDelete: () -> Unit) {
-    val s = LocalStrings.current
-    RowCard {
-        Text(stray.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            listOf(s.formatter.bytes(stray.bytes), stray.fileName).joinToString(DOT),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        StorageOverview(
+            figures = figures,
+            measured = measured,
+            nothingToFree = nothingToFree,
+            onFreeUp = onFreeUp,
+            busy = busy,
+            result = result,
+            modifier = Modifier.padding(CARD_PAD),
         )
-        CardActions {
-            SecondaryAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
-        }
     }
 }
 
@@ -1964,10 +1718,16 @@ private fun IconOnlyAction(
 }
 
 /**
- * A finished video: what it is, what it costs, and the three things worth doing with it.
+ * A finished video: what it is, what it costs, and what is worth doing with it.
+ *
+ * On a phone or a tablet the card is the play button, as History's are, and Share, Save to folder
+ * and Delete sit behind the one More button at its end (user, 2026-10-22: the row of four buttons
+ * under every card was most of what made the page read as clutter). A hold starts a selection, for
+ * the same three on several at once. A television keeps its named buttons under the card: a
+ * remote has no hold and a menu behind a button is a step further from the sofa.
  *
  * While a selection is on, the whole card is one target that ticks and unticks, which is how a
- * phone's list of anything behaves and keeps three small buttons out of a tick target.
+ * phone's list of anything behaves and keeps small buttons out of a tick target.
  */
 @Composable
 private fun DownloadCard(
@@ -1976,12 +1736,17 @@ private fun DownloadCard(
     checked: Boolean,
     onPlay: () -> Unit,
     onShare: () -> Unit,
-    onDelete: () -> Unit,
+    /** Delete; null for a recently played video, which Free up space's review clears. */
+    onDelete: (() -> Unit)?,
     onToggle: () -> Unit,
     onHold: (() -> Unit)?,
     /** Save to folder, for a finished download; null where there is no folder picker. */
     onSaveToFolder: (() -> Unit)? = null,
 ) {
+    val touch = isTouch()
+    // The phone's card plays on a tap and keeps the rest behind More: a whole download only.
+    val tapToPlay = touch && !picking && !row.missing && !row.partial
+    var menuOpen by remember { mutableStateOf(false) }
     val s = LocalStrings.current
     val details = listOfNotNull(
         // A part-loaded video says both figures: "710 MB" alone reads as the size of the video,
@@ -2010,7 +1775,11 @@ private fun DownloadCard(
     val pickTick = com.tmplayer.ui.components.rememberToggleTick()
     RowCard(
         accent = if (checked) MaterialTheme.colorScheme.primary else null,
-        onClick = if (picking) ({ pickTick(!checked); onToggle() }) else null,
+        onClick = when {
+            picking -> ({ pickTick(!checked); onToggle() })
+            tapToPlay -> onPlay
+            else -> null
+        },
         onHold = onHold,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2058,23 +1827,62 @@ private fun DownloadCard(
                     )
                 }
             }
+            // A whole download on a phone: More, with Share, Save to folder and Delete behind it.
+            if (tapToPlay && !row.cached) {
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(TmIcons.MoreVert, contentDescription = s.commonMoreOptions, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    com.tmplayer.ui.components.TmDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(s.commonShare) },
+                            leadingIcon = { Icon(TmIcons.Share, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onShare()
+                            },
+                        )
+                        if (onSaveToFolder != null) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(s.downloadsSaveToFolder) },
+                                leadingIcon = { Icon(TmIcons.Folder, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onSaveToFolder()
+                                },
+                            )
+                        }
+                        if (onDelete != null) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(s.commonDelete, color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(TmIcons.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    menuOpen = false
+                                    onDelete()
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
         // Hidden while picking: a Delete button inside something the viewer is tapping to select
-        // is a mistake waiting to be made.
-        if (!picking) {
+        // is a mistake waiting to be made. A phone's whole download has its More instead.
+        if (!picking && !(tapToPlay && !row.cached)) {
             CardActions {
                 when {
                     // Something took the file. The record is all that is left to deal with.
-                    row.missing -> SecondaryAction(s.commonRemove, TmIcons.Delete, onDelete, danger = true)
+                    row.missing -> SecondaryAction(s.commonRemove, TmIcons.Delete, onDelete ?: {}, danger = true)
                     row.cached -> {
-                        PrimaryAction(s.navWatch, TmIcons.Play, onPlay)
-                        // The share slot's place: what a cached video wants is keeping.
+                        // A phone's card plays on a tap; a television's needs the button.
+                        if (!tapToPlay) PrimaryAction(s.navWatch, TmIcons.Play, onPlay)
+                        // What a recently played video wants is keeping. Clearing it is Free up
+                        // space's review, with the rest of what playing left behind.
                         SecondaryAction(s.downloadsSaveToDownloads, TmIcons.Download, onShare)
-                        IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
                     }
                     row.partial -> {
                         PrimaryAction(s.commonResume, TmIcons.Refresh, onPlay)
-                        IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
+                        if (onDelete != null) IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
                     }
                     else -> {
                         PrimaryAction(s.navWatch, TmIcons.Play, onPlay)
@@ -2086,7 +1894,7 @@ private fun DownloadCard(
                         } else {
                             SecondaryAction(s.commonShare, TmIcons.Share, onShare)
                         }
-                        IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
+                        if (onDelete != null) IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
                     }
                 }
             }
@@ -2289,7 +2097,6 @@ private fun PhoneDownloads(
     allChosen: Boolean,
     onBack: () -> Unit,
     onSelect: () -> Unit,
-    onDeleteAll: () -> Unit,
     onLeavePicking: () -> Unit,
     onSelectAll: () -> Unit,
     onShareChosen: () -> Unit,
@@ -2305,9 +2112,9 @@ private fun PhoneDownloads(
     val hosted = LocalTouchChrome.current != null
     val actions: (@Composable RowScope.() -> Unit)? = if (canSelect && !picking) {
         {
+            // Select, and nothing else up here: Delete all went (Select all and Delete, or Free up
+            // space's review, say the same), so the pill is one plain button.
             FloatingBarIcon(TmIcons.Checklist, s.downloadsSelect, onSelect)
-            // Behind the dots: a button that empties the list should take two presses, not one.
-            BarOverflow(listOf(s.downloadsDeleteAll to onDeleteAll))
         }
     } else {
         null
@@ -2422,7 +2229,6 @@ private fun TvDownloads(
     allChosen: Boolean,
     onBack: () -> Unit,
     onSelect: () -> Unit,
-    onDeleteAll: () -> Unit,
     onLeavePicking: () -> Unit,
     onSelectAll: () -> Unit,
     onShareChosen: () -> Unit,
@@ -2499,10 +2305,7 @@ private fun TvDownloads(
                             TvPill(s.commonDelete, TmIcons.Delete, danger = true, onClick = onDeleteChosen)
                         }
                     }
-                    canSelect -> {
-                        TvPill(s.downloadsSelect, TmIcons.Checklist, onClick = onSelect)
-                        TvPill(s.downloadsDeleteAll, TmIcons.Delete, danger = true, onClick = onDeleteAll)
-                    }
+                    canSelect -> TvPill(s.downloadsSelect, TmIcons.Checklist, onClick = onSelect)
                 }
             }
         }

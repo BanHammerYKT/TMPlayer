@@ -143,29 +143,10 @@ object StorageChart {
 }
 
 /**
- * The lines of "Free up space", chosen in one place for every device so each says exactly what it
- * removes and only offers what would help (user, 2026-10-18).
+ * When Free up space offers Low storage mode: the one answer to a full device that deletes
+ * nothing, so the review sheet ([FreeUpReview]) leads with it while it is off and room is short.
  */
 object FreeUpSpace {
-
-    enum class Kind {
-        /** Low storage mode, offered while it is off and the device is short. */
-        LowStorage,
-
-        /** The recently played videos, partly played ones and unmatched files. Downloads stay. */
-        Recent,
-
-        /** The downloads that have not finished, with what they hold. */
-        Unfinished,
-
-        /** Thumbnails, previews and poster images. */
-        Pictures,
-
-        /** Into the selection, to pick downloads to delete. */
-        ChooseDownloads,
-    }
-
-    data class Line(val kind: Kind, val bytes: Long = 0, val count: Int = 0, val enabled: Boolean = true)
 
     /** Below this much free space a device counts as short, and Low storage mode is offered. */
     const val SHORT_BELOW_BYTES = 3L * 1024 * 1024 * 1024
@@ -178,27 +159,5 @@ object FreeUpSpace {
         if (askedForRoom) return true
         if (freeBytes < 0 || totalBytes <= 0) return false
         return freeBytes < SHORT_BELOW_BYTES || freeBytes < totalBytes / 10
-    }
-
-    /**
-     * The lines, in order. Low storage mode comes first when it is offered, since it is the one
-     * answer that deletes nothing; Unfinished only appears when there is an unfinished download.
-     * Lines with nothing to free stay, disabled, so the sheet keeps its shape.
-     */
-    fun lines(
-        lowStorageOn: Boolean,
-        short: Boolean,
-        recentBytes: Long,
-        recentCount: Int,
-        unfinishedBytes: Long,
-        unfinishedCount: Int,
-        picturesBytes: Long,
-        downloadCount: Int,
-    ): List<Line> = buildList {
-        if (!lowStorageOn && short) add(Line(Kind.LowStorage))
-        add(Line(Kind.Recent, recentBytes, recentCount, enabled = recentBytes > 0))
-        if (unfinishedCount > 0) add(Line(Kind.Unfinished, unfinishedBytes, unfinishedCount, enabled = true))
-        add(Line(Kind.Pictures, picturesBytes, enabled = picturesBytes > 0))
-        add(Line(Kind.ChooseDownloads, count = downloadCount, enabled = downloadCount > 0))
     }
 }

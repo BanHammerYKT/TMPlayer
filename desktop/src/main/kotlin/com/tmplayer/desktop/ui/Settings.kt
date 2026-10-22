@@ -124,7 +124,7 @@ enum class SettingsCategory {
         /** The page a setup step's settings also live on, for Setup choices' "Also in". */
         fun holding(step: SetupStep): SettingsCategory? = when (step) {
             SetupStep.Posters -> Library
-            SetupStep.Storage -> Playback
+            SetupStep.Storage -> Storage
             SetupStep.Performance, SetupStep.MobileData, SetupStep.Device, SetupStep.CrashReports -> null
         }
     }
@@ -501,7 +501,7 @@ internal class SettingsPages(
                     SettingsCategory.Mouse -> MouseRows(state)
                     SettingsCategory.Library -> LibraryRows(state, version, chatList, jumps)
                     SettingsCategory.Notifications -> NotificationRows(state)
-                    SettingsCategory.Storage -> StorageGroup(state)
+                    SettingsCategory.Storage -> StorageGroup(state, jumps)
                     SettingsCategory.Lock -> LockRows(state, onPin, onKidsChats)
                     SettingsCategory.About -> AboutRows(state, version, onShowAbout)
                     SettingsCategory.SetupChoices -> Unit

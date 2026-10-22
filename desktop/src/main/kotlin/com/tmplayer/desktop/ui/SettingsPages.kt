@@ -160,7 +160,7 @@ internal fun AppearanceRows(state: ShellState) {
 
 /**
  * Playback: what plays next and how, the sound, the decoding and the controls, in the phone's
- * order. Low storage mode is Setup choices' Storage row.
+ * order. Low storage mode is on the Storage page.
  */
 @Composable
 internal fun PlaybackRows(state: ShellState, jumps: Map<SetupStep, JumpTarget>) {
@@ -170,7 +170,6 @@ internal fun PlaybackRows(state: ShellState, jumps: Map<SetupStep, JumpTarget>) 
     val autoplay by settings.autoplayNext.collectAsState(initial = true)
     val detailFirst by settings.detailFirst.collectAsState(initial = true)
     val downloadFirst by settings.downloadBeforePlaying.collectAsState(initial = false)
-    val lowStorage by settings.lowStorageMode.collectAsState(initial = false)
     val trackPrefs by settings.trackPreferences.collectAsState(initial = TrackPreferences())
     val touchPrefs by settings.touchPrefs.collectAsState(initial = TouchPrefs())
     val resumeRewindMs by settings.resumeRewindMs.collectAsState(initial = ResumeRewind.DEFAULT_MS)
@@ -188,15 +187,8 @@ internal fun PlaybackRows(state: ShellState, jumps: Map<SetupStep, JumpTarget>) 
     Toggle(s.settingsDownloadFirst, if (downloadFirst) s.settingsDownloadFirstOn else s.settingsDownloadFirstOff, downloadFirst, icon = TmIcons.Download) {
         scope.launch { settings.setDownloadBeforePlaying(it) }
     }
-    // A rolling window of the video on disk, for a drive with less room than the video; the line
-    // under it says the cost.
-    Toggle(
-        s.settingsLowStorage,
-        if (lowStorage) s.settingsLowStorageOn else s.settingsLowStorageOff,
-        lowStorage,
-        Modifier.jumpTarget(jumps.getValue(SetupStep.Storage)),
-        icon = TmIcons.Archive,
-    ) { on -> scope.launch { settings.setLowStorageMode(on) } }
+    // Low storage mode is on the Storage page, with the rest of what decides the room TMPlayer
+    // takes (user, 2026-10-22).
     Toggle(s.settingsDownmix, if (desktop.downmix) s.settingsDownmixOn else s.settingsDownmixOff, desktop.downmix, icon = TmIcons.VolumeUp) { on ->
         state.extras.prefs.update { it.copy(downmix = on) }
     }
