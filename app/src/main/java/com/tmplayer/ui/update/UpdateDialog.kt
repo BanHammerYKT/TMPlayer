@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import com.tmplayer.data.FormFactor
@@ -91,7 +92,13 @@ fun UpdateDialog(onDismiss: () -> Unit) {
 
     // The device has to be told, once, that installs from TMPlayer are allowed. Android will not
     // take that answer from in here, so the viewer is sent to the switch and comes back with Back.
-    val allowed = Updates.canInstall(context)
+    // Read again each time the app comes back to the front: nothing else redraws the dialog on
+    // return, and a stale answer would send the viewer back to a switch already turned on.
+    var allowed by remember { mutableStateOf(Updates.canInstall(context)) }
+    LifecycleResumeEffect(Unit) {
+        allowed = Updates.canInstall(context)
+        onPauseOrDispose { }
+    }
     val release = state.release
     val offer = release?.let {
         Offer(
