@@ -100,6 +100,8 @@ jobs:
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
           # Optional too: without it films get no posters in that build.
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          # Optional: without it a detail page shows the provider's own score alone.
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
         run: |
           if [ -z "$TG_API_ID" ]; then
             echo "::error::TG_API_ID is not set, so the released APK would not be able to sign in"
@@ -120,6 +122,7 @@ jobs:
           SENTRY_DSN=$SENTRY_DSN
           OPENSUBTITLES_API_KEY=$OPENSUBTITLES_API_KEY
           TMDB_API_KEY=$TMDB_API_KEY
+          OMDB_API_KEY=$OMDB_API_KEY
           EOF
 
       # CI runs the same tests on every push to main, so a tag on code CI has already passed
@@ -263,6 +266,8 @@ jobs:
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          # Optional: without it a detail page shows the provider's own score alone.
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
           # Optional: the desktop's own Sentry project (tmplayer-desktop), else the phone's DSN.
           # With neither, the desktop ships without crash reporting and never offers the switch.
           SENTRY_DSN_DESKTOP: ${{ secrets.SENTRY_DSN_DESKTOP }}
@@ -282,6 +287,7 @@ jobs:
           TG_API_HASH=$TG_API_HASH
           OPENSUBTITLES_API_KEY=$OPENSUBTITLES_API_KEY
           TMDB_API_KEY=$TMDB_API_KEY
+          OMDB_API_KEY=$OMDB_API_KEY
           SENTRY_DSN_DESKTOP=$SENTRY_DSN_DESKTOP
           SENTRY_DSN=$SENTRY_DSN
           EOF
@@ -328,6 +334,8 @@ jobs:
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          # Optional: without it a detail page shows the provider's own score alone.
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
           # Optional: the desktop's own Sentry project (tmplayer-desktop), else the phone's DSN.
           # With neither, the desktop ships without crash reporting and never offers the switch.
           SENTRY_DSN_DESKTOP: ${{ secrets.SENTRY_DSN_DESKTOP }}
@@ -344,8 +352,8 @@ jobs:
           fi
           # One printf for every line: two used to write the file in turn, and the second left
           # the Windows build without its OpenSubtitles key.
-          printf 'TG_API_ID=%s\nTG_API_HASH=%s\nOPENSUBTITLES_API_KEY=%s\nTMDB_API_KEY=%s\nSENTRY_DSN_DESKTOP=%s\nSENTRY_DSN=%s\n' \
-            "$TG_API_ID" "$TG_API_HASH" "$OPENSUBTITLES_API_KEY" "$TMDB_API_KEY" "$SENTRY_DSN_DESKTOP" "$SENTRY_DSN" > local.properties
+          printf 'TG_API_ID=%s\nTG_API_HASH=%s\nOPENSUBTITLES_API_KEY=%s\nTMDB_API_KEY=%s\nOMDB_API_KEY=%s\nSENTRY_DSN_DESKTOP=%s\nSENTRY_DSN=%s\n' \
+            "$TG_API_ID" "$TG_API_HASH" "$OPENSUBTITLES_API_KEY" "$TMDB_API_KEY" "$OMDB_API_KEY" "$SENTRY_DSN_DESKTOP" "$SENTRY_DSN" > local.properties
 
       - name: Package and self-test
         uses: ./.github/actions/desktop-windows
@@ -389,6 +397,8 @@ jobs:
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          # Optional: without it a detail page shows the provider's own score alone.
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
           # Optional: the desktop's own Sentry project (tmplayer-desktop), else the phone's DSN.
           # With neither, the desktop ships without crash reporting and never offers the switch.
           SENTRY_DSN_DESKTOP: ${{ secrets.SENTRY_DSN_DESKTOP }}
@@ -408,6 +418,7 @@ jobs:
           TG_API_HASH=$TG_API_HASH
           OPENSUBTITLES_API_KEY=$OPENSUBTITLES_API_KEY
           TMDB_API_KEY=$TMDB_API_KEY
+          OMDB_API_KEY=$OMDB_API_KEY
           SENTRY_DSN_DESKTOP=$SENTRY_DSN_DESKTOP
           SENTRY_DSN=$SENTRY_DSN
           EOF

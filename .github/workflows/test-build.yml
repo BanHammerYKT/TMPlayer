@@ -45,6 +45,8 @@ jobs:
           TG_API_HASH: ${{ secrets.TG_API_HASH }}
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
           TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
+          # Optional: without it a detail page shows the provider's own score alone.
+          OMDB_API_KEY: ${{ secrets.OMDB_API_KEY }}
         run: |
           if [ -z "$TG_API_ID" ]; then
             echo "::error::TG_API_ID is not set, so the test build would not be able to sign in"
@@ -55,6 +57,7 @@ jobs:
           TG_API_HASH=$TG_API_HASH
           OPENSUBTITLES_API_KEY=$OPENSUBTITLES_API_KEY
           TMDB_API_KEY=$TMDB_API_KEY
+          OMDB_API_KEY=$OMDB_API_KEY
           EOF
 
       - name: Package and self-test

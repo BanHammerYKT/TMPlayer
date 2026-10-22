@@ -50,6 +50,9 @@ val generateBuildInfo = tasks.register("generateBuildInfo") {
     // Optional: without it films get no posters, as on Android; shows still come from TVmaze.
     val tmdbKey = localProps.getProperty("TMDB_API_KEY") ?: System.getenv("TMDB_API_KEY") ?: ""
     inputs.property("tmdbKey", tmdbKey)
+    // Optional: without it a detail page shows the provider's own score alone, as on Android.
+    val omdbKey = localProps.getProperty("OMDB_API_KEY") ?: System.getenv("OMDB_API_KEY") ?: ""
+    inputs.property("omdbKey", omdbKey)
     // Optional: without it the desktop has nowhere to send a crash report, and Settings and the
     // setup never offer the switch, as on Android. The desktop's own Sentry project first
     // (tmplayer-desktop), else the phone's; a blank value counts as none.
@@ -72,6 +75,7 @@ val generateBuildInfo = tasks.register("generateBuildInfo") {
             |    const val TG_API_HASH = "$apiHash"
             |    const val OPENSUBTITLES_API_KEY = "$openSubtitlesKey"
             |    const val TMDB_API_KEY = "$tmdbKey"
+            |    const val OMDB_API_KEY = "$omdbKey"
             |    const val SENTRY_DSN = "$sentryDsn"
             |}
             |""".trimMargin(),

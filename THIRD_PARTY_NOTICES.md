@@ -272,6 +272,23 @@ under permissive licences. The OpenSSL each platform links is listed in its own 
 The Gradle wrapper scripts are provided under Apache License 2.0. Test-only dependencies are not
 packaged in any build.
 
+## Data from online services
+
+Nothing below ships in a build: it is looked up while online metadata is on, cached on the device
+and credited in About.
+
+- TMDB (<https://www.themoviedb.org>): posters, overviews, cast and the TMDB score. This product
+  uses the TMDB API but is not endorsed or certified by TMDB.
+- TVmaze (<https://www.tvmaze.com>): shows, episodes and the TVmaze score, CC BY-SA 4.0.
+- AniList (<https://anilist.co>): anime and the AniList score.
+- OMDb, the Open Movie Database (<https://www.omdbapi.com>): the IMDb, Rotten Tomatoes and
+  Metacritic scores on a detail page, asked by IMDb id with the build's key or the viewer's own.
+  OMDb's data is CC BY-NC 4.0 (<https://creativecommons.org/licenses/by-nc/4.0/>); TMPlayer is
+  free and non-commercial.
+- Wikidata (<https://www.wikidata.org>): the Rotten Tomatoes and Metacritic scores on a detail
+  page when OMDb cannot answer, asked by IMDb id on the Wikidata Query Service. Wikidata's data
+  is CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>).
+
 ## Visual assets
 
 - Poppins fonts: SIL Open Font License 1.1. The full text is in `site/public/fonts/OFL-Poppins.txt`.

@@ -52,6 +52,7 @@ val webOwnPieces = setOf(
     "com/tmplayer/ui/online/TrailerOpener.kt",
     "com/tmplayer/ui/onboarding/SetupImageDesktop.kt",
     "com/tmplayer/ui/auth/QrBitmap.kt",
+    "com/tmplayer/ui/auth/PlatformRegion.kt",
     "com/tmplayer/ui/theme/ReducedMotion.kt",
     "com/tmplayer/ui/components/IconTipDesktop.kt",
     "com/tmplayer/ui/onboarding/DeviceFitDesktop.kt",

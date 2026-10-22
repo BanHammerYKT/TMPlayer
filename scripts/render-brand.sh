@@ -5,15 +5,19 @@
 # by link unfurlers such as WhatsApp and LinkedIn, which cannot be relied on to decode WebP and
 # would show no picture at all, and icon-512.png is the PWA icon, where installers expect PNG.
 #
-# Run it from anywhere: paths are resolved against the repository root.
+# Run it from anywhere: paths are resolved against the repository root. With `web` it renders only
+# the web app's link preview (scripts/og-card-web.html into web/src/wasmJsMain/resources/og.png).
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+only=${1:-}
 
 # The PWA icon is the plain mark. A density of 512 over the 108 unit viewBox renders the vector at
 # its final size rather than upscaling a small raster.
+if [ "$only" != web ]; then
 magick -background none -density 512 "$root/site/public/logo.svg" \
     -resize 512x512 -strip "$root/site/public/icon-512.png"
+fi
 
 # The social card is drawn in HTML from the site's own stylesheet, so the type and the TV and phone
 # frames match the home page hero. It is served over a local web server because Chromium will not
@@ -26,10 +30,18 @@ python3 -m http.server "$port" --bind 127.0.0.1 --directory "$root" >/dev/null 2
 server=$!
 trap 'kill "$server" 2>/dev/null; rm -rf "$tmp"' EXIT
 sleep 1
-chromium-browser --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
-    --force-device-scale-factor=1 --force-prefers-reduced-motion --window-size=1200,630 \
-    --virtual-time-budget=6000 --screenshot="$tmp/og.png" \
-    "http://127.0.0.1:$port/scripts/og-card.html" 2>/dev/null
-magick "$tmp/og.png" -strip -depth 8 -define png:color-type=2 "$root/site/public/og.png"
-
-echo "wrote site/public/icon-512.png and site/public/og.png"
+card() {
+    chromium-browser --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+        --user-data-dir="$tmp/profile" \
+        --force-device-scale-factor=1 --force-prefers-reduced-motion --window-size=1200,630 \
+        --virtual-time-budget=6000 --screenshot="$tmp/og.png" \
+        "http://127.0.0.1:$port/scripts/$1" 2>/dev/null
+    magick "$tmp/og.png" -strip -depth 8 -define png:color-type=2 "$2"
+}
+if [ "$only" = web ]; then
+    card og-card-web.html "$root/web/src/wasmJsMain/resources/og.png"
+    echo "wrote web/src/wasmJsMain/resources/og.png"
+else
+    card og-card.html "$root/site/public/og.png"
+    echo "wrote site/public/icon-512.png and site/public/og.png"
+fi

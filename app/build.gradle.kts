@@ -116,6 +116,13 @@ android {
             ?: System.getenv("TMDB_API_KEY")
             ?: ""
         buildConfigField("String", "TMDB_API_KEY", "\"$tmdbKey\"")
+        // The OMDb key for IMDb's, Rotten Tomatoes' and Metacritic's scores on a detail page.
+        // Optional: without it the page shows the provider's own score alone. Set OMDB_API_KEY in
+        // local.properties or the environment; CI takes it from the secret.
+        val omdbKey = localProps.getProperty("OMDB_API_KEY")
+            ?: System.getenv("OMDB_API_KEY")
+            ?: ""
+        buildConfigField("String", "OMDB_API_KEY", "\"$omdbKey\"")
 
         // Donation links and the support card, all behind one switch (SupportReminder.enabled).
         // The `play` flavor planned in CP35 sets this to false: Play does not allow donation links
