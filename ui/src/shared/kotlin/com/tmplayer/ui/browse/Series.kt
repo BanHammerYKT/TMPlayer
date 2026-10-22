@@ -547,13 +547,9 @@ private fun EpisodeLine(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                item.title,
-                style = if (tv || large) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
-                color = Tone.muted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // No Telegram file name line: the S1 E5 line, the name and the facts already say which
+            // episode it is (user, 2026-10-22), and a card that never gains or loses a line keeps its
+            // height when the provider's name arrives.
             val stopped = point?.takeIf { it.positionMs > 0 && !finished }
                 ?.let { s.seriesStoppedAt(StreamStats.formatClock(it.positionMs)) }
             val meta = listOfNotNull(
