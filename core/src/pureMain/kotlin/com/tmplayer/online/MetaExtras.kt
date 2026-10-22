@@ -77,11 +77,26 @@ data class MetaExtras(
     val imdbId: String? = null,
     val tvdbId: String? = null,
     val malId: String? = null,
+    /**
+     * Every site's score the page shows, in [ScoreSource] order: IMDb, Rotten Tomatoes and
+     * Metacritic from OMDb by [imdbId] (Rotten Tomatoes and Metacritic from Wikidata where OMDb
+     * could not be asked or did not have them), then the provider's own (TMDB, AniList or TVmaze).
+     */
+    val scores: List<MetaScore> = emptyList(),
+    /**
+     * OMDb or Wikidata answered for [scores] (whatever they said), so an answer kept from before
+     * they were asked is asked once, and a revisit asks nobody until [scoresAt] is old.
+     */
+    val scoresAsked: Boolean = false,
+    /** When [scores] were last asked for, in epoch seconds; zero for never. Asked again after 30 days. */
+    val scoresAt: Long = 0,
+    /** OMDb itself answered (not only Wikidata), so the page has IMDb's score if OMDb has one. */
+    val scoresFromOmdb: Boolean = false,
 ) {
     val isEmpty: Boolean
         get() = genres.isEmpty() && runtimeMin == null && seasons == null && rating == null && certification == null &&
             directors.isEmpty() && creators.isEmpty() && cast.isEmpty() && trailer == null && similar.isEmpty() &&
-            seasonList.isEmpty() && nextEpisode == null
+            seasonList.isEmpty() && nextEpisode == null && scores.isEmpty()
 
     fun toJson(): JSONObject = JSONObject()
         .put("genres", JSONArray(genres))
@@ -107,6 +122,10 @@ data class MetaExtras(
         .put("imdb", imdbId.orEmpty())
         .put("tvdb", tvdbId.orEmpty())
         .put("mal", malId.orEmpty())
+        .put("scores", MetaScore.listToJson(scores))
+        .put("scoresAsked", scoresAsked)
+        .put("scoresAt", scoresAt)
+        .put("scoresFromOmdb", scoresFromOmdb)
 
     companion object {
         fun fromJson(json: JSONObject): MetaExtras? = runCatching {
@@ -142,6 +161,10 @@ data class MetaExtras(
                 imdbId = json.optString("imdb").ifBlank { null },
                 tvdbId = json.optString("tvdb").ifBlank { null },
                 malId = json.optString("mal").ifBlank { null },
+                scores = MetaScore.listFromJson(json.optJSONArray("scores")),
+                scoresAsked = json.optBoolean("scoresAsked"),
+                scoresAt = json.optLong("scoresAt"),
+                scoresFromOmdb = json.optBoolean("scoresFromOmdb"),
             )
         }.getOrNull()
     }

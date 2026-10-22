@@ -82,6 +82,7 @@ import com.tmplayer.data.SettingsStore
 import com.tmplayer.data.ShelfEntry
 import com.tmplayer.data.WatchLaterRecord
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.TmSecondaryButton
 import com.tmplayer.ui.components.WithinMargins
 import com.tmplayer.ui.components.edgeFade
@@ -168,6 +169,11 @@ internal fun HomePane(
     mayTakeFocus: () -> Boolean = { true },
     /** On the TV carousel's Play, for Down from the top bar. */
     tvPlayFocus: FocusRequester? = null,
+    /**
+     * Movies and Shows read on through Home's chats as they are scrolled to their end
+     * ([com.tmplayer.ui.browse.HomeViewModel.seeAll]); null keeps each row to what Home holds.
+     */
+    feedOf: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
 ) {
     val s = LocalStrings.current
     val touch = isTouch()
@@ -178,6 +184,7 @@ internal fun HomePane(
         // Nothing played and nothing starred: a first run, so say how to get a first video in.
         Column(Modifier.fillMaxSize().padding(top = under)) {
             tvHeader?.invoke(false)
+            if (touch) PhoneHomeBrand(Modifier.padding(start = start, top = BRAND_TOP), onArt = false)
             Box(Modifier.fillMaxSize()) { FirstVideoEmpty(onOpenSection) }
         }
         return
@@ -202,7 +209,7 @@ internal fun HomePane(
     val scope = rememberCoroutineScope()
     // Kept across a turn of the phone: the show is looked up again in the rows once they are back.
     val opened = rememberOpenSeries { key, chatId -> HomeLaunch.find(key, chatId, rows) }
-    val listState = rememberLazyListState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState()
     // Home pressed again on the bar: back to the top, the featured carousel whole.
     ScrollToTopOnReselect(TouchDestination.Home) { animate -> listState.toTop(animate) }
     // Back from Home's rows to the TV top bar: the same, as Home looks when it opens.
@@ -352,6 +359,7 @@ internal fun HomePane(
                             playFocus = tvPlayFocus,
                         )
                     } else item(key = FEATURED_KEY, contentType = FEATURED_KEY) {
+                      Box {
                         FeaturedCarousel(
                             picks = featured,
                             height = carouselHeight,
@@ -367,6 +375,15 @@ internal fun HomePane(
                                 if (series != null) opened.open(series) else onHoldMedia(pick.item, chatTitle(pick.item.chatId))
                             },
                         )
+                        // The app's mark and name in the picture's top corner, under the status
+                        // bar, as the desktop sets them (user, 2026-10-22).
+                        PhoneHomeBrand(Modifier.align(Alignment.TopStart).padding(start = start, top = under + BRAND_TOP), onArt = true)
+                      }
+                    }
+                } else if (touch) {
+                    // No carousel: the name heads the rows instead.
+                    item(key = BRAND_KEY, contentType = BRAND_KEY) {
+                        PhoneHomeBrand(Modifier.padding(start = start, top = BRAND_TOP, bottom = 4.dp), onArt = false)
                     }
                 }
                 items(listed, key = { it.key }, contentType = { it::class }) { row ->
@@ -494,7 +511,18 @@ internal fun HomePane(
                             }
                             is HomeRow.Chat -> ShelfRows(row.entries, watch, touch, isFirst, first, { row.title }, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
                             is HomeRow.Recent -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
-                            is HomeRow.Across -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll) { opened.open(it) }
+                            is HomeRow.Across -> {
+                                // Read on through Home's chats once the row is scrolled near its
+                                // end: the next tiles land after the last, nothing before it moves.
+                                var feed by remember(row.key) { mutableStateOf<com.tmplayer.ui.browse.RowFeed?>(null) }
+                                val fed = feed?.state?.collectAsState()?.value
+                                LaunchedEffect(feed, row) { feed?.reshape(row) }
+                                val paging = RowPaging(fed) {
+                                    val reading = feed ?: feedOf(row).also { feed = it }
+                                    reading?.loadMore()
+                                }
+                                ShelfRows(fed?.entries ?: row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, upToSeeAll, paging) { opened.open(it) }
+                            }
                         }
                     }
                 }
@@ -525,6 +553,8 @@ internal fun HomePane(
             )
         }
         ScrollToTop(listState)
+        // Home's rows are not in an order a bubble could name, so the handle carries no label.
+        FastScroller(listState)
     }
 
     // Somewhere for the remote to stand the moment Home opens. Keyed on the first row, so a row
@@ -572,13 +602,40 @@ private fun ShelfRows(
     start: Dp,
     end: Dp,
     upToSeeAll: Modifier,
+    /** How the row reads on past its last tile; null for a row that holds what it has. */
+    paging: RowPaging? = null,
     onOpenSeries: (Series) -> Unit,
 ) {
     val poster = remember(entries) { SeriesShelf.posterKeys(entries).isNotEmpty() }
-    TileRow(start, end, upToSeeAll) {
+    val list = com.tmplayer.ui.components.rememberAheadListState()
+    if (paging != null) {
+        val fed = paging.state
+        com.tmplayer.ui.components.LoadMoreAhead(
+            list,
+            enabled = fed == null || (!fed.loading && !fed.done && fed.failure == null),
+            ahead = ROW_TILES_AHEAD,
+            onLoadMore = paging.more,
+        )
+    }
+    TileRow(start, end, upToSeeAll, list) {
         entries(entries, poster, watch, touch, if (isFirstRow) entries.firstOrNull() else null, first, chatTitle, onPlay, onHold, onOpenSeries)
+        val fed = paging?.state
+        if (fed != null && (fed.loading || fed.failure != null)) {
+            item(key = "more-foot", contentType = "more-foot") {
+                val width = if (poster) posterWidth(touch) else wideWidth(touch)
+                com.tmplayer.ui.components.PageFoot(fed.loading, fed.failure, onRetry = paging.more, modifier = Modifier.width(wideWidth(touch))) {
+                    PlaceholderTile(width, touch, poster)
+                }
+            }
+        }
     }
 }
+
+/** A row reading on past its last tile: what its read stands at (null before the first), and how to ask for more. */
+private class RowPaging(val state: com.tmplayer.ui.browse.RowFeed.State?, val more: () -> Unit)
+
+/** Tiles ahead of a row's end that its next videos are asked for at. */
+private const val ROW_TILES_AHEAD = 4
 
 private fun LazyListScope.entries(
     entries: List<ShelfEntry>,
@@ -635,12 +692,13 @@ private fun TileRow(
     start: Dp,
     end: Dp,
     modifier: Modifier = Modifier,
+    row: androidx.compose.foundation.lazy.LazyListState = com.tmplayer.ui.components.rememberAheadListState(),
     content: LazyListScope.() -> Unit,
 ) {
+    com.tmplayer.ui.components.KeepAtStart(row)
     if (!isTouch()) {
         // On a television the tiles fade out over the margins rather than being cut off at the
         // rail, and the tile the remote moves to stays inside them.
-        val row = rememberLazyListState()
         // The remote's tile stands at one place, the start of the row, and the row slides under it.
         AnchoredAtStart(start) {
             LazyRow(
@@ -656,6 +714,7 @@ private fun TileRow(
         return
     }
     LazyRow(
+        state = row,
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(start = start, end = end),
         horizontalArrangement = Arrangement.spacedBy(TILE_GAP_TOUCH),
@@ -767,26 +826,30 @@ private fun PlaceholderRow(start: Dp) {
         Modifier.fillMaxWidth().padding(start = start, top = if (touch) 0.dp else Tv.FocusClearance, bottom = if (touch) 0.dp else Tv.FocusClearance),
         horizontalArrangement = Arrangement.spacedBy(if (touch) TILE_GAP_TOUCH else TILE_GAP_TV),
     ) {
-        repeat(PLACEHOLDER_TILES) {
-            Column(Modifier.width(width)) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(Corner.Medium))
-                        .background(Tone.surface),
-                )
-                Spacer(Modifier.height(if (touch) 8.dp else 10.dp))
-                if (touch) {
-                    M3Text(" ", style = M3MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2)
-                    Spacer(Modifier.height(2.dp))
-                    M3Text(" ", style = M3MaterialTheme.typography.labelMedium, maxLines = 1)
-                } else {
-                    Text(" ", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    Spacer(Modifier.height(2.dp))
-                    Text(" ", style = MaterialTheme.typography.labelMedium, maxLines = 1)
-                }
-            }
+        repeat(PLACEHOLDER_TILES) { PlaceholderTile(width, touch) }
+    }
+}
+
+/** One blank card the size of a real one: a [PlaceholderRow]'s, and the foot of a row reading on. */
+@Composable
+private fun PlaceholderTile(width: Dp, touch: Boolean, poster: Boolean = false) {
+    Column(Modifier.width(width)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(if (poster) 2f / 3f else 16f / 9f)
+                .clip(RoundedCornerShape(Corner.Medium))
+                .background(Tone.surface),
+        )
+        Spacer(Modifier.height(if (touch) 8.dp else 10.dp))
+        if (touch) {
+            M3Text(" ", style = M3MaterialTheme.typography.titleSmall, minLines = 2, maxLines = 2)
+            Spacer(Modifier.height(2.dp))
+            M3Text(" ", style = M3MaterialTheme.typography.labelMedium, maxLines = 1)
+        } else {
+            Text(" ", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+            Spacer(Modifier.height(2.dp))
+            Text(" ", style = MaterialTheme.typography.labelMedium, maxLines = 1)
         }
     }
 }
@@ -966,4 +1029,20 @@ private fun calmVertical(barPx: Float) = object : androidx.compose.foundation.ge
             else -> 0f
         }
     }
+}
+
+/** The list key of the name over Home's rows when there is no carousel. */
+private const val BRAND_KEY = "brand"
+
+/** The name's distance below the status bar on a phone's Home. */
+internal val BRAND_TOP = 12.dp
+
+/** The mark and "TMPlayer" at the top of a phone's Home, in the colours for art over the carousel. */
+@Composable
+internal fun PhoneHomeBrand(modifier: Modifier, onArt: Boolean) {
+    com.tmplayer.ui.components.BrandLockup(
+        modifier,
+        layout = com.tmplayer.ui.components.BrandLayout.Row,
+        color = if (onArt) Tone.onArt else Tone.text,
+    )
 }

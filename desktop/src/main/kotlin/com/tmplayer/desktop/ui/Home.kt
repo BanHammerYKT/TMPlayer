@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -49,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -82,12 +84,14 @@ import com.tmplayer.ui.browse.continueCardTitle
 import com.tmplayer.ui.browse.ContinueCardArt
 import com.tmplayer.ui.browse.FirstVideoCard
 import com.tmplayer.ui.browse.HomeViewModel
+import com.tmplayer.ui.components.LoadMoreAhead
 import com.tmplayer.ui.browse.NewBadge
 import com.tmplayer.ui.browse.rememberHomeRows
 import com.tmplayer.ui.browse.homeRowTitle
 import com.tmplayer.ui.browse.isLoaded
 import com.tmplayer.ui.components.warmUpOnIntent
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.UiState
 import com.tmplayer.ui.components.WithinMargins
 import com.tmplayer.ui.components.edgeFade
@@ -160,6 +164,7 @@ fun HomePage(state: ShellState, chats: ChatListViewModel) {
         onArtWanted = model::requestArt,
         onLaterArtWanted = model::requestArt,
         onRefresh = model::refreshInPlace,
+        seeAll = model::seeAll,
     )
 }
 
@@ -187,6 +192,8 @@ internal fun HomeRowsView(
     onArtWanted: (ResumeRecord) -> Unit,
     onRefresh: () -> Unit,
     onLaterArtWanted: (WatchLaterRecord) -> Unit = {},
+    /** A row's See all page read on through its chats ([HomeViewModel.seeAll]); null keeps it to what Home holds. */
+    seeAll: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
 ) {
     val s = LocalStrings.current
     var openSeries by remember { mutableStateOf<Series?>(null) }
@@ -195,7 +202,7 @@ internal fun HomeRowsView(
     LaunchedEffect(titles) { state.noteChatTitles(chats) }
     // Held above the show and "See all" pages, so coming back from either finds the rows where
     // they were rather than at the top.
-    val list = rememberLazyListState()
+    val list = com.tmplayer.ui.components.rememberAheadListState()
     val shown = openSeries
     if (shown != null) {
         SeriesPage(state, shown, rememberSeriesWatch(state), onClose = { openSeries = null })
@@ -206,6 +213,7 @@ internal fun HomeRowsView(
         RowPage(
             state = state,
             row = paged,
+            feed = remember(paged.key) { seeAll(paged) },
             titles = titles,
             chats = chats,
             art = art,
@@ -246,7 +254,9 @@ internal fun HomeRowsView(
         Column(Modifier.fillMaxSize()) {
             if (rows.isEmpty()) {
                 LaunchedEffect(Unit) { com.tmplayer.ui.browse.HomeFirstPaint.markReady() }
-                Box(Modifier.fillMaxWidth().height(TOP_DRAG).windowDrag())
+                Box(Modifier.fillMaxWidth().height(TOP_DRAG).windowDrag()) {
+                    HomeBrand(Modifier.align(Alignment.TopStart).padding(start = side, top = BRAND_TOP))
+                }
                 // Nothing played and nothing starred: a first run, so say how to get a first video in:
                 // forward it to Saved Messages, which the button opens.
                 Box(
@@ -279,24 +289,34 @@ internal fun HomeRowsView(
                                 kotlinx.coroutines.delay(1_500L)
                                 com.tmplayer.ui.browse.HomeFirstPaint.markReady()
                             }
-                            Box(Modifier.fillMaxWidth().height(TOP_DRAG).windowDrag())
+                            // The name in the strip the window is dragged by, where the carousel would set it.
+                            Box(Modifier.fillMaxWidth().height(TOP_DRAG).windowDrag()) {
+                                HomeBrand(Modifier.align(Alignment.TopStart).padding(start = side, top = BRAND_TOP))
+                            }
                         } else {
-                            FeaturedCarousel(
-                                picks = featured,
-                                height = featuredHeight(maxWidth, maxHeight),
-                                side = side,
-                                watch = watch,
-                                chatTitle = { titles[it].orEmpty() },
-                                onPlay = { state.openPlayer(it, startFromBeginning = false) },
-                                onDetails = { pick ->
-                                    val show = pick.series
-                                    if (show != null) {
-                                        openSeries = show
-                                    } else {
-                                        state.openDetail(DetailRequest(pick.item, titles[pick.item.chatId].orEmpty(), outsideChat = true))
-                                    }
-                                },
-                            )
+                            // The app's name over the carousel's empty top corner, as the side bar sets it
+                            // (user, 2026-10-22), with the browser's Beta word beside it.
+                            // Read here: the Box below hides the frame's own measures.
+                            val heroHeight = featuredHeight(maxWidth, maxHeight)
+                            Box {
+                                FeaturedCarousel(
+                                    picks = featured,
+                                    height = heroHeight,
+                                    side = side,
+                                    watch = watch,
+                                    chatTitle = { titles[it].orEmpty() },
+                                    onPlay = { state.openPlayer(it, startFromBeginning = false) },
+                                    onDetails = { pick ->
+                                        val show = pick.series
+                                        if (show != null) {
+                                            openSeries = show
+                                        } else {
+                                            state.openDetail(DetailRequest(pick.item, titles[pick.item.chatId].orEmpty(), outsideChat = true))
+                                        }
+                                    },
+                                )
+                                HomeBrand(Modifier.align(Alignment.TopStart).padding(start = side, top = BRAND_TOP))
+                            }
                         }
                     }
                     items(shownRows, key = { it.key }, contentType = { it::class }) { row ->
@@ -339,6 +359,7 @@ internal fun HomeRowsView(
                     }
                 }
                 ScrollToTop(list)
+                FastScroller(list)
             }
         }
     }
@@ -354,6 +375,7 @@ internal fun HomeRowsView(
 private fun RowPage(
     state: ShellState,
     row: HomeRow,
+    feed: com.tmplayer.ui.browse.RowFeed?,
     titles: Map<Long, String>,
     chats: List<ChatSummary>,
     art: Map<String, MediaItem>,
@@ -388,10 +410,15 @@ private fun RowPage(
             },
         )
         val side = pageMargin()
+        // The row's chats read on a page at a time as the foot comes near: the row's own tiles
+        // first, then everything else, newest first, growing only at the foot.
+        val fed = feed?.state?.collectAsState()?.value
+        LaunchedEffect(feed, row) { (feed ?: return@LaunchedEffect).reshape(row) }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val sizes = CardSizes.of(state.posterWidth, maxWidth - side * 2, peek = false)
+            val fedEntries = fed?.entries
             // Each kind of card in its own grid, a row of cells at a time, so the grid stays lazy.
-            val sections: List<Pair<Dp, List<Pair<String, @Composable () -> Unit>>>> = remember(row, art, sizes) {
+            val sections: List<Pair<Dp, List<Pair<String, @Composable () -> Unit>>>> = remember(row, art, sizes, fedEntries) {
                 when (row) {
                     is HomeRow.Continue -> listOf(
                         sizes.wide to (row.records + row.more).map { record ->
@@ -406,12 +433,15 @@ private fun RowPage(
                     is HomeRow.NewEpisodes -> listOf(
                         sizes.card to row.episodes.map { episode -> "n-${episode.item.id}" to @Composable { NewEpisodeCell(state, episode, titles) } },
                     )
-                    is HomeRow.Chat -> shelfSections(state, sizes, row.entries + SeriesShelf.arrange(row.more), { row.title }, onOpenSeries)
-                    is HomeRow.Recent -> shelfSections(state, sizes, row.entries, { titles[it].orEmpty() }, onOpenSeries)
-                    is HomeRow.Across -> shelfSections(state, sizes, row.entries, { titles[it].orEmpty() }, onOpenSeries)
+                    is HomeRow.Chat -> shelfSections(state, sizes, fedEntries ?: (row.entries + SeriesShelf.arrange(row.more)), { row.title }, onOpenSeries)
+                    is HomeRow.Recent -> shelfSections(state, sizes, fedEntries ?: row.entries, { titles[it].orEmpty() }, onOpenSeries)
+                    is HomeRow.Across -> shelfSections(state, sizes, fedEntries ?: row.entries, { titles[it].orEmpty() }, onOpenSeries)
                 }
             }
-            val list = rememberLazyListState()
+            val list = com.tmplayer.ui.components.rememberAheadListState()
+            if (feed != null && fed != null) {
+                LoadMoreAhead(list, enabled = !fed.loading && !fed.done && fed.failure == null, ahead = FEED_LINES_AHEAD) { feed.loadMore() }
+            }
             LazyColumn(
                 Modifier.fillMaxSize().homeEndScrolls(list),
                 state = list,
@@ -429,11 +459,30 @@ private fun RowPage(
                         }
                     }
                 }
+                if (feed != null && fed != null && (fed.loading || fed.failure != null)) {
+                    item(key = "foot", contentType = "foot") {
+                        com.tmplayer.ui.components.PageFoot(fed.loading, fed.failure, onRetry = feed::loadMore) {
+                            // A line of placeholder cards shaped as the page's last grid, where the next ones land.
+                            val width = sections.lastOrNull()?.first ?: sizes.card
+                            val poster = width == sizes.poster
+                            val shimmer = com.tmplayer.ui.components.rememberShimmer()
+                            Row(horizontalArrangement = Arrangement.spacedBy(CARD_GAP)) {
+                                repeat(sizes.columnsFor(width)) { index ->
+                                    PosterSkeleton(shimmer, poster, index, modifier = Modifier.width(width))
+                                }
+                            }
+                        }
+                    }
+                }
             }
             ScrollToTop(list)
+            FastScroller(list)
         }
     }
 }
+
+/** Lines of cards ahead of a See all page's foot that its next page is asked for at. */
+private const val FEED_LINES_AHEAD = 3
 
 /** A row's posters and its other videos, as two grids of their own (see [ShelfStrips]). */
 private fun shelfSections(
@@ -633,7 +682,8 @@ private data class CardSizes(val card: Dp, val wide: Dp, val poster: Dp, private
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun Strip(side: Dp, content: LazyListScope.() -> Unit) {
-    val strip = rememberLazyListState()
+    val strip = com.tmplayer.ui.components.rememberAheadListState()
+    com.tmplayer.ui.components.KeepAtStart(strip)
     val scope = rememberCoroutineScope()
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
@@ -650,7 +700,8 @@ private fun Strip(side: Dp, content: LazyListScope.() -> Unit) {
                     else -> 0f
                 }
                 if (sideways == 0f) return@onPointerEvent
-                scope.launch { strip.scrollBy((if (rtl) -sideways else sideways) * WHEEL_STEP_PX) }
+                val px = wheelPixels(if (rtl) -sideways else sideways, density)
+                scope.launch { strip.scrollBy(px) }
                 event.changes.forEach { it.consume() }
             },
     ) {
@@ -753,6 +804,15 @@ private const val CONTINUE_SHARE = 1.25f
 /** The strip at the top the window is dragged by when there is no carousel. */
 private val TOP_DRAG = 56.dp
 
+/** The name's distance from the top of the carousel: level with the window's buttons. */
+private val BRAND_TOP = 14.dp
+
+/** The mark and "TMPlayer" over the carousel's picture or the top strip; the browser's Beta word is the nav bar's, on every page. */
+@Composable
+private fun HomeBrand(modifier: Modifier = Modifier) {
+    com.tmplayer.ui.components.BrandLockup(modifier, layout = com.tmplayer.ui.components.BrandLayout.Row, badge = false)
+}
+
 /** Between two cards in a strip or a grid. */
 private val CARD_GAP = 16.dp
 
@@ -765,8 +825,6 @@ private const val PAGE_SHARE = 0.8f
 /** A strip's arrow buttons. */
 private val STRIP_ARROW = 44.dp
 
-/** Pixels a strip moves per step of the wheel or the trackpad's sideways delta. */
-private const val WHEEL_STEP_PX = 64f
 
 
 /**

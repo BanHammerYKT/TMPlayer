@@ -1,5 +1,6 @@
 package com.tmplayer.ui.settings
 
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.keepTopInSight
 import android.content.Intent
 import android.net.Uri
@@ -384,6 +385,7 @@ fun SettingsScreen(
     var reporting by remember { mutableStateOf(false) }
     var onlineDialog by remember { mutableStateOf<OnlineDialog?>(null) }
     var editingTmdbKey by remember { mutableStateOf(false) }
+    var editingOmdbKey by remember { mutableStateOf(false) }
     val language by settings.language.collectAsStateWithLifecycle(initialValue = "")
     val openPage = { url: String, what: String -> if (!openLink(context, url)) qrLink = url to what }
     // What TMPlayer is holding, split into downloads, cache and everything else. Worked out by
@@ -1311,6 +1313,7 @@ fun SettingsScreen(
                 // ---- posters and details --------------------------------------------------------------
                 onlineMetadataSection(
                     onEditKey = { editingTmdbKey = true },
+                    onEditOmdbKey = { editingOmdbKey = true },
                     toggleModifier = Modifier.jumpTarget(jumps.getValue(SetupStep.Posters)),
                 )
             }
@@ -2029,7 +2032,11 @@ fun SettingsScreen(
                 modifier = Modifier.nestedScroll(pageScroll.nestedScrollConnection),
                 topBar = { FloatingPageTitle({ M3Text(titleOf(page!!)) }, pageScroll) },
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding)) { list() }
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    list()
+                    // Only a page long enough to need it shows the handle.
+                    FastScroller(if (page == null) listState else pageState)
+                }
             }
             FloatingBackButton(TmIcons.ArrowBack, s.aboutBackToSettings, { closePage() }, Modifier.align(Alignment.TopStart))
         }
@@ -2042,7 +2049,11 @@ fun SettingsScreen(
                 modifier = Modifier.nestedScroll(listScroll.nestedScrollConnection),
                 topBar = { FloatingPageTitle({ M3Text(s.settingsTitle) }, listScroll) },
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding)) { list() }
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    list()
+                    // Only a page long enough to need it shows the handle.
+                    FastScroller(if (page == null) listState else pageState)
+                }
             }
             FloatingBackButton(TmIcons.ArrowBack, s.commonBack, onBack, Modifier.align(Alignment.TopStart))
         }
@@ -2122,6 +2133,7 @@ fun SettingsScreen(
     if (reporting) FeedbackDialog(onClose = { reporting = false })
     onlineDialog?.let { OnlineSubtitlesDialog(it, onClose = { onlineDialog = null }) }
     if (editingTmdbKey) MetadataKeyDialog(onClose = { editingTmdbKey = false })
+    if (editingOmdbKey) OmdbKeyDialog(onClose = { editingOmdbKey = false })
 
     if (pickingKidsChats) {
         KidsChatsSheet(

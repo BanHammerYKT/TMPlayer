@@ -54,6 +54,25 @@ class MetadataCache(
     }
 
     @Synchronized
+    override fun logos(limit: Int): List<Pair<String, LogoAnswer>> {
+        val files = logos.listFiles { file -> file.isFile && file.name.endsWith(".json") } ?: return emptyList()
+        val at = now()
+        return files
+            .sortedByDescending { it.lastModified() }
+            .asSequence()
+            .mapNotNull { file ->
+                val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: return@mapNotNull null
+                val key = json.optString("key").ifBlank { null } ?: return@mapNotNull null
+                val url = json.optString("url").ifBlank { null }
+                // A stale one is left for [logo] to drop when it is asked for.
+                if (at - json.optLong("saved") > if (url != null) foundTtlMs else missTtlMs) return@mapNotNull null
+                key to LogoAnswer(url)
+            }
+            .take(limit)
+            .toList()
+    }
+
+    @Synchronized
     override fun putLogo(key: String, answer: LogoAnswer) {
         logos.mkdirs()
         val json = JSONObject().put("key", key).put("saved", now()).put("url", answer.url.orEmpty())

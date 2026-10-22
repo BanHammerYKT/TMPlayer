@@ -78,11 +78,11 @@ import com.tmplayer.ui.theme.Tone
 import com.tmplayer.ui.theme.focusRing
 
 /*
- * The detail panel (R5), shared by the phone, the television and the desktop: what a video is,
- * what can be done with it, and room for a poster and an overview once online metadata arrives.
- * Each platform puts its own chrome round it: a bottom sheet on the phone, a side pane in a window
- * of its own on the television, a side pane over the page on the desktop. Which actions it offers
- * is decided by [com.tmplayer.data.DetailActions], not here.
+ * The detail panel (R5) for a narrow pane: what a video is, what can be done with it, and room
+ * for a poster and an overview once online metadata arrives. The television puts it in a side
+ * pane in a window of its own; the desktop draws the large [WideDetailPanel] on a sheet over the
+ * page instead, and the phone its own page ([MediaDetailScreen]). Which actions it offers is
+ * decided by [com.tmplayer.data.DetailActions], not here.
  *
  * With posters and overviews on ([OnlineMetadata]), a match adds the provider's picture over the
  * video's own, a poster beside the title, the episode's name, and the overview in place of the
@@ -194,7 +194,7 @@ fun MediaDetailPanel(
     /**
      * Only the everyday buttons under Play (watched, watch later, download, the trailer), and the
      * rest (the chat, the corrections, share, open elsewhere) centred at the foot of the panel, as
-     * a phone's video page has them. The desktop's pane asks for it; the TV keeps one row.
+     * a phone's video page has them. The TV keeps one row.
      */
     actionsAtFoot: Boolean = false,
 ) {
@@ -542,7 +542,7 @@ private fun DetailActionRow(row: DetailRow, modifier: Modifier = Modifier) {
     }
 }
 
-/** How wide the side pane is on a television and a desktop. */
+/** How wide the side pane is on a television. */
 val DETAIL_PANE_WIDTH = 440.dp
 
 private val DETAIL_POSTER = 84.dp

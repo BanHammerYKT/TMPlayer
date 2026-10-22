@@ -48,6 +48,7 @@ import com.tmplayer.ui.icons.TmIcons
 import com.tmplayer.ui.theme.Focus
 import com.tmplayer.ui.theme.FocusVisibility
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.TmDropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -237,6 +238,9 @@ fun ChatsPage(
                     chats = visible,
                     favourites = favourites,
                     listState = listState,
+                    byName = sort == com.tmplayer.ui.browse.ChatSort.Name,
+                    paging = model.paging.collectAsState().value,
+                    onMoreChats = model::loadMoreChats,
                     nav = nav,
                     onOpen = state::openChat,
                     onStar = { chat -> scope.launch { state.settings.toggleFavorite(chat.id) } },
@@ -369,7 +373,15 @@ internal fun ChatList(
     onOpen: (ChatSummary) -> Unit,
     onStar: (ChatSummary) -> Unit,
     actions: ChatRowActions = ChatRowActions(),
+    /** Listed by name: the fast scroller's bubble gives the letter. */
+    byName: Boolean = false,
+    /** Whether Telegram may hold older chats than were read, and whether they are on their way. */
+    paging: com.tmplayer.ui.browse.ChatPaging = com.tmplayer.ui.browse.ChatPaging(),
+    /** Reads the next chats, as the list's end comes near. */
+    onMoreChats: () -> Unit = {},
 ) {
+    // Telegram's older chats read as the end of the list comes near, a screen ahead.
+    com.tmplayer.ui.components.LoadMoreAhead(listState, paging.more && !paging.loading && paging.failure == null, onLoadMore = onMoreChats)
     Box(Modifier.fillMaxSize()) {
         val count by rememberUpdatedState(chats.size)
         LazyColumn(
@@ -398,12 +410,24 @@ internal fun ChatList(
                     actions = actions,
                 )
             }
+            if (paging.loading || paging.failure != null) {
+                item(key = "more-chats", contentType = "more-chats") {
+                    com.tmplayer.ui.components.PageFoot(paging.loading, paging.failure, onMoreChats, Modifier.padding(horizontal = ChatRowInset)) {
+                        MoreChatsSkeleton()
+                    }
+                }
+            }
         }
-        VerticalScrollbar(
-            rememberScrollbarAdapter(listState),
-            Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-        )
         ScrollToTop(listState)
+        // The hold to scroll handle on a long list (the letter in its bubble when listed by name),
+        // the scrollbar on a short one.
+        val byId = remember(chats) { chats.associateBy { it.id } }
+        FastScroller(listState, label = if (byName) ({ key -> byId[key]?.let { com.tmplayer.ui.browse.ScrollLabels.letter(it.title) } }) else null) {
+            VerticalScrollbar(
+                rememberScrollbarAdapter(listState),
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+            )
+        }
     }
 }
 
@@ -579,4 +603,4 @@ private fun ChatRowMenu(
 /** How far a chat row's avatar sits in from the row's own edge. */
 private val ChatRowInset = 12.dp
 
-private val CHATS_ON_MAC =System.getProperty("os.name").orEmpty().lowercase().contains("mac")
+private val CHATS_ON_MAC: Boolean get() = OsInfo.isMac

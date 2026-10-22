@@ -108,6 +108,23 @@ object VideoSorting {
 
     private fun oldest(entry: ShelfEntry): Int = items(entry).minOf { it.date }
 
+    /**
+     * The value [entry] is placed by under [sort], for the fast scroller's bubble ("where am I"):
+     * a post date in seconds for [VideoSort.Newest] (its newest file) and [VideoSort.Oldest] (its
+     * first), the listed name without a leading article for [VideoSort.Name], the year (or null)
+     * for [VideoSort.Year], bytes for [VideoSort.Size], seconds for [VideoSort.Longest], and null
+     * for [VideoSort.Unwatched], whose groups say nothing worth a bubble.
+     */
+    fun placedBy(entry: ShelfEntry, sort: VideoSort): Any? = when (sort) {
+        VideoSort.Newest -> items(entry).maxOf { it.date }
+        VideoSort.Oldest -> oldest(entry)
+        VideoSort.Name -> withoutArticle(nameOf(entry))
+        VideoSort.Year -> yearOf(entry)
+        VideoSort.Size -> sizeOf(entry)
+        VideoSort.Longest -> lengthOf(entry)
+        VideoSort.Unwatched -> null
+    }
+
     /** The title an entry is listed under: the show's, or the file's own without its year. */
     private fun nameOf(entry: ShelfEntry): String = when (entry) {
         is ShelfEntry.Show -> entry.series.title

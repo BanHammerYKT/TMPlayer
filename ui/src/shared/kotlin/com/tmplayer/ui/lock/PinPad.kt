@@ -108,6 +108,8 @@ fun PinPad(
     modifier: Modifier = Modifier,
     /** The line on the only way back from a forgotten PIN. Shown when checking, unless asked not to. */
     showForgot: Boolean = purpose == PinPurpose.Check,
+    /** The app's mark and name over the lock: the pad that stands in for the whole app at its opening. */
+    brand: Boolean = false,
 ) {
     val s = LocalStrings.current
     val scope = rememberCoroutineScope()
@@ -258,6 +260,12 @@ fun PinPad(
         val key = if (tv) 64.dp else 72.dp
         val enabled = !busy && !waiting
         val header: @Composable () -> Unit = {
+            if (brand) {
+                com.tmplayer.ui.components.BrandLockup(
+                    size = com.tmplayer.ui.components.BrandSize.Medium,
+                    modifier = Modifier.padding(bottom = 24.dp),
+                )
+            }
             Icon(TmIcons.Lock, contentDescription = null, tint = Tone.accent, modifier = Modifier.size(32.dp))
             Spacer(Modifier.height(12.dp))
             Text(

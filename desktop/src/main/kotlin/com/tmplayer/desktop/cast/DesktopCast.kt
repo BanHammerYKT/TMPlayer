@@ -147,6 +147,7 @@ class SwitchingEngine(val local: PlaybackEngine) : PlaybackEngine {
     override fun togglePlay() = active.togglePlay()
     override fun seekTo(positionMs: Long) = active.seekTo(positionMs)
     override fun seekBy(deltaMs: Long) = active.seekBy(deltaMs)
+    override fun seekToExact(positionMs: Long) = active.seekToExact(positionMs)
     override fun frameStep(forward: Boolean) = active.frameStep(forward)
     override fun setSpeed(speed: Float) = active.setSpeed(speed)
     override fun setVolume(percent: Int) = active.setVolume(percent)

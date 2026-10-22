@@ -46,6 +46,7 @@ import com.tmplayer.desktop.WatchedWords
 import com.tmplayer.desktop.setWatched
 import com.tmplayer.ui.browse.BrowseTab
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.rememberToast
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.theme.Tone
@@ -119,7 +120,7 @@ fun WatchedPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
             list == null -> VideoGridSkeleton(state.posterWidth, posters = false)
             list.isEmpty() -> EmptyNote(HistoryTab.Watched.emptyIcon, s.watchedEmpty, s.browseGoToChats) { state.showChats(com.tmplayer.ui.browse.BrowseSection.of(com.tmplayer.ui.browse.BrowseTab.Chats)) }
             else -> {
-                val grid = rememberLazyGridState()
+                val grid = com.tmplayer.ui.components.rememberAheadGridState()
                 val current by rememberUpdatedState(list)
                 // Today, Yesterday and Earlier over the tiles, by when each was finished.
                 val days = remember(list) { daySections(list, System.currentTimeMillis()) { it.watchedAt } }
@@ -145,8 +146,11 @@ fun WatchedPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
                             }
                         }
                     }
-                    VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                     ScrollToTop(grid)
+                    // The hold to scroll handle on a long list, the scrollbar on a short one.
+                    FastScroller(grid, label = days.scrollLabels({ it.key }, { it.title }, state.historySort == com.tmplayer.ui.browse.ChatSort.Name)) {
+                        VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+                    }
                 }
             }
         }
@@ -222,7 +226,7 @@ fun WatchLaterPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
             list == null -> VideoGridSkeleton(state.posterWidth, posters = false)
             list.isEmpty() -> EmptyNote(HistoryTab.WatchLater.emptyIcon, s.browseEmptyWatchLater, s.browseGoToChats) { state.showChats(com.tmplayer.ui.browse.BrowseSection.of(com.tmplayer.ui.browse.BrowseTab.Chats)) }
             else -> {
-                val grid = rememberLazyGridState()
+                val grid = com.tmplayer.ui.components.rememberAheadGridState()
                 val current by rememberUpdatedState(list)
                 val nav = rememberKeyboardNav(remember(grid) { GridSurface(grid, { 0 }, { current.size }) })
                 Box(Modifier.fillMaxSize()) {
@@ -242,8 +246,13 @@ fun WatchLaterPage(state: ShellState, tabs: @Composable () -> Unit = {}) {
                             }
                         }
                     }
-                    VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                     ScrollToTop(grid)
+                    // The hold to scroll handle on a long list, the scrollbar on a short one.
+                    val byKey = remember(list) { list.associateBy { it.key } }
+                    val byName = state.historySort == com.tmplayer.ui.browse.ChatSort.Name
+                    FastScroller(grid, label = { key -> if (byName) byKey[key]?.let { com.tmplayer.ui.browse.ScrollLabels.letter(it.title) } else null }) {
+                        VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+                    }
                 }
             }
         }
@@ -341,6 +350,32 @@ internal fun <T> historyOrder(state: ShellState, records: List<T>, item: (T) -> 
 /** [records] under Today, Yesterday and Earlier, or in one run when headings would not help. */
 internal fun <T> daySections(records: List<T>, now: Long, at: (T) -> Long): DaySections<T> =
     DaySections(DayGroup.headings(records, at, now) ?: listOf(null to records))
+
+/**
+ * What the fast scroller's bubble says over these sections: the letter when the list is by name,
+ * otherwise the day heading the item on screen sits under (Today, Yesterday, Earlier).
+ */
+@Composable
+internal fun <T> DaySections<T>.scrollLabels(key: (T) -> Any, title: (T) -> String, byName: Boolean): (Any) -> String? {
+    val s = LocalStrings.current
+    val labels = remember(this, byName, s) {
+        buildMap<Any, String> {
+            sections.forEach { (day, members) ->
+                members.forEach { record ->
+                    val said = when {
+                        byName -> com.tmplayer.ui.browse.ScrollLabels.letter(title(record))
+                        day == DayGroup.Today -> s.watchedToday
+                        day == DayGroup.Yesterday -> s.watchedYesterday
+                        day == DayGroup.Earlier -> s.watchedEarlier
+                        else -> null
+                    }
+                    if (said != null) put(key(record), said)
+                }
+            }
+        }
+    }
+    return { labels[it] }
+}
 
 /** The headings and the tiles under them, each tile told its place among the cells and its day. */
 internal fun <T> LazyGridScope.daySectionItems(

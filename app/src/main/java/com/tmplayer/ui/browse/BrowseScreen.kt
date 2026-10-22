@@ -127,6 +127,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.snapshotFlow
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.Spinner
 import com.tmplayer.ui.components.TmSecondaryButton
 import androidx.compose.runtime.collectAsState
@@ -286,9 +287,15 @@ internal fun BrowseScreen(
     /** Continue watching videos as Telegram describes them, by progress key, for their pictures. */
     homeArt: Map<String, MediaItem> = emptyMap(),
     homeWatch: SeriesWatch = SeriesWatch.None,
+    /** Whether the chat list may go on past the chats read ([com.tmplayer.ui.browse.ChatListViewModel.paging]). */
+    chatPaging: com.tmplayer.ui.browse.ChatPaging = com.tmplayer.ui.browse.ChatPaging(),
+    /** Reads the chat list's next chats, as its end comes near. */
+    onMoreChats: () -> Unit = {},
     /** A row came on screen without its videos: fetch them. */
     onHomeRowShown: (HomeRow) -> Unit = {},
     onHomeArtWanted: (ResumeRecord) -> Unit = {},
+    /** Movies and Shows read on through Home's chats as they are scrolled to their end. */
+    homeFeedOf: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
     onHomeLaterArtWanted: (WatchLaterRecord) -> Unit = {},
     /** Plays a video from one of Home's rows; the second argument is its chat's name. */
     onPlayMedia: (MediaItem, String) -> Unit = { _, _ -> },
@@ -551,6 +558,7 @@ internal fun BrowseScreen(
                                 bottom = insets.bottom,
                                 onRowShown = onHomeRowShown,
                                 onArtWanted = onHomeArtWanted,
+                                feedOf = homeFeedOf,
                                 onResume = openResume,
                                 onPlay = openMedia,
                                 onPlayNow = onPlayMedia,
@@ -629,6 +637,7 @@ internal fun BrowseScreen(
                             } else {
                                 ContinueSection(
                                     records = continuing,
+                                    byName = historySort == ChatSort.Name,
                                     layout = layout,
                                     insets = insets,
                                     tiles = tiles,
@@ -646,6 +655,7 @@ internal fun BrowseScreen(
                             } else {
                                 ContinueSection(
                                     records = laterShown,
+                                    byName = historySort == ChatSort.Name,
                                     text = { it.cardText() },
                                     layout = layout,
                                     insets = insets,
@@ -666,6 +676,7 @@ internal fun BrowseScreen(
                                 val now = remember(watchedHistory) { System.currentTimeMillis() }
                                 ContinueSection(
                                     records = watchedShown,
+                                    byName = historySort == ChatSort.Name,
                                     text = { it.cardText(now) },
                                     layout = layout,
                                     insets = insets,
@@ -716,6 +727,7 @@ internal fun BrowseScreen(
                             ChatSection(
                                 chats = visible,
                                 favorites = favorites,
+                                sort = chatSort,
                                 // Recency order comes straight from Telegram, so the top of the
                                 // unfiltered list already is "recent". The strip is dropped in
                                 // grid view: the grid's own first row is those same chats, and the
@@ -739,6 +751,8 @@ internal fun BrowseScreen(
                                 onOpenChat = onOpenChat,
                                 onHold = { chatMenu = it },
                                 launchChatId = launchChatId,
+                                paging = chatPaging,
+                                onMoreChats = onMoreChats,
                             )
                         }
                     }
@@ -1338,15 +1352,18 @@ private fun WatchedRecord.cardText(now: Long, day: DayGroup): VideoCardText {
 private fun DayHeading(day: DayGroup) {
     val s = LocalStrings.current
     Text(
-        when (day) {
-            DayGroup.Today -> s.watchedToday
-            DayGroup.Yesterday -> s.watchedYesterday
-            DayGroup.Earlier -> s.watchedEarlier
-        },
+        dayWord(day, s),
         style = MaterialTheme.typography.titleSmall,
         color = Tone.muted,
         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
     )
+}
+
+/** A day heading's word: Today, Yesterday, Earlier. */
+private fun dayWord(day: DayGroup, s: com.tmplayer.i18n.Messages): String = when (day) {
+    DayGroup.Today -> s.watchedToday
+    DayGroup.Yesterday -> s.watchedYesterday
+    DayGroup.Earlier -> s.watchedEarlier
 }
 
 /** A video saved for later: how long it is and how big, and no bar until it is started. */
@@ -1383,6 +1400,8 @@ private fun <T : Any> ContinueSection(
     dayOf: ((T) -> Long)? = null,
     /** The card under a day heading, which need not repeat the heading's word. */
     dayText: ((T, DayGroup) -> VideoCardText)? = null,
+    /** Listed A to Z: the fast scroller's bubble gives the letter rather than the day. */
+    byName: Boolean = false,
 ) {
     val first = remember { FocusRequester() }
     val now = remember(records) { System.currentTimeMillis() }
@@ -1418,8 +1437,8 @@ private fun <T : Any> ContinueSection(
         bottom = insets.bottom,
     )
 
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val gridState = com.tmplayer.ui.components.rememberAheadGridState()
     Box(Modifier.fillMaxSize()) {
         when (layout) {
             // The rows of a chat's list, poster, type and spacing alike: History's list is the same
@@ -1473,6 +1492,23 @@ private fun <T : Any> ContinueSection(
         when (layout) {
             CardLayout.List -> ScrollToTop(listState)
             CardLayout.Grid -> ScrollToTop(gridState)
+        }
+        // The hold to scroll handle: its bubble says the letter A to Z, else the day.
+        val s = LocalStrings.current
+        val labels = remember(sections, byName) {
+            buildMap<Any, String> {
+                sections.forEach { (day, members) ->
+                    members.forEach { record ->
+                        val said = if (byName) ScrollLabels.letter(text(record).title) else day?.let { dayWord(it, s) }
+                        if (said != null) put(text(record).key, said)
+                    }
+                }
+            }
+        }
+        val scrollLabel: (Any) -> String? = { labels[it] }
+        when (layout) {
+            CardLayout.List -> FastScroller(listState, label = scrollLabel)
+            CardLayout.Grid -> FastScroller(gridState, label = scrollLabel)
         }
     }
 
@@ -2128,6 +2164,32 @@ private fun PillButton(
     }
 }
 
+/**
+ * The chat list's foot while its older chats are read: placeholder rows the shape of a chat's,
+ * or why the read failed with Try again.
+ */
+@Composable
+private fun MoreChatsFoot(paging: com.tmplayer.ui.browse.ChatPaging, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    com.tmplayer.ui.components.PageFoot(paging.loading, paging.failure, onRetry, modifier) {
+        val shimmer = com.tmplayer.ui.components.rememberShimmer()
+        val touch = isTouch()
+        Column(modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            repeat(MORE_CHATS_PLACEHOLDERS) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.size(if (touch) 56.dp else 64.dp), CircleShape)
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.width(160.dp).height(14.dp))
+                        com.tmplayer.ui.components.SkeletonBox(shimmer, Modifier.width(96.dp).height(12.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Placeholder rows at the chat list's foot while its older chats are read. */
+private const val MORE_CHATS_PLACEHOLDERS = 2
+
 @Composable
 private fun ChatSection(
     chats: List<ChatSummary>,
@@ -2143,6 +2205,12 @@ private fun ChatSection(
     launchChatId: Long,
     /** Asked before [autoFocus] acts: false while the chips over the list hold the focus. */
     mayTakeFocus: () -> Boolean = { true },
+    /** The list's order, for the fast scroller's bubble: a letter when listed by name. */
+    sort: ChatSort = ChatSort.Recent,
+    /** Whether Telegram may hold older chats than were read, and whether they are on their way. */
+    paging: com.tmplayer.ui.browse.ChatPaging = com.tmplayer.ui.browse.ChatPaging(),
+    /** Reads the next chats, as the list's end comes near. */
+    onMoreChats: () -> Unit = {},
 ) {
     val s = LocalStrings.current
     val rowsAreFullBleed = isTouch()
@@ -2158,8 +2226,14 @@ private fun ChatSection(
         else -> Modifier
     }
 
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val gridState = com.tmplayer.ui.components.rememberAheadGridState()
+    // Telegram's older chats read as the end of the list comes near, a screen ahead.
+    val readMore = paging.more && !paging.loading && paging.failure == null
+    when (layout) {
+        CardLayout.List -> com.tmplayer.ui.components.LoadMoreAhead(listState, readMore, onLoadMore = onMoreChats)
+        CardLayout.Grid -> com.tmplayer.ui.components.LoadMoreAhead(gridState, readMore, onLoadMore = onMoreChats)
+    }
     // Chats pressed again on the bar: back to the top of the list.
     ScrollToTopOnReselect(TouchDestination.Chats) { animate ->
         if (layout == CardLayout.Grid) gridState.toTop(animate) else listState.toTop(animate)
@@ -2243,6 +2317,11 @@ private fun ChatSection(
                             .then(if (animateRows) Modifier.animateItem() else Modifier),
                     )
                 }
+                if (paging.loading || paging.failure != null) {
+                    item(key = "more-chats", contentType = "more-chats") {
+                        MoreChatsFoot(paging, onMoreChats, Modifier.padding(horizontal = if (rowsAreFullBleed) insets.start else 0.dp))
+                    }
+                }
             }
 
             CardLayout.Grid -> LazyVerticalGrid(
@@ -2270,11 +2349,23 @@ private fun ChatSection(
                         modifier = focusOf(chat, inStrip = false).fillMaxWidth(),
                     )
                 }
+                if (paging.loading || paging.failure != null) {
+                    item(key = "more-chats", span = { GridItemSpan(maxLineSpan) }, contentType = "more-chats") {
+                        MoreChatsFoot(paging, onMoreChats)
+                    }
+                }
             }
         }
         when (layout) {
             CardLayout.List -> ScrollToTop(listState)
             CardLayout.Grid -> ScrollToTop(gridState)
+        }
+        // The hold to scroll handle; listed by name, its bubble gives the letter.
+        val byId = remember(chats) { chats.associateBy { it.id } }
+        val scrollLabel: ((Any) -> String?)? = if (sort != ChatSort.Name) null else { key -> byId[key]?.let { ScrollLabels.letter(it.title) } }
+        when (layout) {
+            CardLayout.List -> FastScroller(listState, label = scrollLabel)
+            CardLayout.Grid -> FastScroller(gridState, label = scrollLabel)
         }
         if (rowsAreFullBleed) {
             // The rows pass under the pinned title and chips: a short fade at the top edge lets

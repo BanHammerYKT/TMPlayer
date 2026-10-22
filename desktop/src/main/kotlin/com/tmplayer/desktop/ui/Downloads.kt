@@ -89,6 +89,7 @@ import com.tmplayer.desktop.os.OpenExternal
 import com.tmplayer.i18n.L
 import com.tmplayer.player.StreamStats
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.rememberToast
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.icons.TmIcons
@@ -473,8 +474,11 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
                             )
                         }
                     }
-                    VerticalScrollbar(rememberScrollbarAdapter(list), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                     ScrollToTop(list)
+                    // The hold to scroll handle on a long list, the scrollbar on a short one.
+                    FastScroller(list) {
+                        VerticalScrollbar(rememberScrollbarAdapter(list), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+                    }
                 }
             }
         }

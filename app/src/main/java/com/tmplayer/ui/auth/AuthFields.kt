@@ -24,9 +24,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -66,11 +68,14 @@ fun PaneField(
      */
     trailing: (@Composable () -> Unit)? = null,
     isError: Boolean = false,
+    /** False while the field is not ready to be typed into: the sign in still finding the country. */
+    enabled: Boolean = true,
 ) {
     if (isTouch()) {
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
+            enabled = enabled,
             singleLine = true,
             label = { M3Text(label) },
             // Both label and placeholder: the placeholder shows the shape of the answer, and a
@@ -97,15 +102,18 @@ fun PaneField(
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
+        // Closed, the field reads as the TV buttons do when they cannot be pressed: muted words.
+        val ink = if (enabled) Tone.text else Tone.muted
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (prefix != null) {
-                Text(prefix, style = MaterialTheme.typography.titleLarge, color = Tone.text)
+                Text(prefix, style = MaterialTheme.typography.titleLarge, color = ink)
             }
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
+                enabled = enabled,
                 singleLine = true,
-                textStyle = MaterialTheme.typography.titleLarge.copy(color = Tone.text),
+                textStyle = MaterialTheme.typography.titleLarge.copy(color = ink),
                 cursorBrush = SolidColor(Tone.accent),
                 visualTransformation = visualTransformation,
                 keyboardOptions = keyboardOptions,
@@ -151,25 +159,46 @@ fun BackArrow(onBack: () -> Unit, description: String = LocalStrings.current.com
     }
 }
 
-/** A row that opens something rather than accepting text: the country the number belongs to. */
+/**
+ * A row that opens something rather than accepting text: the country the number belongs to, drawn
+ * as Telegram and WhatsApp draw it, the flag and name with a chevron at the end. While [loading]
+ * (the country still being guessed) a shimmer stands where the words go and the row cannot be
+ * pressed; the words fade in over it when they arrive.
+ */
 @Composable
 fun PaneChooser(
     label: String,
-    trailing: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Words before the chevron, if any. */
+    trailing: String? = null,
+    enabled: Boolean = true,
+    loading: Boolean = false,
 ) {
+    val pressable = enabled && !loading
+    // The shimmer already says "not yet"; dimming it as well would leave nothing to see.
+    val dim = if (enabled || loading) 1f else DISABLED_ALPHA
     if (isTouch()) {
         ListItem(
-            headlineContent = { M3Text(label, style = M3.typography.titleMedium) },
-            trailingContent = { M3Text(trailing, style = M3.typography.labelLarge) },
+            headlineContent = {
+                GuessFade(loading, skeletonWidth = 160.dp) {
+                    M3Text(label, style = M3.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            },
+            trailingContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (trailing != null) M3Text(trailing, style = M3.typography.labelLarge)
+                    Icon(TmIcons.ChevronRight, contentDescription = null, tint = Tone.muted)
+                }
+            },
             colors = ListItemDefaults.colors(containerColor = Tone.surface),
             modifier = modifier
                 .fillMaxWidth()
                 .clip(M3.shapes.medium)
                 // Spelled out because a ListItem is a row of text until something says otherwise,
                 // and a screen reader has no other way to know this row can be pressed.
-                .clickable(role = Role.Button, onClick = onClick),
+                .clickable(enabled = pressable, role = Role.Button, onClick = onClick)
+                .alpha(dim),
         )
         return
     }
@@ -180,7 +209,8 @@ fun PaneChooser(
             .height(FIELD_HEIGHT)
             .clip(RoundedCornerShape(Corner.Medium))
             .background(Tone.surface)
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(enabled = pressable, role = Role.Button, onClick = onClick)
+            .alpha(dim)
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -188,18 +218,19 @@ fun PaneChooser(
             Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                label,
-                style = MaterialTheme.typography.titleLarge,
-                color = Tone.text,
-                modifier = Modifier.defaultMinSize(minWidth = 0.dp).weight(1f),
-            )
-            Text(trailing, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
+            GuessFade(loading, skeletonWidth = 200.dp, modifier = Modifier.defaultMinSize(minWidth = 0.dp).weight(1f)) {
+                Text(label, style = MaterialTheme.typography.titleLarge, color = Tone.text, maxLines = 1)
+            }
+            if (trailing != null) Text(trailing, style = MaterialTheme.typography.bodyLarge, color = Tone.muted)
+            Icon(TmIcons.ChevronRight, contentDescription = null, tint = Tone.muted)
         }
     }
 }
 
 internal val FIELD_HEIGHT = 60.dp
+
+/** Material's own figure for content that cannot be used right now. */
+private const val DISABLED_ALPHA = 0.38f
 
 // Material's own 48 dp minimum, spelled out because the icon inside it is 24.
 private val BACK_TARGET = 48.dp

@@ -243,11 +243,13 @@ class TmdbApi(
         val next = json.optJSONObject("next_episode_to_air")?.let {
             MetaAiring(it.optInt("season_number"), it.optInt("episode_number"), it.optString("air_date"), it.optString("name"))
         }?.takeIf { !film && it.airDate.isNotBlank() && it.season > 0 }
+        val rating = MetaRules.rating(json.optDouble("vote_average", 0.0), json.optInt("vote_count"))
         return MetaExtras(
             genres = genres,
             runtimeMin = runtime,
             seasons = if (film) null else json.optInt("number_of_seasons").takeIf { it > 0 },
-            rating = MetaRules.rating(json.optDouble("vote_average", 0.0), json.optInt("vote_count")),
+            rating = rating,
+            scores = listOfNotNull(rating?.let { MetaScore(ScoreSource.Tmdb, it) }),
             certification = certification,
             directors = directors,
             creators = creators,
@@ -433,9 +435,15 @@ class TvMazeApi(
             val next = embedded?.optJSONObject("nextepisode")?.let {
                 MetaAiring(it.optInt("season"), it.optInt("number"), it.optString("airdate"), it.optString("name"))
             }?.takeIf { it.airDate.isNotBlank() && it.season > 0 }
+            // TVmaze gives the average alone, no count of votes. [MetaExtras.rating] stays empty for
+            // that (one vote of ten is not a 10.0), but the scores row names its source, so the
+            // average is listed there as TVmaze's whenever it gives one.
+            val average = json.optJSONObject("rating")?.optDouble("average", 0.0)?.takeIf { !it.isNaN() } ?: 0.0
+            val tvmazeScore = if (average > 0.0) MetaRules.rating(average, MetaRules.MIN_VOTES) else null
             MetaExtras(
                 genres = genres,
                 runtimeMin = json.optInt("runtime").takeIf { it > 0 } ?: json.optInt("averageRuntime").takeIf { it > 0 },
+                scores = listOfNotNull(tvmazeScore?.let { MetaScore(ScoreSource.TvMaze, it) }),
                 seasons = seasonList.size.takeIf { it > 0 },
                 cast = cast,
                 seasonList = seasonList,
@@ -453,6 +461,173 @@ class TvMazeApi(
         const val BASE = "https://api.tvmaze.com"
         const val GAP_MS = 500L
         const val DEFAULT_WAIT_MS = 10_000L
+    }
+}
+
+/**
+ * OMDb, for the scores TMDB, TVmaze and AniList do not carry: IMDb's, Rotten Tomatoes' critics
+ * and Metacritic's, asked by IMDb id. A free key allows 1,000 requests a day; its data is
+ * CC BY-NC 4.0. https://www.omdbapi.com
+ *
+ * [MetaReply.Refused] means the key was refused (`"Error":"Invalid API key!"`); a spent day
+ * (`"Error":"Request limit reached!"`, with a 401 or a 200) is [MetaReply.Throttled] with
+ * [SPENT], which waits for the next UTC day; a title OMDb does not know is an empty list.
+ */
+class OmdbApi(
+    private val http: HttpTransport,
+    private val limiter: RateLimiter,
+    private val userAgent: String,
+) {
+    suspend fun scores(key: String, imdbId: String): MetaReply<List<MetaScore>> {
+        limiter.acquire()
+        val url = "$BASE/?i=${enc(imdbId)}&apikey=${enc(key)}"
+        val request = HttpRequest("GET", url, mapOf("Accept" to "application/json", "User-Agent" to userAgent))
+        val response = try {
+            http.send(request)
+        } catch (e: IOException) {
+            return MetaReply.Failed(0)
+        }
+        // OMDb answers a refused or spent key with a 401 and its reason in the body.
+        val json = runCatching { JSONObject(response.text) }.getOrNull()
+        if (json != null && (response.code in 200..299 || json.has("Error"))) return read(json)
+        if (response.code !in 200..299) return sort(response, DEFAULT_WAIT_MS) { emptyList() }
+        return MetaReply.Failed(response.code)
+    }
+
+    companion object {
+        const val BASE = "https://www.omdbapi.com"
+        /** OMDb publishes no rate, only the daily allowance; a small gap keeps a burst polite. */
+        const val GAP_MS = 200L
+        const val DEFAULT_WAIT_MS = 60_000L
+
+        /** The wait in a [MetaReply.Throttled] that means the day's requests are spent: until the next UTC day. */
+        const val SPENT = Long.MAX_VALUE
+
+        /** The scores in one OMDb answer, in [ScoreSource] order. */
+        fun read(json: JSONObject): MetaReply<List<MetaScore>> {
+            if (json.optString("Response").equals("False", ignoreCase = true)) {
+                val error = json.optString("Error").lowercase()
+                return when {
+                    "limit" in error -> MetaReply.Throttled(SPENT)
+                    "api key" in error || "no api" in error -> MetaReply.Refused
+                    else -> MetaReply.Ok(emptyList())
+                }
+            }
+            val scores = ArrayList<MetaScore>()
+            val votes = number(json.optString("imdbVotes"))?.toInt() ?: 0
+            number(json.optString("imdbRating"))?.let { MetaRules.rating(it, votes) }
+                ?.let { scores += MetaScore(ScoreSource.Imdb, it) }
+            val ratings = objects(json.optJSONArray("Ratings"))
+            fun rating(source: String) = ratings.firstOrNull { it.optString("Source") == source }?.optString("Value")
+            rating("Rotten Tomatoes")?.substringBefore('%')?.let(::number)?.takeIf { it in 0.0..100.0 }
+                ?.let { scores += MetaScore(ScoreSource.RottenTomatoes, it) }
+            (rating("Metacritic")?.substringBefore('/') ?: json.optString("Metascore")).let(::number)
+                ?.takeIf { it in 0.0..100.0 }
+                ?.let { scores += MetaScore(ScoreSource.Metacritic, it) }
+            return MetaReply.Ok(scores.filter { it.value > 0.0 }.sortedBy { it.source.ordinal })
+        }
+
+        /** "8.5", "1,234,567" or "92" as a number; "N/A", blank or anything else as null. */
+        private fun number(text: String?): Double? =
+            text?.trim()?.replace(",", "")?.toDoubleOrNull()?.takeIf { !it.isNaN() }
+    }
+}
+
+/**
+ * Wikidata, for Rotten Tomatoes' and Metacritic's scores without a key: the title is found by its
+ * IMDb id (P345) on the Wikidata Query Service, and its review scores (P444) read where they were
+ * given by Rotten Tomatoes (Q105584) or Metacritic (Q150248). Its data is CC0. Wikidata has no
+ * IMDb rating. Wikimedia asks for a User-Agent that names the app and how to reach it; a browser
+ * cannot set one, so it goes as Api-User-Agent too, which the service allows across origins.
+ * https://www.wikidata.org/wiki/Wikidata:SPARQL_query_service
+ */
+class WikidataApi(
+    private val http: HttpTransport,
+    private val limiter: RateLimiter,
+    private val userAgent: String,
+) {
+    suspend fun scores(imdbId: String): MetaReply<List<MetaScore>> {
+        if (!IMDB_ID.matches(imdbId)) return MetaReply.Ok(emptyList())
+        limiter.acquire()
+        val url = "$BASE?format=json&query=${enc(query(imdbId))}"
+        val headers = mapOf(
+            "Accept" to "application/sparql-results+json",
+            "User-Agent" to userAgent,
+            "Api-User-Agent" to userAgent,
+        )
+        return call(http, HttpRequest("GET", url, headers), DEFAULT_WAIT_MS) { read(it) }
+    }
+
+    companion object {
+        const val BASE = "https://query.wikidata.org/sparql"
+        /** The service has no fixed rate for light use; one query a second stays well inside it. */
+        const val GAP_MS = 1_000L
+        const val DEFAULT_WAIT_MS = 60_000L
+
+        const val ROTTEN_TOMATOES = "Q105584"
+        const val METACRITIC = "Q150248"
+        /** P459 "determination method": Rotten Tomatoes' Tomatometer, not its average rating or audience score. */
+        const val TOMATOMETER = "Q108403393"
+        /** P459 for Metacritic's critics' Metascore, not its users' score. */
+        const val METASCORE = "Q106515043"
+
+        private val IMDB_ID = Regex("tt\\d{5,10}")
+
+        /** Every Rotten Tomatoes and Metacritic review score of the title with [imdbId], with its date, method and rank. */
+        fun query(imdbId: String): String =
+            "SELECT ?src ?score ?when ?method ?rank WHERE { ?item wdt:P345 \"$imdbId\" . " +
+                "?item p:P444 ?st . ?st ps:P444 ?score ; pq:P447 ?src ; wikibase:rank ?rank . " +
+                "OPTIONAL { ?st pq:P585 ?when } OPTIONAL { ?st pq:P459 ?method } " +
+                "VALUES ?src { wd:$ROTTEN_TOMATOES wd:$METACRITIC } }"
+
+        /**
+         * The scores in one answer, in [ScoreSource] order: Rotten Tomatoes' Tomatometer (a
+         * percentage) and Metacritic's Metascore (out of a hundred), the newest by point in time
+         * (P585) where there are several, deprecated statements left out. A Rotten Tomatoes
+         * average out of ten, or a users' score, is not the score the page means and is skipped.
+         */
+        fun read(json: JSONObject): List<MetaScore> {
+            val bindings = objects(json.optJSONObject("results")?.optJSONArray("bindings"))
+            class Found(val source: ScoreSource, val value: Double, val at: String, val preferred: Boolean)
+            val found = bindings.mapNotNull { b ->
+                fun field(name: String) = b.optJSONObject(name)?.optString("value").orEmpty()
+                fun entity(name: String) = field(name).substringAfterLast('/')
+                val rank = field("rank").substringAfterLast('#')
+                if (rank == "DeprecatedRank") return@mapNotNull null
+                val method = entity("method").ifBlank { null }
+                val (value, scale) = value(field("score")) ?: return@mapNotNull null
+                val percent = field("score").trim().endsWith("%")
+                val source = when (entity("src")) {
+                    ROTTEN_TOMATOES -> ScoreSource.RottenTomatoes.takeIf {
+                        (method == TOMATOMETER || method == null) && scale == 100 && (percent || method == TOMATOMETER)
+                    }
+                    METACRITIC -> ScoreSource.Metacritic.takeIf { (method == METASCORE || method == null) && scale == 100 }
+                    else -> null
+                } ?: return@mapNotNull null
+                if (value <= 0.0) return@mapNotNull null
+                Found(source, value, field("when"), rank == "PreferredRank")
+            }
+            return found.groupBy { it.source }
+                .mapNotNull { (_, list) -> list.sortedWith(compareByDescending<Found> { it.at }.thenByDescending { it.preferred }).firstOrNull() }
+                .map { MetaScore(it.source, it.value) }
+                .sortedBy { it.source.ordinal }
+        }
+
+        /**
+         * A review score as Wikidata writes it, as the number and what it is out of: "92%" is 92
+         * of 100, "78/100" is 78 of 100, "7.8/10" is 7.8 of 10. Anything else, or a number past
+         * its scale, is null.
+         */
+        fun value(text: String): Pair<Double, Int>? {
+            val t = text.trim().replace(" ", "")
+            val (number, scale) = when {
+                t.endsWith("%") -> t.dropLast(1) to 100
+                "/" in t -> t.substringBefore('/') to (t.substringAfter('/').toDoubleOrNull()?.takeIf { it == 10.0 || it == 100.0 }?.toInt() ?: return null)
+                else -> return null
+            }
+            val v = number.replace(',', '.').toDoubleOrNull()?.takeIf { !it.isNaN() && it >= 0.0 && it <= scale } ?: return null
+            return v to scale
+        }
     }
 }
 
@@ -539,6 +714,7 @@ class AniListApi(
                 genres = genres,
                 runtimeMin = media.optInt("duration").takeIf { it > 0 },
                 rating = if (score > 0) MetaRules.rating(score / 10.0, MetaRules.MIN_VOTES) else null,
+                scores = if (score > 0) listOf(MetaScore(ScoreSource.AniList, score.coerceAtMost(100).toDouble())) else emptyList(),
                 cast = cast,
                 trailer = trailer,
                 similar = similar,

@@ -29,6 +29,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -321,13 +329,15 @@ private fun PhonePane(
     val (country, pattern) = rememberInternational(number, countries)
 
     // The country is filled in for the viewer: the one Telegram guesses from the address it sees,
-    // else the device's own. Only while nothing has been typed.
-    LaunchedEffect(countries) {
-        if (countries.isEmpty() || number != "+") return@LaunchedEffect
-        val iso = runCatching { Td.guessedCountryCode() }.getOrDefault("").ifBlank { DeviceCountry.code(context) }
-        val dial = PhoneCountries.byIso(countries, iso)?.dialCode
-        if (dial != null && number == "+") number = "+$dial"
-    }
+    // else the device's own. The field stays closed until then, so the remote's keyboard never
+    // races the code going in; only while nothing has been typed, never for a number being changed.
+    val detecting = rememberCountryGuess(
+        countries = countries,
+        wanted = initial == null && number == "+",
+        localIso = { DeviceCountry.code(context) },
+        onFound = { found -> if (number == "+") number = "+${found.dialCode}" },
+    )
+    val typedCode = number.length > 1
 
     if (picking) {
         CountryPicker(
@@ -346,12 +356,14 @@ private fun PhonePane(
     LoginForm(
         title = s.loginPhoneTitle,
         blurb = s.loginPhoneBlurbTv,
-        note = country?.let { "${it.flag}  ${it.name}" },
+        note = country?.let { "${it.flag}  ${it.name}" } ?: s.loginInvalidCountryCode.takeIf { typedCode && countries.isNotEmpty() },
+        noteLoading = detecting,
+        enabled = !detecting,
         value = number,
         // The keyboard type is a request, not a guarantee: a leanback remote's on-screen keyboard
         // and every hardware keyboard will happily send letters to a field that asked for a
         // dialpad. What a number is made of is decided here instead.
-        onValueChange = { number = keepInternational(it) },
+        onValueChange = { number = PhoneRules.international(it, countries) },
         placeholder = "+44 7700 900000",
         keyboardType = KeyboardType.Phone,
         masked = false,
@@ -360,14 +372,14 @@ private fun PhonePane(
         submitLabel = s.loginSendCode,
         busyLabel = s.loginSendingCode,
         busy = submission.busy,
-        canSubmit = number.count { it.isDigit() } >= MIN_PHONE_DIGITS,
+        canSubmit = country != null && number.count { it.isDigit() } >= PhoneRules.MIN_DIGITS,
         onSubmit = { submission.start { onSubmit(number) } },
         // On a television the other way in is one press away, and it is the quicker one, so the
         // secondary button says where it goes rather than only that it goes back.
         backLabel = if (onBack == null) s.loginUseQr else s.commonBack,
         onBack = onBack ?: onUseQr,
         extras = {
-            TmSecondaryButton(onClick = { picking = true }) { Text(s.loginChooseCountry) }
+            TmSecondaryButton(onClick = { picking = true }, enabled = !detecting) { Text(s.loginChooseCountry) }
             // Reached from the QR pane, Back already returns there; from the code pane it does
             // not, so the other way in gets its own button.
             if (onBack != null) TmSecondaryButton(onClick = onUseQr) { Text(s.loginUseQr) }
@@ -395,41 +407,35 @@ private fun TouchPhonePane(
     val s = LocalStrings.current
     val context = LocalContext.current
     val countries = rememberSignInCountries()
-    var dial by rememberSaveable { mutableStateOf("") }
-    // Plain digits, exactly as typed. Do not write grouped text back into the field: a space
-    // inserted to the left of a still cursor moves the caret a character back, and on keyboards
-    // that report a selection of their own it jumps further still. [PhoneGrouping] draws it.
-    var national by rememberSaveable { mutableStateOf("") }
+    // Plain digits in both fields, exactly as typed. Do not write grouped text back into a field:
+    // a space inserted to the left of a still cursor moves the caret a character back, and on
+    // keyboards that report a selection of their own it jumps further still. [PhoneGrouping]
+    // draws it. The rules (pastes, trunk zero, other scripts' digits, shared codes) are
+    // [PhoneEntry]'s, shared with the desktop and the browser.
+    val entry = rememberPhoneEntry(initial, countries)
     var picking by rememberSaveable { mutableStateOf(false) }
-    val country = remember(countries, dial) { PhoneCountries.byDialCode(countries, dial) }
-    val pattern = rememberPhonePattern(dial, national)
+    val country = rememberEntryCountry(entry, countries)
+    val pattern = rememberPhonePattern(entry.dial, entry.national)
     val field = remember { FocusRequester() }
+    val dialField = remember { FocusRequester() }
     val submission = rememberSubmission(state, error)
 
-    // A whole number pasted or autofilled into either field ("+44 7700 900123") is taken apart
-    // into its two halves rather than dropped into one as a run of digits.
-    fun take(raw: String): Boolean {
-        val (d, n) = PhoneCountries.splitInternational(raw, countries) ?: return false
-        dial = d
-        national = n
-        return true
-    }
-
-    LaunchedEffect(countries) {
-        if (countries.isEmpty()) return@LaunchedEffect
-        // The number being changed comes back as it was, for the one digit that was wrong.
-        if (initial != null && dial.isEmpty() && national.isEmpty() && take("+" + initial.filter(Char::isDigit))) return@LaunchedEffect
-        if (dial.isNotEmpty()) return@LaunchedEffect
-        val iso = runCatching { Td.guessedCountryCode() }.getOrDefault("").ifBlank { DeviceCountry.code(context) }
-        if (dial.isEmpty()) dial = PhoneCountries.byIso(countries, iso)?.dialCode.orEmpty()
-    }
+    // The country Telegram guesses from the address it sees, else the SIM's or the network's.
+    // Both fields stay closed until it is in (three seconds at most), so typing never races the
+    // code going in. Nothing is guessed for a number being changed from the code step.
+    val detecting = rememberCountryGuess(
+        countries = countries,
+        wanted = initial == null && !entry.touched,
+        localIso = { DeviceCountry.code(context) },
+        onFound = entry::guess,
+    )
 
     if (picking) {
         CountryPicker(
             countries = countries,
             selected = country,
             onPick = {
-                dial = it.dialCode
+                entry.pick(it)
                 picking = false
             },
             onDismiss = { picking = false },
@@ -437,60 +443,91 @@ private fun TouchPhonePane(
         return
     }
 
-    val submit = { submission.start { onSubmit("+$dial$national") } }
+    val ready = entry.ready(country)
+    val submit = { if (ready) submission.start { onSubmit(entry.full) } }
 
     Pane {
         // No arrow on the first screen: an arrow that leaves the app is not what a back arrow
         // means anywhere else, and the pane's own buttons are the two ways on from here.
-        if (onBack != null) PaneHeader(onBack = onBack)
+        if (onBack != null) {
+            PaneHeader(onBack = onBack)
+        } else {
+            // The first screen of all: which app is asking for the number.
+            com.tmplayer.ui.components.BrandLockup(
+                size = com.tmplayer.ui.components.BrandSize.Medium,
+                layout = com.tmplayer.ui.components.BrandLayout.Row,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
         Text(s.loginPhoneTitle, style = MaterialTheme.typography.headlineLarge)
         Text(
             s.loginPhoneBlurb,
             style = MaterialTheme.typography.bodyLarge,
         )
 
+        // Telegram's own order: the country, then the code beside the number. A code that no
+        // country has says so here rather than showing somebody else's flag.
         PaneChooser(
-            label = country?.let { "${it.flag}  ${it.name}" } ?: s.loginChooseCountry,
-            trailing = s.loginChange,
+            label = when {
+                country != null -> "${country.flag}  ${country.name}"
+                entry.dial.isNotEmpty() && countries.isNotEmpty() -> s.loginInvalidCountryCode
+                else -> s.loginChooseCountry
+            },
             onClick = { picking = true },
+            loading = detecting,
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            PaneField(
-                value = dial,
-                // Typing the code is the other half of the picker: people who know their own
-                // reach for it before they will scroll a list to find their country.
-                onValueChange = { if (!take(it)) dial = it.filter { c -> c.isDigit() }.take(PhoneCountries.MAX_DIAL_DIGITS) },
-                placeholder = "00",
-                // The placeholder is the shape of a dial code, which is no use as a name for the
-                // field once it is filled in, so the floating label is given words of its own.
-                label = s.loginCode,
-                prefix = "+",
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Phone,
-                    imeAction = ImeAction.Next,
-                ),
-                modifier = Modifier.width(DIAL_WIDTH),
-            )
-            PaneField(
-                value = national,
-                // Digits and nothing else. The dialpad is a hint the IME may ignore, and a letter
-                // typed here would sit in the field looking accepted while being quietly dropped
-                // from the number that is actually sent.
-                onValueChange = { if (!take(it)) national = it.keepNationalCharacters() },
-                placeholder = s.loginPhoneNumber,
-                visualTransformation = PhoneGrouping(pattern),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Phone,
-                    imeAction = ImeAction.Done,
-                    autoCorrectEnabled = false,
-                ),
-                keyboardActions = KeyboardActions(onDone = { submit() }),
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(field)
-                    .semantics { contentType = ContentType.PhoneNumberNational },
-            )
+        // A number reads left to right in every language, Arabic and Persian included.
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.width(DIAL_WIDTH)) {
+                    PaneField(
+                        value = entry.dial,
+                        // Typing the code is the other half of the picker: people who know their
+                        // own reach for it before they will scroll a list to find their country.
+                        onValueChange = { entry.typeDial(it, countries) },
+                        placeholder = if (detecting) "" else "00",
+                        // The placeholder is the shape of a dial code, which is no use as a name for
+                        // the field once it is filled in, so the floating label has words of its own.
+                        label = if (detecting) "" else s.loginCode,
+                        prefix = if (detecting) null else "+",
+                        enabled = !detecting,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Phone,
+                            imeAction = ImeAction.Next,
+                        ),
+                        modifier = Modifier.fillMaxWidth().focusRequester(dialField),
+                    )
+                    // The code's shimmer, faded out as the guessed code comes in under it.
+                    GuessFade(detecting, skeletonWidth = 48.dp, modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)) {}
+                }
+                PaneField(
+                    value = entry.national,
+                    // Digits and nothing else. The dialpad is a hint the IME may ignore, and a
+                    // letter typed here would sit in the field looking accepted while being
+                    // quietly dropped from the number that is actually sent.
+                    onValueChange = { entry.typeNational(it, countries) },
+                    placeholder = s.loginPhoneNumber,
+                    visualTransformation = PhoneGrouping(pattern),
+                    enabled = !detecting,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Phone,
+                        imeAction = ImeAction.Done,
+                        autoCorrectEnabled = false,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    modifier = Modifier
+                        .weight(1f)
+                        .focusRequester(field)
+                        // Backspace in an empty number goes back into the code, as in Telegram.
+                        .onPreviewKeyEvent { event ->
+                            val back = event.type == KeyEventType.KeyDown && event.key == Key.Backspace && entry.national.isEmpty()
+                            if (back) runCatching { dialField.requestFocus() }
+                            back
+                        }
+                        .semantics { contentType = ContentType.PhoneNumberNational },
+                )
+            }
         }
 
         if (error != null) {
@@ -499,7 +536,7 @@ private fun TouchPhonePane(
 
         TmButton(
             onClick = submit,
-            enabled = (dial + national).length >= MIN_PHONE_DIGITS,
+            enabled = ready,
             loading = submission.busy,
             busyLabel = s.loginSendingCode,
             modifier = Modifier.paneAction(),
@@ -512,8 +549,8 @@ private fun TouchPhonePane(
     }
 
     // The keyboard is up either way on this pane, so it may as well be pointed at the field the
-    // user came here to fill.
-    LaunchedEffect(Unit) { field.requestFocus() }
+    // user came here to fill, the moment it opens.
+    LaunchedEffect(detecting) { if (!detecting) runCatching { field.requestFocus() } }
 }
 
 @Composable
@@ -917,6 +954,12 @@ private fun QrPane(link: String, scanned: Boolean, onUsePhone: () -> Unit, onRef
     ) {
         plate()
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // A television's first screen: which app is asking to be let in.
+            com.tmplayer.ui.components.BrandLockup(
+                size = com.tmplayer.ui.components.BrandSize.Medium,
+                layout = com.tmplayer.ui.components.BrandLayout.Row,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
             words()
             Spacer(Modifier.height(8.dp))
             // On a remote these are the only focusable things on the pane, so they are also what
@@ -1270,16 +1313,25 @@ private fun LoginForm(
     trailing: (@Composable () -> Unit)? = null,
     below: @Composable () -> Unit = {},
     extras: @Composable () -> Unit = {},
+    /** False while the field waits on something (the country guess); it opens with the focus in it. */
+    enabled: Boolean = true,
+    /** The [note] is still being worked out: a shimmer stands in its place. */
+    noteLoading: Boolean = false,
 ) {
     val focus = remember { FocusRequester() }
+    // Where a remote's focus waits while the field is closed: a disabled field cannot hold it,
+    // and a screen with nothing focused leaves the D-pad with nowhere to start from.
+    val waitFocus = remember { FocusRequester() }
     val touch = isTouch()
 
     Pane {
         PaneHeader(onBack = onBack)
         Text(title, style = MaterialTheme.typography.headlineLarge)
         Text(blurb, style = MaterialTheme.typography.bodyLarge)
-        if (note != null) {
-            Text(note, style = MaterialTheme.typography.bodyMedium)
+        if (note != null || noteLoading) {
+            GuessFade(noteLoading, skeletonWidth = 180.dp) {
+                Text(note.orEmpty(), style = MaterialTheme.typography.bodyMedium)
+            }
         }
 
         PaneField(
@@ -1298,6 +1350,7 @@ private fun LoginForm(
             },
             trailing = if (touch) trailing else null,
             isError = error != null,
+            enabled = enabled,
             modifier = Modifier.fillMaxWidth().focusRequester(focus),
         )
         below()
@@ -1331,7 +1384,7 @@ private fun LoginForm(
             TmButton(onClick = onSubmit, enabled = canSubmit, loading = busy, busyLabel = busyLabel) {
                 Text(submitLabel)
             }
-            TmSecondaryButton(onClick = onBack) {
+            TmSecondaryButton(onClick = onBack, modifier = Modifier.focusRequester(waitFocus)) {
                 Text(backLabel)
             }
         }
@@ -1340,7 +1393,14 @@ private fun LoginForm(
         }
     }
 
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    LaunchedEffect(enabled) {
+        runCatching {
+            when {
+                enabled -> focus.requestFocus()
+                !touch -> waitFocus.requestFocus()
+            }
+        }
+    }
 }
 
 /**
@@ -1365,18 +1425,8 @@ private val PLATE = 300.dp
  */
 private val DIAL_WIDTH = 104.dp
 
-// The shortest national numbers in use run to seven digits once the country code is counted, so
-// anything below this cannot be a real number and the button stays out of reach.
-private const val MIN_PHONE_DIGITS = 7
-
 /** Telegram's recovery codes are six digits; room for a longer one, never a whole email. */
 private const val RECOVERY_CODE_MAX = 12
 
 /** Telegram cuts a password hint off well before this. */
 private const val HINT_MAX = 64
-
-/**
- * The national field: digits only. No plus, because the dial code beside it is where that lives,
- * and no spaces, because nothing groups them.
- */
-private fun String.keepNationalCharacters(): String = filter { it.isDigit() }

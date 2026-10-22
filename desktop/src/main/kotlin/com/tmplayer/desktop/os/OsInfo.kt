@@ -12,6 +12,9 @@ object OsInfo {
     val isWindows: Boolean = name.startsWith("windows")
     val isMac: Boolean = name.startsWith("mac") || name.startsWith("darwin")
 
+    /** Never on the desktop; the browser build says when the page is open on a phone or tablet. */
+    val isHandheld: Boolean = false
+
     /** `x64` or `arm64`, the spelling TDLib's and mediamp's native jars use for their folders. */
     val archTag: String = when (arch) {
         "amd64", "x86_64", "x64" -> "x64"

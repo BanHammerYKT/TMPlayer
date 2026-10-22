@@ -254,17 +254,15 @@ private fun Masthead() {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(if (touch) 16.dp else 24.dp),
     ) {
-        Image(
-            AppLogo.Mark,
-            contentDescription = null,
-            modifier = Modifier
-                .size(if (touch) 64.dp else 88.dp)
-                .clip(RoundedCornerShape(Corner.Large)),
-        )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            // The mark and the name, then the version under them.
+            com.tmplayer.ui.components.BrandLockup(
+                size = if (touch) com.tmplayer.ui.components.BrandSize.Medium else com.tmplayer.ui.components.BrandSize.Large,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
             Text(
-                "TMPlayer ${Updates.installedVersion}",
-                style = if (touch) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineLarge,
+                "${s.settingsVersion} ${Updates.installedVersion}",
+                style = if (touch) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                 color = Tone.text,
             )
             Text(

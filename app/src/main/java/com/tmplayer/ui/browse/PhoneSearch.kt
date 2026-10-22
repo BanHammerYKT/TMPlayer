@@ -1,5 +1,6 @@
 package com.tmplayer.ui.browse
 
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.components.riseIn
 import com.tmplayer.ui.components.rememberLessMotion
@@ -187,9 +188,10 @@ internal fun PhoneSearchScreen(
 
     Box(Modifier.fillMaxSize().background(Tone.background)) {
         Column(Modifier.fillMaxSize().imePadding()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 8.dp),
             ) {
                 item(key = "top") { Spacer(Modifier.windowInsetsPadding(WindowInsets.statusBars).height(8.dp)) }
@@ -240,6 +242,9 @@ internal fun PhoneSearchScreen(
                     )
                 }
             }
+            // A long run of results is one hold away from its end.
+            FastScroller(listState)
+            }
 
             // The filters once there is something to filter, or a filter is on.
             if (query.isNotBlank() && (state.groups.isNotEmpty() || !state.filters.isDefault || state.sort != SearchSort.BestMatch)) {
@@ -281,15 +286,12 @@ internal fun PhoneSearchScreen(
     }
 
     // The next page well before the end, the way a chat's grid pages.
-    val nearEnd by remember {
-        derivedStateOf {
-            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            last >= listState.layoutInfo.totalItemsCount - PAGE_LEAD
-        }
-    }
-    LaunchedEffect(listState, state.groups.size) {
-        snapshotFlow { nearEnd }.collect { if (it && state.groups.isNotEmpty()) onLoadMore() }
-    }
+    com.tmplayer.ui.components.LoadMoreAhead(
+        listState,
+        enabled = state.groups.isNotEmpty() && !state.loadingMore && !state.endReached,
+        ahead = PAGE_LEAD - 1,
+        onLoadMore = onLoadMore,
+    )
 
     if (sheetOpen) {
         FilterSheet(state, onFilters = onFilters, onSort = onSort, onDismiss = { sheetOpen = false })

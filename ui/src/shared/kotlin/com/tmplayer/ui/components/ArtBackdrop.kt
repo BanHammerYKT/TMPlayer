@@ -142,7 +142,7 @@ internal fun rememberBackdropArt(source: BackdropSource, drawn: Int): BackdropAr
     // Where the platform decodes at full size (the desktop), the online picture is fetched at the
     // width the frame is drawn, in steps, and only ever larger: a window being resized does not
     // fetch at every pixel, and a smaller window keeps the sharper copy it has.
-    val wanted = if (decodesFullSize) maxOf(ONLINE_WIDTH, (drawn + WIDTH_STEP - 1) / WIDTH_STEP * WIDTH_STEP) else ONLINE_WIDTH
+    val wanted = backdropWidth(drawn)
     val peak = remember { intArrayOf(0) }
     peak[0] = maxOf(peak[0], wanted)
     val widest = peak[0]
@@ -218,6 +218,33 @@ internal val STAND_IN_BLUR = 18.dp
 
 /** The width TMDB's small stand-in copies are decoded at: `w92` posters whole, `w300` backdrops halved. */
 internal const val TINY_WIDTH = 160
+
+/** The online picture's width for a frame [drawn] pixels wide: see [rememberBackdropArt]. */
+private fun backdropWidth(drawn: Int): Int =
+    if (decodesFullSize) maxOf(ONLINE_WIDTH, (drawn + WIDTH_STEP - 1) / WIDTH_STEP * WIDTH_STEP) else ONLINE_WIDTH
+
+/** How wide the Home carousel's picture was last drawn, in pixels: what [prefetchBackdrop] decodes for. Set by [EdgeBackdrop]. */
+@Volatile
+internal var edgeDrawnWidth = 0
+
+/**
+ * Fetches and decodes ahead the picture [EdgeBackdrop] would draw first for a video, at the width
+ * the carousel's picture was last drawn: the online [wideUrl] where there is one, else Telegram's
+ * own thumbnail. A carousel page turned to then has its picture on the first frame ([peek])
+ * rather than starting the download and the decode as it slides in. Everything lands in
+ * [Thumbnails]' bounded cache, so a page never visited only costs its place there.
+ */
+suspend fun prefetchBackdrop(wideUrl: String?, thumbnailFileId: Int) {
+    val wanted = backdropWidth(edgeDrawnWidth)
+    val online = OnlineMetadata.current
+    if (wideUrl != null && online != null) {
+        val have = Thumbnails.peekSharp(wideUrl, wanted, ONLINE_WIDTH, MetaImageSize::atLeast)
+        if (have != null && (have.width >= wanted || MetaImageSize.atLeast(wideUrl, wanted) == wideUrl)) return
+        val sharp = Thumbnails.sharp(wideUrl, wanted, ONLINE_WIDTH, MetaImageSize::atLeast) { online.image(it) }
+        if (sharp != null && sharp.width >= SHARP_MIN_WIDTH) return
+    }
+    if (Thumbnails.peekFull(thumbnailFileId) == null) Thumbnails.full(thumbnailFileId)
+}
 
 /** What is already decoded for [source], so a backdrop seen before is there on the first frame. */
 private fun peek(source: BackdropSource, pixels: Int): BackdropArt? {

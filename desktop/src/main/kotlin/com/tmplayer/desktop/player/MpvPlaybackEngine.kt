@@ -80,6 +80,9 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
     @Volatile
     private var seekIssuedAt = 0L
 
+    /** Counts the seeks, so a keyframe seek's follower lets a newer seek land itself. */
+    private val seekGeneration = java.util.concurrent.atomic.AtomicInteger()
+
     @Volatile
     private var tracksDirty = true
 
@@ -367,7 +370,7 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
     }
 
     override fun play() {
-        if (_state.value.ended) seekTo(0)
+        if (_state.value.ended) seekToExact(0)
         _state.update { it.copy(playing = true, ended = false) }
         onEdt { player.play() }
     }
@@ -386,19 +389,79 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
 
     override fun togglePlay() = if (_state.value.playing) pause() else play()
 
-    override fun seekTo(positionMs: Long) {
+    /**
+     * To the key frame at or before [positionMs], as Android's CLOSEST_SYNC: mpv shows it as soon
+     * as it is decoded, where mediamp's own seek (`absolute+exact`) decodes on from it to the very
+     * frame first, up to a few seconds of picture for a file with sparse key frames.
+     */
+    override fun seekTo(positionMs: Long) = seek(positionMs, exact = false, relative = false)
+
+    /**
+     * By [deltaMs] from where it stands, to a key frame on the side it moves to: mpv's relative
+     * seek looks forward for a forward skip, where an absolute one to the key frame before the
+     * target could land behind where the skip started, over and over on a long key frame gap.
+     */
+    override fun seekBy(deltaMs: Long) {
+        val base = seekTarget ?: _state.value.positionMs
+        seek(SeekMath.clampSeek(base, deltaMs, _state.value.durationMs), exact = false, relative = true)
+    }
+
+    /** Through mediamp's seek, exact: Undo, a retry in place, Watch again from the end. */
+    override fun seekToExact(positionMs: Long) = seek(positionMs, exact = true, relative = false)
+
+    private fun seek(positionMs: Long, exact: Boolean, relative: Boolean) {
         if (!_state.value.opened) return
+        val ended = _state.value.ended
+        val base = seekTarget ?: _state.value.positionMs
         val target = SeekMath.clampTarget(positionMs, _state.value.durationMs)
         seekTarget = target
         seekIssuedAt = System.currentTimeMillis()
+        val generation = seekGeneration.incrementAndGet()
         _state.update { it.copy(positionMs = target, seekPending = true, buffering = true, ended = false) }
-        onEdt { player.seekTo(target) }
+        // After the end mediamp's own seek, which also takes it out of its ended state.
+        if (exact || ended) {
+            onEdt { player.seekTo(target) }
+            return
+        }
+        onEdt {
+            val sent = runCatching {
+                if (relative) {
+                    handle.command("seek", seconds(target - base), "relative+keyframes")
+                } else {
+                    handle.command("seek", seconds(target), "absolute+keyframes")
+                }
+            }.getOrDefault(false)
+            if (sent) followKeyframeSeek(generation) else player.seekTo(target)
+        }
     }
 
-    override fun seekBy(deltaMs: Long) {
-        val base = seekTarget ?: _state.value.positionMs
-        seekTo(SeekMath.clampSeek(base, deltaMs, _state.value.durationMs))
+    /**
+     * Lands a seek sent to mpv directly, which mediamp neither issued nor reports: once mpv says it
+     * is no longer seeking, at the key frame it reached. A newer seek takes over; the poll's own
+     * fallback ([poll]) still stands behind this.
+     */
+    private fun followKeyframeSeek(generation: Int) {
+        scope.launch(Dispatchers.IO) {
+            val started = System.currentTimeMillis()
+            var sawSeeking = false
+            while (System.currentTimeMillis() - started < KEYFRAME_SEEK_FOLLOW_MS) {
+                delay(KEYFRAME_SEEK_POLL_MS)
+                if (closed || generation != seekGeneration.get() || seekTarget == null) return@launch
+                val h = handle
+                val seeking = h.bool("seeking")
+                if (seeking == true) sawSeeking = true
+                // mpv may not have started on it at the first look: give it a moment before an
+                // idle "not seeking" counts as done.
+                if (seeking == false && (sawSeeking || System.currentTimeMillis() - started >= KEYFRAME_SEEK_START_MS)) {
+                    val at = h.double("time-pos")?.takeIf { it >= 0 }?.let { (it * 1000).roundToLong() }
+                    if (generation == seekGeneration.get()) landSeek(at)
+                    return@launch
+                }
+            }
+        }
     }
+
+    private fun seconds(ms: Long): String = String.format(java.util.Locale.ROOT, "%.3f", ms / 1000.0)
 
     override fun frameStep(forward: Boolean) {
         _state.update { it.copy(playing = false) }
@@ -747,6 +810,11 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
         const val POLL_MS = 250L
         const val TRACK_POLL_EVERY = 8
         const val SEEK_SETTLE_MS = 600L
+
+        /** How often, how long, and after how long an idle mpv counts, for a keyframe seek. */
+        const val KEYFRAME_SEEK_POLL_MS = 30L
+        const val KEYFRAME_SEEK_FOLLOW_MS = 15_000L
+        const val KEYFRAME_SEEK_START_MS = 120L
 
         /** What the demuxer keeps behind the position, for a jump back of a few seconds. */
         const val BACK_CACHE_MIB = 48

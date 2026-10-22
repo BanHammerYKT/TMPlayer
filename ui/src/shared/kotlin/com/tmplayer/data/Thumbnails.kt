@@ -162,8 +162,18 @@ object Thumbnails {
      */
     fun peekSharp(url: String, pixels: Int, maxWidth: Int, sharper: (String, Int) -> String = ::sharperUrl): ImageBitmap? {
         val larger = sharper(url, lighter(pixels))
-        return (if (larger != url) cache.get(onlineKey(larger, lighter(maxWidth))) else null) ?: peekOnline(url, maxWidth)
+        val width = lighter(maxWidth)
+        return (if (larger != url) cache.get(onlineKey(larger, width)) else null)
+            // The copy [sharp] last decoded for [url], whatever width asked for it: a tile composed
+            // again has not been measured yet, so [pixels] is its default and names a smaller copy
+            // than the one its measured width fetched. Missing that, a poster scrolled back to
+            // drew nothing on its first frame and faded in again although it was in memory.
+            ?: sharpOf.get(url)?.let { cache.get(onlineKey(it, width)) }
+            ?: peekOnline(url, maxWidth)
     }
+
+    /** Which larger copy [sharp] last decoded for a named picture: the named address to the one fetched. */
+    private val sharpOf = SizedLru<String, String>(SHARP_INDEX_ENTRIES) { 1 }
 
     /**
      * [online], at the size the picture is drawn: where the platform decodes at full size (the
@@ -180,7 +190,12 @@ object Thumbnails {
         fetch: suspend (String) -> java.io.File?,
     ): ImageBitmap? {
         val larger = sharper(url, lighter(pixels))
-        if (larger != url) online(larger, maxWidth) { fetch(larger) }?.let { return it }
+        if (larger != url) {
+            online(larger, maxWidth) { fetch(larger) }?.let {
+                sharpOf.put(url, larger)
+                return it
+            }
+        }
         return online(url, maxWidth) { fetch(url) }
     }
 
@@ -193,7 +208,8 @@ object Thumbnails {
     /**
      * Gives the picture cache [bytes] (half under [light]), for a platform that sizes it from its
      * own heap rather than [sizeFor]'s memory class: the desktop, whose carousel holds pictures
-     * the width of a 4K screen.
+     * the width of a 4K screen, and the browser, which decodes at full size too and without it
+     * kept [CACHE_BYTES], a dozen posters, so a row scrolled away and back fetched them again.
      */
     fun budget(bytes: Int) {
         fixedBudget = bytes
@@ -248,6 +264,9 @@ object Thumbnails {
         val path = done?.file?.local?.path ?: td.getFile(fileId).valueOrNull?.local?.path
         return path?.takeIf { it.isNotEmpty() }
     }
+
+    /** How many named pictures [peekSharp] remembers the larger copy of: far more than the cache holds. */
+    private const val SHARP_INDEX_ENTRIES = 2048
 
     private const val CACHE_BYTES = 12 * 1024 * 1024
     private const val CACHE_HEAP_FRACTION = 8

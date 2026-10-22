@@ -146,8 +146,9 @@ fun rememberInternational(raw: String, countries: List<com.tmplayer.data.Country
  */
 fun keepInternational(raw: String): String {
     val trimmed = raw.trim()
-    val digits = trimmed.filter(Char::isDigit)
-    val body = if (!trimmed.startsWith('+') && trimmed.startsWith("00")) digits.removePrefix("00") else digits
+    // Any script's digits, written as 0 to 9: an Arabic or Persian keyboard types its own.
+    val digits = PhoneRules.digits(trimmed)
+    val body = if (!trimmed.startsWith('+') && digits.startsWith("00")) digits.removePrefix("00") else digits
     return "+" + body.take(MAX_INTERNATIONAL_DIGITS)
 }
 

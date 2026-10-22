@@ -14,6 +14,17 @@ object MetaWords {
         TmdbState.OwnKeyRefused -> L.metadataKeyOwnRefused
     }
 
+    /** Under "OMDb key" in Settings. */
+    fun omdbKey(state: OmdbState): String = when (state) {
+        OmdbState.AppKey -> L.metadataOmdbKeyApp
+        OmdbState.OwnKey -> L.metadataKeyOwn
+        OmdbState.NoKey -> L.metadataOmdbKeyNone
+        OmdbState.OwnKeyRefused -> L.metadataOmdbKeyOwnRefused
+    }
+
+    /** Above the OMDb key field, worded for whether the build has a key. */
+    fun omdbKeyMessage(buildHasKey: Boolean): String = if (buildHasKey) L.metadataOmdbKeyMessage else L.metadataOmdbKeyMessageNone
+
     /** Above the key field: why a key of one's own, worded for whether the build has one. */
     fun keyMessage(buildHasKey: Boolean): String = if (buildHasKey) L.metadataKeyMessage else L.metadataKeyMessageNone
 

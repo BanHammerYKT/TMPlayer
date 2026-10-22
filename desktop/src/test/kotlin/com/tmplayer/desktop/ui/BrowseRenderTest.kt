@@ -324,15 +324,6 @@ class BrowseRenderTest {
                     }
                 })
             }
-            // Docked beside the page, as the shell draws it on a wide window: the rows stay in reach.
-            save("desktop-detail-home-docked.png", render {
-                androidx.compose.foundation.layout.Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxHeight()) {
-                        HomeRowsView(shell, rows, chats, emptyMap(), onRowShown = {}, onArtWanted = {}, onRefresh = {})
-                    }
-                    DetailPaneSide(shell)
-                }
-            })
         } finally {
             shell.closeDetail()
             shell.go(Destination.Chats)
@@ -621,6 +612,7 @@ class BrowseRenderTest {
             }
             MetaFixture.install("none")
             save("desktop-meta-key-dialog.png", render { MetadataKeyDialog(onClose = {}) })
+            save("desktop-meta-omdb-dialog.png", render { OmdbKeyDialog(onClose = {}) })
 
             MetaFixture.install("on")
             assertTrue(com.tmplayer.ui.about.About.groups("2.0.0").any { it.tmdbLogo && it.links.any { l -> l.url == com.tmplayer.ui.about.About.TVMAZE } })

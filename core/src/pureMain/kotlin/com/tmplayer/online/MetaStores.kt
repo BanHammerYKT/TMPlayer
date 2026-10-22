@@ -25,6 +25,13 @@ interface MetaCacheStore {
     /** A title's logo answer, the title having none included, or null to ask. */
     fun logo(key: String): LogoAnswer?
     fun putLogo(key: String, answer: LogoAnswer)
+
+    /**
+     * Up to [limit] of the logo answers kept, still fresh, the newest first, by their keys: read
+     * into memory once at start ([OnlineMetadata.warmLogos]) so the carousel's first frame after
+     * a cold start finds them. None where a store cannot list them cheaply.
+     */
+    fun logos(limit: Int): List<Pair<String, LogoAnswer>> = emptyList()
     fun season(key: String): List<MetaEpisode>?
     fun putSeason(key: String, episodes: List<MetaEpisode>)
     fun image(url: String): CachedImage?

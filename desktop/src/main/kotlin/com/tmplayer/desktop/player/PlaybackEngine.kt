@@ -31,8 +31,16 @@ interface PlaybackEngine {
      */
     fun stop()
     fun togglePlay()
+    /**
+     * A seek the viewer asked for: the bar, the skips, a chapter, the skip pill. It may land on
+     * the key frame at or before [positionMs], which starts the picture sooner than decoding up
+     * to the exact moment ([MpvPlaybackEngine]); [seekBy] lands on one on the side it moves to.
+     */
     fun seekTo(positionMs: Long)
     fun seekBy(deltaMs: Long)
+
+    /** A seek to exactly [positionMs], for a place that must not move: a retry in place, Undo. */
+    fun seekToExact(positionMs: Long) = seekTo(positionMs)
     fun frameStep(forward: Boolean)
     fun setSpeed(speed: Float)
     fun setVolume(percent: Int)

@@ -1,5 +1,6 @@
 package com.tmplayer.ui.browse
 
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.keepTopInSight
 import com.tmplayer.ui.theme.collectIsFocusVisibleAsState
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -339,6 +340,8 @@ fun EpisodeRow(
     guide: com.tmplayer.online.MetaEpisode? = null,
     /** The provider's few lines about the episode under its facts, on the show's own page. */
     showOverview: Boolean = false,
+    /** A large window's show page: a larger picture and type, as the page around it has. */
+    large: Boolean = false,
 ) {
     val shape = RoundedCornerShape(Corner.Medium)
     val card = modifier
@@ -350,6 +353,7 @@ fun EpisodeRow(
         episode, chosen, point, finished, upNext, onClick, card.then(lineModifier), onLongClick, current, holdOk, name,
         still = guide?.stillUrl,
         overview = guide?.overview?.trim()?.takeIf { showOverview && it.isNotEmpty() },
+        large = large,
     )
 }
 
@@ -448,6 +452,7 @@ private fun EpisodeLine(
     name: String? = null,
     still: String? = null,
     overview: String? = null,
+    large: Boolean = false,
 ) {
     val s = LocalStrings.current
     val tv = !isTouch()
@@ -470,19 +475,20 @@ private fun EpisodeLine(
                     Modifier.clickable(interactionSource = interactions, indication = if (tv) null else androidx.compose.foundation.LocalIndication.current, onClick = onClick)
                 },
             )
-            .padding(if (tv) 10.dp else 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(if (tv) 16.dp else 12.dp),
+            .padding(if (tv || large) 12.dp else 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (large) 20.dp else if (tv) 16.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             Modifier
-                .width(if (tv) EPISODE_ART_TV else EPISODE_ART_TOUCH)
+                .width(if (large) EPISODE_ART_LARGE else if (tv) EPISODE_ART_TV else EPISODE_ART_TOUCH)
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(Corner.Small)),
         ) {
             MediaArt(item.miniThumbnail, item.thumbnailFileId, Modifier.fillMaxSize(), cover = cover, compactCover = true)
-            // The provider's still for the episode, over the frame once it is decoded.
-            com.tmplayer.ui.online.MetaPicture(still, Modifier.fillMaxSize(), maxWidth = EPISODE_STILL_WIDTH)
+            // The provider's still for the episode, over the frame once it is decoded, at the
+            // copy the card's width needs (EpisodeStill).
+            EpisodeStill(still, Modifier.fillMaxSize())
             val fraction = when {
                 point != null && point.fraction > 0f -> point.fraction
                 finished -> 1f
@@ -528,7 +534,7 @@ private fun EpisodeLine(
             }
             Text(
                 name ?: s.seriesEpisode(episode.episode),
-                style = if (tv) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
+                style = if (tv || large) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall,
                 color = Tone.text,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -536,7 +542,7 @@ private fun EpisodeLine(
             )
             Text(
                 item.title,
-                style = if (tv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                style = if (tv || large) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
                 color = Tone.muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -553,7 +559,7 @@ private fun EpisodeLine(
             if (meta.isNotEmpty()) {
                 Text(
                     meta,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = if (large) MaterialTheme.typography.labelLarge else MaterialTheme.typography.labelMedium,
                     color = if (stopped != null || finished) Tone.accent else Tone.muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -562,7 +568,7 @@ private fun EpisodeLine(
             overview?.let {
                 Text(
                     it,
-                    style = if (tv) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
+                    style = if (tv || large) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,
                     color = Tone.muted,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -573,14 +579,56 @@ private fun EpisodeLine(
     }
 }
 
-/** The decode width of an episode's still: the row's art is at most about 200 dp wide. */
-private const val EPISODE_STILL_WIDTH = 400
+/**
+ * An episode's still from the provider, faded in over whatever stands under it (the video's own
+ * frame) once it is decoded, at the copy the card's drawn width needs
+ * ([com.tmplayer.online.MetaImageSize.still]): TMDB's `w185` or `w300` for a card, a few
+ * kilobytes that land at once, never the full size still a large backdrop would want. The card
+ * holds its 16:9 place from the start, so nothing moves when it arrives.
+ */
+@Composable
+internal fun EpisodeStill(url: String?, modifier: Modifier = Modifier) {
+    if (url == null) return
+    val online = com.tmplayer.online.OnlineMetadata.current ?: return
+    BoxWithConstraints(modifier) {
+        val pixels = with(androidx.compose.ui.platform.LocalDensity.current) { maxWidth.roundToPx() }.coerceAtLeast(1)
+        val sized = remember(url, pixels) { com.tmplayer.online.MetaImageSize.still(url, pixels) }
+        // Android samples to this width; the desktop decodes whole, whatever it says.
+        val decode = pixels.coerceIn(EPISODE_STILL_MIN_DECODE, EPISODE_STILL_MAX_DECODE)
+        var bitmap by remember(sized) { mutableStateOf(com.tmplayer.data.Thumbnails.peekOnline(sized, decode)) }
+        val reveal = remember(sized) { androidx.compose.animation.core.Animatable(if (bitmap != null) 1f else 0f) }
+        val still = com.tmplayer.ui.components.rememberLessMotion()
+        LaunchedEffect(sized) {
+            if (bitmap == null) bitmap = com.tmplayer.data.Thumbnails.online(sized, decode) { online.image(sized) }
+        }
+        val shown = bitmap
+        LaunchedEffect(shown != null) {
+            if (shown == null || reveal.value >= 1f) return@LaunchedEffect
+            if (still) reveal.snapTo(1f) else reveal.animateTo(1f, androidx.compose.animation.core.tween(EPISODE_STILL_FADE_MS))
+        }
+        if (shown != null) {
+            androidx.compose.foundation.Image(
+                shown,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = reveal.value },
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                filterQuality = com.tmplayer.data.Thumbnails.drawFilter,
+            )
+        }
+    }
+}
+
+private const val EPISODE_STILL_MIN_DECODE = 160
+private const val EPISODE_STILL_MAX_DECODE = 420
+private const val EPISODE_STILL_FADE_MS = 240
 
 /** The widest and tallest a title logo is set at the head of a show's page or a video's. */
 internal val TITLE_LOGO_WIDTH = 320.dp
 internal val TITLE_LOGO_HEIGHT = 96.dp
 internal val TITLE_LOGO_WIDTH_TV = 380.dp
 internal val TITLE_LOGO_HEIGHT_TV = 120.dp
+internal val TITLE_LOGO_WIDTH_LARGE = 480.dp
+internal val TITLE_LOGO_HEIGHT_LARGE = 150.dp
 
 /**
  * The show's play pill, naming what it starts: "Resume S01E04 · 12 min left" for an episode left
@@ -792,7 +840,13 @@ fun SeriesPanel(
             .focusGroup(),
     ) {
         val wide = maxWidth > maxHeight || maxWidth >= WIDE_PAGE
-        val heroHeight = if (wide) {
+        // A large window on the desktop (or a wide browser): a title page drawn to its size, a
+        // bigger backdrop, title, poster and type, Play a size up with round buttons beside it,
+        // and larger episode cards. A phone and a television keep their own.
+        val large = wide && !tv && com.tmplayer.ui.components.deviceForm() == com.tmplayer.data.DeviceForm.Desktop && maxWidth >= LARGE_PAGE
+        val heroHeight = if (large) {
+            (maxHeight * 0.7f).coerceIn(420.dp, 720.dp)
+        } else if (wide) {
             (maxHeight * 0.62f).coerceIn(280.dp, 560.dp)
         } else {
             tallBackdropHeight(maxWidth, maxHeight, online = meta?.backdropUrl != null)
@@ -803,8 +857,8 @@ fun SeriesPanel(
             // decoded and wherever it has none; read out as the name either way.
             com.tmplayer.ui.online.TitleArt(
                 meta,
-                maxWidth = if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
-                maxHeight = if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT,
+                maxWidth = if (large) TITLE_LOGO_WIDTH_LARGE else if (tv) TITLE_LOGO_WIDTH_TV else TITLE_LOGO_WIDTH,
+                maxHeight = if (large) TITLE_LOGO_HEIGHT_LARGE else if (tv) TITLE_LOGO_HEIGHT_TV else TITLE_LOGO_HEIGHT,
                 modifier = Modifier.clearAndSetSemantics {
                     heading()
                     contentDescription = title
@@ -812,7 +866,8 @@ fun SeriesPanel(
             ) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.displaySmall.trackedFor(title),
+                    style = (if (large) MaterialTheme.typography.displayMedium else MaterialTheme.typography.displaySmall).trackedFor(title),
+                    fontWeight = if (large) FontWeight.Bold else null,
                     color = Tone.text,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
@@ -823,7 +878,7 @@ fun SeriesPanel(
             meta?.posterUrl?.let { url ->
                 Box(
                     Modifier
-                        .width(if (tv) SERIES_POSTER_TV else if (wide) SERIES_POSTER_WIDE else SERIES_POSTER)
+                        .width(if (large) SERIES_POSTER_LARGE else if (tv) SERIES_POSTER_TV else if (wide) SERIES_POSTER_WIDE else SERIES_POSTER)
                         .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(Corner.Medium))
                         .background(Tone.surfaceHigh),
@@ -841,6 +896,7 @@ fun SeriesPanel(
                         seriesProgressLine(progress)?.let { Fact(it, accent = true) },
                         chatTitle?.takeIf { it.isNotBlank() }?.let { Fact(it) },
                     ),
+                    style = if (large) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
                 )
                 MetaFactsLines(extras, maxLines = 1)
                 // How far through the whole show; the facts line says it in words.
@@ -849,8 +905,8 @@ fun SeriesPanel(
         }
         val overview: @Composable () -> Unit = {
             meta?.overview?.takeIf { it.isNotBlank() }?.let { text ->
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Synopsis(text, lines = if (wide) 3 else null)
+                Column(Modifier.then(if (large) Modifier.widthIn(max = LARGE_READING) else Modifier), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (large) Synopsis(text, style = MaterialTheme.typography.bodyLarge, lines = 3) else Synopsis(text, lines = if (wide) 3 else null)
                     MetaCredit(meta)
                 }
             }
@@ -875,7 +931,20 @@ fun SeriesPanel(
                 )
             }
             Column(Modifier.padding(pad), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (tv) {
+                if (large) {
+                    // Play a size up, and the trailer and the downloads as round buttons beside it.
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        HeroPill(
+                            label = seriesPlayLabel(target.code, watch.pointOf(target), anyWatched = progress.watched > 0),
+                            icon = TmIcons.Play,
+                            onClick = { onPlay(copyOf(target, next?.item ?: watch.pick(target, progress))) },
+                            modifier = Modifier.onPlaced { playPlaced = true }.onFocusChanged { playFocused = it.hasFocus },
+                            focusRequester = playFocus,
+                            large = true,
+                        )
+                        others.forEach { (label, icon, run) -> WideIconAction(label, icon, run) }
+                    }
+                } else if (tv) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         hero(Modifier)
                         others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s)) }
@@ -905,7 +974,7 @@ fun SeriesPanel(
             verticalArrangement = Arrangement.spacedBy(if (tv) 8.dp else 6.dp),
         ) {
             item(key = "hero") {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(if (large) 24.dp else 16.dp)) {
                     Box(Modifier.fillMaxWidth().heightIn(min = heroHeight).clipToBounds()) {
                         Box(Modifier.matchParentSize()) {
                             PageBackdrop(
@@ -924,14 +993,14 @@ fun SeriesPanel(
                         Row(
                             Modifier
                                 .align(Alignment.BottomStart)
-                                .fillMaxWidth(if (wide) TEXT_SHARE else 1f)
+                                .fillMaxWidth(if (large) TEXT_SHARE_LARGE else if (wide) TEXT_SHARE else 1f)
                                 .padding(pad)
                                 .padding(top = heroHeight * 0.35f, bottom = if (wide) 8.dp else 0.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (tv) 24.dp else 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (tv || large) 24.dp else 16.dp),
                             verticalAlignment = Alignment.Bottom,
                         ) {
                             poster()
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (large) 14.dp else 10.dp)) {
                                 heading()
                                 if (wide) {
                                     facts()
@@ -971,12 +1040,13 @@ fun SeriesPanel(
                     },
                     onLongClick = onLongClick?.let { { it(chosen) } },
                     chosen = chosen,
-                    modifier = Modifier.padding(pad).widthIn(max = EPISODES_MAX),
+                    modifier = Modifier.padding(pad).widthIn(max = if (large) EPISODES_MAX_LARGE else EPISODES_MAX),
                     lineModifier = (if (next != null && episode.sameAs(next)) Modifier.focusRequester(upNextFocus) else Modifier)
                         .focusRequester(rowFocus),
                     name = EpisodeNames.listName(episode.season, episode.episode, names),
                     guide = EpisodeNames.listed(episode.season, episode.episode, names),
                     showOverview = true,
+                    large = large,
                 )
             }
             // The cast and "More like this" after the episodes: composed only once scrolled to.
@@ -991,6 +1061,9 @@ fun SeriesPanel(
         }
         }
         ScrollToTop(list)
+        // A long season is one hold from its end; the bubble names the episode on screen.
+        val episodeLabels = remember(listed) { listed.associate { it.item.id to s.seriesEpisodeShort(it.season, it.episode) } }
+        FastScroller(list, label = { key -> episodeLabels[key] })
         onBack?.let { back ->
             PageBackBand(list, meta?.title?.takeIf { it.isNotBlank() } ?: series.title, back, barInsets, Modifier.align(Alignment.TopStart))
         }
@@ -1143,6 +1216,19 @@ private fun PaddingValues.horizontalOnly(): PaddingValues =
 private val SERIES_POSTER: Dp = 96.dp
 private val SERIES_POSTER_WIDE: Dp = 120.dp
 private val SERIES_POSTER_TV: Dp = 140.dp
+private val SERIES_POSTER_LARGE: Dp = 176.dp
+
+/** From this width a desktop show page is drawn large (see SeriesPanel). */
+private val LARGE_PAGE: Dp = 1000.dp
+
+/** The words' share of a large page's width, from the start; the backdrop shows past them. */
+private const val TEXT_SHARE_LARGE = 0.55f
+
+/** A large show page's overview: about 65 characters a line. */
+private val LARGE_READING: Dp = 680.dp
+
+/** A large show page's episode cards stop growing here. */
+private val EPISODES_MAX_LARGE: Dp = 1120.dp
 
 /** As wide as this, a show's page puts its backdrop at the end and its words over the start. */
 private val WIDE_PAGE: Dp = 720.dp
@@ -1163,6 +1249,9 @@ private const val FIRST_EPISODE_ITEM = 2
 private const val LONG_SEASON = 12
 private val EPISODE_ART_TOUCH: Dp = 128.dp
 private val EPISODE_ART_TV: Dp = 176.dp
+
+/** A large window's episode card: at 2x still within a `w300` still (see EpisodeStill). */
+private val EPISODE_ART_LARGE: Dp = 208.dp
 
 /**
  * OK plays, holding OK is [onHold]: the remote's long press, written out of key events because

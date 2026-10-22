@@ -10,6 +10,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -60,6 +62,8 @@ import com.tmplayer.online.MetaExtras
 import com.tmplayer.online.MetaInfo
 import com.tmplayer.online.MetaKind
 import com.tmplayer.online.MetaPerson
+import com.tmplayer.online.MetaScore
+import com.tmplayer.online.ScoreSource
 import com.tmplayer.online.MetaTrailer
 import com.tmplayer.online.OnlineMetadata
 import com.tmplayer.ui.auth.QrCode
@@ -72,6 +76,7 @@ import com.tmplayer.ui.theme.Focus
 import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /*
  * The detail page's extras in Compose, shared by the phone, the television and the desktop: the
@@ -94,21 +99,22 @@ fun rememberMetaExtras(info: MetaInfo?): MetaExtras? {
     val language by Translator.active.collectAsState()
     val known = remember(info.provider, info.kind, info.id, language.tag) { online.peekExtras(info) }
     val extras by produceState(known, info.provider, info.kind, info.id, language.tag) {
-        if (value == null) value = withContext(Dispatchers.IO) { online.extras(info) }
+        value = known
+        // An answer kept from before the scores were asked for is shown at once, then refreshed with them.
+        if (value?.scoresAsked != true) value = withContext(Dispatchers.IO) { online.extras(info) } ?: value
     }
     return extras
 }
 
 /**
- * "Drama, Crime  ·  56 min  ·  5 seasons  ·  TV-MA  ·  ★ 9.0", or null with nothing to say. The
- * score is the provider's own vote average, shown only when it sent one; nothing is made up.
+ * "Drama, Crime  ·  56 min  ·  5 seasons  ·  TV-MA", or null with nothing to say. The scores are
+ * not in it: [MetaScoresRow] draws them under it, each with its site's mark.
  */
 fun metaFactsLine(extras: MetaExtras, s: Messages): String? = listOfNotNull(
     extras.genres.take(3).joinToString(", ").ifBlank { null },
     extras.runtimeMin?.let { s.formatter.duration(it * 60L) },
     extras.seasons?.let { s.metadataSeasons(it) },
     extras.certification,
-    extras.rating?.let { "★ " + s.formatter.decimal(it, 1) },
 ).joinToString("  ·  ").ifBlank { null }
 
 /** "Directed by …" for a film, "Created by …" for a show, or null. */
@@ -118,30 +124,142 @@ fun metaPeopleLine(extras: MetaExtras, s: Messages): String? = when {
     else -> null
 }
 
-/** The facts line and the director or creators under it. */
+/** The facts line, the scores under it, and the director or creators. */
 @Composable
 fun MetaFactsLines(extras: MetaExtras?, modifier: Modifier = Modifier, maxLines: Int = 2) {
     extras ?: return
     val s = LocalStrings.current
     val facts = metaFactsLine(extras, s)
     val people = metaPeopleLine(extras, s)
-    if (facts == null && people == null) return
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        facts?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Tone.muted,
-                maxLines = maxLines,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.semantics {
-                    contentDescription = it.replace("★ ", "") + (extras.rating?.let { r -> ". " + s.metadataRating(s.formatter.decimal(r, 1)) } ?: "")
-                },
-            )
-        }
+    val scored = extras.scores.isNotEmpty() || extras.rating != null
+    if (facts == null && people == null && !scored) return
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        facts?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Tone.muted, maxLines = maxLines, overflow = TextOverflow.Ellipsis) }
+        if (scored) MetaScoresRow(extras, maxLines = maxLines)
         people?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = Tone.muted, maxLines = maxLines, overflow = TextOverflow.Ellipsis) }
     }
 }
+
+/**
+ * Each site's score with that site's own mark: IMDb's badge then "7.8", Rotten Tomatoes' tomato
+ * (or splat, under 60) then "92%", Metacritic's roundel then "78" on its band's colour, and so on,
+ * wrapping to another line when narrow, no more than [maxLines]. [limit] keeps only the first few
+ * (the Home carousel's one line), [centered] centres them under centred text. An answer kept from
+ * before the scores were asked for has only the provider's rating, which is shown as "★ 7.8" as it was.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun MetaScoresRow(
+    extras: MetaExtras,
+    modifier: Modifier = Modifier,
+    maxLines: Int = 2,
+    limit: Int = Int.MAX_VALUE,
+    centered: Boolean = false,
+) {
+    val s = LocalStrings.current
+    val style = MaterialTheme.typography.bodyMedium
+    if (extras.scores.isEmpty()) {
+        val rating = extras.rating ?: return
+        val value = s.formatter.decimal(rating, 1)
+        Text(
+            "★ $value",
+            style = style,
+            color = Tone.muted,
+            maxLines = 1,
+            modifier = modifier.semantics { contentDescription = s.metadataRating(value) },
+        )
+        return
+    }
+    FlowRow(
+        modifier,
+        horizontalArrangement = if (centered) Arrangement.spacedBy(SCORE_GAP, Alignment.CenterHorizontally) else Arrangement.spacedBy(SCORE_GAP),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
+        maxLines = maxLines,
+    ) {
+        for (score in extras.scores.take(limit)) ScoreItem(score, style)
+    }
+}
+
+@Composable
+private fun ScoreItem(score: MetaScore, style: androidx.compose.ui.text.TextStyle) {
+    val s = LocalStrings.current
+    val site = scoreSiteName(score.source)
+    val whole = score.value.roundToInt()
+    val percent = score.source == ScoreSource.RottenTomatoes || score.source == ScoreSource.AniList
+    val value = when {
+        // percent() rounds down, so half a point more keeps 29 from coming out as 28.
+        percent -> s.formatter.percent((whole + 0.5) / 100.0)
+        score.outOfHundred -> s.formatter.number(whole)
+        else -> s.formatter.decimal(score.value, 1)
+    }
+    val spoken = when {
+        percent -> s.metadataScorePerCent(site = site, score = s.formatter.number(whole))
+        score.outOfHundred -> s.metadataScoreOutOfHundred(site = site, score = value)
+        else -> s.metadataScoreOutOfTen(site = site, score = value)
+    }
+    Row(
+        Modifier.semantics(mergeDescendants = true) { contentDescription = spoken },
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val logo = scoreLogo(score)
+        if (logo != null) {
+            Image(
+                logo,
+                contentDescription = null,
+                modifier = Modifier.height(if (score.source == ScoreSource.Tmdb) TMDB_HEIGHT else LOGO_HEIGHT)
+                    .aspectRatio(logo.viewportWidth / logo.viewportHeight),
+            )
+        } else {
+            // TVmaze: no vector mark to hand, so its name in its place.
+            Text(site, style = style, color = Tone.muted, maxLines = 1)
+        }
+        if (score.source == ScoreSource.Metacritic) {
+            // Metacritic's own way: the number on its band's colour, green, yellow or red.
+            Box(
+                Modifier.clip(RoundedCornerShape(4.dp)).background(metacriticBand(score.value)).padding(horizontal = 5.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(value, style = style, color = Color(0xFF131313), maxLines = 1)
+            }
+        } else {
+            Text(value, style = style, color = Tone.text, maxLines = 1)
+        }
+    }
+}
+
+/** Brand names stay as the sites write them, in every language. */
+private fun scoreSiteName(source: ScoreSource): String = when (source) {
+    ScoreSource.Imdb -> "IMDb"
+    ScoreSource.RottenTomatoes -> "Rotten Tomatoes"
+    ScoreSource.Metacritic -> "Metacritic"
+    ScoreSource.Tmdb -> "TMDB"
+    ScoreSource.AniList -> "AniList"
+    ScoreSource.TvMaze -> "TVmaze"
+}
+
+private fun scoreLogo(score: MetaScore): ImageVector? = when (score.source) {
+    ScoreSource.Imdb -> ScoreLogos.Imdb
+    ScoreSource.RottenTomatoes -> if (score.fresh) ScoreLogos.TomatoFresh else ScoreLogos.TomatoRotten
+    ScoreSource.Metacritic -> ScoreLogos.Metacritic
+    ScoreSource.Tmdb -> com.tmplayer.ui.about.TmdbLogo
+    ScoreSource.AniList -> ScoreLogos.AniList
+    ScoreSource.TvMaze -> null
+}
+
+/** Metacritic's bands: 61 and over favourable, 40 to 60 mixed, under 40 unfavourable. */
+private fun metacriticBand(value: Double): Color = when {
+    value >= 61 -> Color(0xFF00CE7A)
+    value >= 40 -> Color(0xFFFFBD3F)
+    else -> Color(0xFFFF6874)
+}
+
+private val LOGO_HEIGHT: Dp = 16.dp
+
+/** TMDB's mark is a long wordmark; at this height its letters stand as tall as the text's. */
+private val TMDB_HEIGHT: Dp = 11.dp
+private val SCORE_GAP: Dp = 14.dp
 
 // ---- the trailer ------------------------------------------------------------------------------
 

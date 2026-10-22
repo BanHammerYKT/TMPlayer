@@ -9,11 +9,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -162,6 +159,7 @@ fun DesktopShell(
                             settings = state.settings,
                             purpose = PinPurpose.Check,
                             title = LocalStrings.current.lockEnterForApp,
+                            brand = true,
                             onDone = {
                                 com.tmplayer.data.AppLockSession.unlock()
                                 state.settingsUnlocked = true
@@ -347,40 +345,32 @@ private fun Browse(state: ShellState, player: PlayerContent) {
     // while a video plays, so the picture shows through around the player's controls.
     val seeThrough = LocalVideoBehindPage.current && state.nowPlaying != null
     Box(Modifier.fillMaxSize()) {
-        BoxWithConstraints(Modifier.fillMaxSize().then(if (seeThrough) Modifier.drawWithContent { } else Modifier)) {
-            // The detail pane docks beside the page where both fit, so the grid stays in view and
-            // in reach (a click on another poster swaps the pane), and goes over the page where
-            // they do not.
-            val docked = state.detail != null && maxWidth >= DOCK_FROM
-            Row(Modifier.fillMaxSize()) {
-                // The floating bar sits at the foot of the page, not of the window, so a docked
-                // pane keeps its own foot; a chat brings its own bar, which takes this one's place.
-                NavFrame(state, update, account, Modifier.weight(1f).fillMaxHeight().closeDetailOnEmptyClick(state, docked), barShown = state.openChat == null) {
-                    val open = state.openChat
-                    when {
-                        open != null -> MediaGridPage(state, open)
-                        else -> pages.SaveableStateProvider(state.destination.name) {
-                            when (state.destination) {
-                                Destination.Home -> HomePage(state, chats)
-                                Destination.Chats -> ChatsPage(state, chats, favouritesOnly = false)
-                                Destination.Favourites -> ChatsPage(state, chats, favouritesOnly = true)
-                                Destination.History -> HistoryPage(state)
-                                Destination.Downloads -> DownloadsPage(state)
-                                Destination.Settings -> LockedSettings(state) {
-                                    SettingsPage(
-                                        state,
-                                        BuildInfo.VERSION,
-                                        chatList = (chatsUi as? UiState.Content)?.value?.chats.orEmpty(),
-                                        account = account,
-                                    )
-                                }
+        Box(Modifier.fillMaxSize().then(if (seeThrough) Modifier.drawWithContent { } else Modifier)) {
+            // The detail sheet floats over the page (DetailPaneHost), so the page keeps its size
+            // and its place under it. A chat brings its own bar, which takes the floating one's place.
+            NavFrame(state, update, account, Modifier.fillMaxSize(), barShown = state.openChat == null) {
+                val open = state.openChat
+                when {
+                    open != null -> MediaGridPage(state, open)
+                    else -> pages.SaveableStateProvider(state.destination.name) {
+                        when (state.destination) {
+                            Destination.Home -> HomePage(state, chats)
+                            Destination.Chats -> ChatsPage(state, chats, favouritesOnly = false)
+                            Destination.Favourites -> ChatsPage(state, chats, favouritesOnly = true)
+                            Destination.History -> HistoryPage(state)
+                            Destination.Downloads -> DownloadsPage(state)
+                            Destination.Settings -> LockedSettings(state) {
+                                SettingsPage(
+                                    state,
+                                    BuildInfo.VERSION,
+                                    chatList = (chatsUi as? UiState.Content)?.value?.chats.orEmpty(),
+                                    account = account,
+                                )
                             }
                         }
                     }
                 }
-                if (docked) DetailPaneSide(state)
             }
-            if (!docked) DetailPaneHost(state)
         }
 
         // The search across every chat (Ctrl+K), over the page and the floating bar alike.
@@ -404,6 +394,8 @@ private fun Browse(state: ShellState, player: PlayerContent) {
                 SeriesPage(state, shown, rememberSeriesWatch(state), onClose = { searchSeries = null })
             }
         }
+        // Over the page and over a show opened from the search, whose episodes open it too.
+        DetailPaneHost(state)
         if (state.paletteOpen && state.nowPlaying == null) {
             SearchPalette(
                 state = state,

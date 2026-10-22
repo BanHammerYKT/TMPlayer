@@ -31,6 +31,8 @@ class MetadataStore(private val file: File) : MetaSettingsStore {
             ownKey = p.getProperty("own_key").orEmpty(),
             refusedKey = p.getProperty("refused_key").orEmpty(),
             refusedAt = p.getProperty("refused_at")?.toLongOrNull() ?: 0L,
+            omdbKey = p.getProperty("omdb_key").orEmpty(),
+            omdbRefusedKey = p.getProperty("omdb_refused_key").orEmpty(),
             skipTimes = p.getProperty("skip_times") != "false",
             offByChoice = p.getProperty("off_by_choice") == "true",
         )
@@ -42,6 +44,8 @@ class MetadataStore(private val file: File) : MetaSettingsStore {
         p["own_key"] = s.ownKey
         p["refused_key"] = s.refusedKey
         p["refused_at"] = s.refusedAt.toString()
+        p["omdb_key"] = s.omdbKey
+        p["omdb_refused_key"] = s.omdbRefusedKey
         p["skip_times"] = s.skipTimes.toString()
         p["off_by_choice"] = s.offByChoice.toString()
         runCatching {

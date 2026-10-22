@@ -456,4 +456,5 @@ internal fun desktopOnlineMetadata(): OnlineMetadata = OnlineMetadata(
     store = MetadataStore(java.io.File(DesktopPaths.dataDir, "online-metadata.properties")),
     cache = MetadataCache(java.io.File(DesktopPaths.cacheDir, "online-metadata")),
     appVersion = BuildInfo.VERSION,
+    omdbKey = BuildInfo.OMDB_API_KEY,
 ).also { metadata -> Background.scope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }

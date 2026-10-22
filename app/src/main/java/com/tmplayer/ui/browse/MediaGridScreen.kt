@@ -171,6 +171,7 @@ import com.tmplayer.ui.components.ChoiceList
 import com.tmplayer.ui.components.ChoiceSheet
 import com.tmplayer.ui.components.ConnectionNotice
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.FocusOnOpen
 import com.tmplayer.ui.components.MediaGridSkeleton
 import com.tmplayer.ui.components.MediaPreview
@@ -670,8 +671,8 @@ fun MediaGridScreen(
             // Where this listing was left on the last visit, so coming back to a chat finds the
             // same pages at the same place ([MediaListViewModel.restoredScroll]); written as it goes.
             val restored = remember(viewModel) { viewModel.restoredScroll }
-            val gridState = rememberLazyGridState(restored.first, restored.second)
-            val listState = rememberLazyListState(restored.first, restored.second)
+            val gridState = com.tmplayer.ui.components.rememberAheadGridState(restored.first, restored.second)
+            val listState = com.tmplayer.ui.components.rememberAheadListState(restored.first, restored.second)
             DisposableEffect(viewModel, layout) {
                 onDispose {
                     if (layout == CardLayout.List) viewModel.rememberScroll(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
@@ -940,6 +941,16 @@ fun MediaGridScreen(
                 when (layout) {
                     CardLayout.Grid -> ScrollToTop(gridState)
                     CardLayout.List -> ScrollToTop(listState)
+                }
+                // The hold to scroll handle, its bubble saying where the grid is in the chat's order.
+                val scrollStrings = LocalStrings.current
+                val entryByKey = remember(feed) {
+                    feed.mapNotNull { (it as? MediaFeedEntry.Media)?.item }.associateBy { it.key }
+                }
+                val scrollLabel: (Any) -> String? = { key -> entryByKey[key]?.let { ScrollLabels.video(it, order, scrollStrings) } }
+                when (layout) {
+                    CardLayout.Grid -> FastScroller(gridState, label = scrollLabel)
+                    CardLayout.List -> FastScroller(listState, label = scrollLabel)
                 }
 
                 openSeries.series?.let { series ->

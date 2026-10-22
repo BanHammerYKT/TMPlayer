@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.tmplayer.online.MetaImageSize
@@ -86,8 +88,13 @@ fun rememberMatched(item: MediaItem, showOnly: Boolean = false): com.tmplayer.on
     val renamed = correction?.title
     val found = rememberLookup(renamed ?: item.nameForParsing, if (renamed != null) null else item.caption, showOnly)
     val name = remember(item, renamed) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
-    val quick = found?.let { info -> com.tmplayer.online.MetaConfidence.basis(name, info)?.let { com.tmplayer.online.MatchedMeta(info, it) } }
+    // A verdict on the runtime reached before counts too, so a tile seen before is matched on its
+    // first frame rather than drawing its own thumbnail and fading the poster in again.
+    val quick = found?.let { info -> OnlineMetadata.current?.peekMatched(item, name, info) }
     val matched by produceState(quick, found, name, item.durationSec) {
+        // produceState keeps its value across new keys: an answer that arrived after the first
+        // frame (always so on the web) would otherwise never be taken.
+        value = quick
         if (value == null && found != null && com.tmplayer.online.MetaConfidence.needsRuntime(name, found, item.durationSec)) {
             value = withContext(Dispatchers.IO) { OnlineMetadata.current?.matched(item, name, found) }
         }
@@ -108,6 +115,7 @@ private fun rememberLookup(fileName: String, caption: String?, showOnly: Boolean
     } ?: return null
     val known = remember(query, language.tag, settings) { (online.peek(query) as? MetaResult.Found)?.info }
     val found by produceState(known, query, language.tag, settings.ownKey) {
+        value = known
         if (value == null) value = (withContext(Dispatchers.IO) { online.lookup(query) } as? MetaResult.Found)?.info
     }
     return found
@@ -293,9 +301,13 @@ fun MetaCredit(info: MetaInfo, modifier: Modifier = Modifier) {
 /**
  * A film's or show's name for the Home carousel: its title logo from TMDB where it has one (the
  * name drawn as a picture on a clear ground, [OnlineMetadata.logo]), else [text], the name set in
- * type. The text stands until the logo is decoded, then the logo fades in over it; a logo already
- * known and decoded shows on the first frame. The picture is never the only way to the name: the
- * carousel page carries the title as its description, so a screen reader still says it.
+ * type. The logo is what is waited for: while it may still come the place is held, the name laid
+ * out but not drawn, so nothing jumps, and the logo fades in there. The name is shown only once it
+ * is clear there is no logo (lookups off, TMDB has none, it could not be had) or after
+ * [LOGO_WAIT_MS]; a logo arriving later still takes over from it. A logo already known and
+ * decoded (the carousel fetches its pages' logos ahead, [PrefetchTitleLogos]) is there on the
+ * first frame. The picture is never the only way to the name: the carousel page carries the title
+ * as its description, so a screen reader still says it.
  *
  * @param maxWidth the widest the logo may be; it keeps its own shape inside [maxWidth] by
  *   [maxHeight], set at the start (or the centre, by [alignment]) of that box.
@@ -310,53 +322,175 @@ fun TitleArt(
     text: @Composable () -> Unit,
 ) {
     val online = OnlineMetadata.current
-    val settings = online?.settings?.collectAsState()?.value
-    val logoUrl by produceState(
-        meta?.let { info -> online?.peekLogo(info)?.url },
-        meta, settings?.enabled,
-    ) {
-        if (value == null && meta != null && online != null && settings?.enabled == true) {
-            value = withContext(Dispatchers.IO) { runCatching { online.logo(meta) }.getOrNull() }
-        }
+    val enabled = online?.settings?.collectAsState()?.value?.enabled == true
+    var answer by remember(meta, enabled) {
+        mutableStateOf(if (meta != null && enabled) online?.peekLogo(meta) else null)
     }
-    val url = logoUrl
+    LaunchedEffect(meta, enabled) {
+        if (answer != null || meta == null || online == null || !enabled) return@LaunchedEffect
+        answer = com.tmplayer.online.LogoAnswer(withContext(Dispatchers.IO) { runCatching { online.logo(meta) }.getOrNull() })
+    }
+    val url = answer?.url
     var logo by remember(url) { mutableStateOf(url?.let { Thumbnails.peekOnline(it, LOGO_PIXELS) }) }
+    var failed by remember(url) { mutableStateOf(false) }
     LaunchedEffect(url) {
         if (url == null || logo != null || online == null) return@LaunchedEffect
-        logo = Thumbnails.online(url, LOGO_PIXELS, alpha = true) { online.image(url) }
+        val decoded = Thumbnails.online(url, LOGO_PIXELS, alpha = true) { online.image(url) }
+        if (decoded == null) failed = true else logo = decoded
     }
     val shown = logo
     // Logos are drawn for dark grounds, white or near white as a rule, and a white one on a light
     // theme's page would vanish. Such a logo is set in the page's ink there instead, its shape
     // kept; a coloured one (gold, red) reads on either ground and is drawn as it is. This replaced
-    // a dark glow behind every logo, which read as a smudge on the light page.
-    val bright by produceState<Boolean?>(null, shown) {
-        value = shown?.let { picture -> withContext(Dispatchers.Default) { runCatching { isBrightLogo(picture) }.getOrNull() } }
+    // a dark glow behind every logo, which read as a smudge on the light page. The verdict is
+    // kept per logo, so a page seen before has it on the first frame.
+    var bright by remember(url, shown) { mutableStateOf(url?.let { LogoTone.known(it) }) }
+    LaunchedEffect(url, shown) {
+        if (url == null || shown == null || bright != null) return@LaunchedEffect
+        bright = withContext(Dispatchers.Default) { LogoTone.of(url, shown) }
+    }
+    // How long the place is held for a logo still on its way, from when the page is first drawn.
+    var waited by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(LOGO_WAIT_MS)
+        waited = true
     }
     val ink = Tone.text
     val light = Tone.background.luminance() > 0.5f
     val tint = if (light && bright == true) androidx.compose.ui.graphics.ColorFilter.tint(ink) else null
-    androidx.compose.animation.Crossfade(targetState = shown, animationSpec = com.tmplayer.ui.theme.Motion.standard(), modifier = modifier, label = "titleArt") { picture ->
-        if (picture == null) {
-            text()
-        } else {
-            val ratio = picture.width.toFloat() / picture.height.coerceAtLeast(1)
-            Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
-            Box(Modifier.sizeIn(maxWidth = maxWidth, maxHeight = maxHeight), contentAlignment = alignment) {
-                Image(
-                    picture,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    alignment = alignment,
-                    filterQuality = Thumbnails.drawFilter,
-                    colorFilter = tint,
-                    modifier = Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio),
-                )
+    val noLogo = online == null || !enabled || failed || (answer != null && url == null)
+    val step: Any = when {
+        // On a light page a logo waits the few milliseconds for its verdict, so a white one is
+        // never drawn white first.
+        shown != null && (!light || bright != null) -> shown
+        shown == null && (noLogo || waited) -> TitleStep.Name
+        else -> TitleStep.Held
+    }
+    androidx.compose.animation.Crossfade(targetState = step, animationSpec = com.tmplayer.ui.theme.Motion.standard(), modifier = modifier, label = "titleArt") { picture ->
+        when (picture) {
+            is ImageBitmap -> {
+                val ratio = picture.width.toFloat() / picture.height.coerceAtLeast(1)
+                Box(Modifier.fillMaxWidth(), contentAlignment = alignment) {
+                    Box(Modifier.sizeIn(maxWidth = maxWidth, maxHeight = maxHeight), contentAlignment = alignment) {
+                        Image(
+                            picture,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            alignment = alignment,
+                            filterQuality = Thumbnails.drawFilter,
+                            colorFilter = tint,
+                            modifier = Modifier.aspectRatio(ratio, matchHeightConstraintsFirst = maxWidth / maxHeight > ratio),
+                        )
+                    }
+                }
             }
-            }
+            TitleStep.Name -> text()
+            // The name laid out and not drawn: the place it would take, and nothing a screen reader reads twice.
+            else -> Box(Modifier.alpha(0f).clearAndSetSemantics {}) { text() }
         }
     }
 }
+
+/** What [TitleArt] shows while it has no logo: the name, or the name's place held for one. */
+private enum class TitleStep { Name, Held }
+
+/**
+ * Fetches and decodes the title logos of [items] (each a video and whether its show is wanted),
+ * one after another from [from] on, so turning to a page shows its logo at once instead of
+ * starting the lookup, the download and the decode then; and the next [BACKDROPS_AHEAD] pages'
+ * pictures, at the size the carousel draws them ([com.tmplayer.ui.components.prefetchBackdrop]),
+ * again whenever the page turns. The carousel calls it with its pages, on every device.
+ */
+@Composable
+fun PrefetchTitleLogos(items: List<Pair<MediaItem, Boolean>>, from: Int = 0) {
+    PrefetchBackdrops(items, from)
+    val online = OnlineMetadata.current ?: return
+    val settings by online.settings.collectAsState()
+    if (!settings.enabled || items.isEmpty()) return
+    val start by androidx.compose.runtime.rememberUpdatedState(from)
+    LaunchedEffect(items) {
+        val first = start.coerceIn(0, items.size - 1)
+        for (i in items.indices) {
+            val (item, show) = items[(first + i) % items.size]
+            prefetchTitleLogo(item, show)
+        }
+    }
+}
+
+/**
+ * The next [BACKDROPS_AHEAD] carousel pages after [current]'s pictures decoded ahead: their
+ * matches looked up as the page would ([metaFor]), then the picture its backdrop draws first.
+ * Asked again when the page turns; a turn cancels what was still on its way for the last one.
+ */
+@Composable
+private fun PrefetchBackdrops(items: List<Pair<MediaItem, Boolean>>, current: Int) {
+    if (items.size < 2) return
+    LaunchedEffect(items, current) {
+        val ahead = minOf(if (com.tmplayer.data.Thumbnails.light) 1 else BACKDROPS_AHEAD, items.size - 1)
+        for (step in 1..ahead) {
+            val (item, show) = items[(current.coerceAtLeast(0) + step) % items.size]
+            val info = metaFor(item, show)
+            com.tmplayer.ui.components.prefetchBackdrop(info?.wideUrl, item.thumbnailFileId)
+        }
+    }
+}
+
+/** Carousel pages past the one shown whose pictures are decoded ahead; one under Lighter pictures. */
+private const val BACKDROPS_AHEAD = 2
+
+/**
+ * [item]'s match as a tile or a carousel page would find it (the viewer's own name for it first),
+ * from memory, the disk or the providers; null when lookups are off or nothing matched.
+ */
+private suspend fun metaFor(item: MediaItem, showOnly: Boolean): MetaInfo? {
+    val online = OnlineMetadata.current ?: return null
+    if (!online.settings.value.enabled) return null
+    val renamed = com.tmplayer.data.VideoCorrections.state.value[item.id]?.title
+    val query = MetaQuery.of(renamed ?: item.nameForParsing, if (renamed != null) null else item.caption)
+        ?.let { if (showOnly) it.showOnly() else it } ?: return null
+    return (online.peek(query) as? MetaResult.Found)?.info
+        ?: (withContext(Dispatchers.IO) { runCatching { online.lookup(query) }.getOrNull() } as? MetaResult.Found)?.info
+}
+
+/**
+ * [item]'s title logo, looked up, fetched and decoded as [TitleArt] would, so its first frame
+ * has it: see [PrefetchTitleLogos]. Nothing when lookups are off or the title has none.
+ */
+suspend fun prefetchTitleLogo(item: MediaItem, showOnly: Boolean) {
+    val info = metaFor(item, showOnly) ?: return
+    prefetchTitleLogo(info)
+}
+
+/** [info]'s title logo fetched and decoded ahead, with its light page verdict: see [prefetchTitleLogo]. */
+suspend fun prefetchTitleLogo(info: MetaInfo) {
+    val online = OnlineMetadata.current ?: return
+    val known = online.peekLogo(info)
+    val url = if (known != null) known.url else withContext(Dispatchers.IO) { runCatching { online.logo(info) }.getOrNull() }
+    url ?: return
+    val picture = Thumbnails.peekOnline(url, LOGO_PIXELS)
+        ?: Thumbnails.online(url, LOGO_PIXELS, alpha = true) { online.image(url) }
+        ?: return
+    if (LogoTone.known(url) == null) withContext(Dispatchers.Default) { LogoTone.of(url, picture) }
+}
+
+/** Whether each title logo seen this run is white or near it ([isBrightLogo]), by its address. */
+private object LogoTone {
+    private val verdicts = com.tmplayer.data.SizedLru<String, Boolean>(LOGO_TONES) { 1 }
+
+    fun known(url: String): Boolean? = verdicts.get(url)
+
+    fun of(url: String, picture: ImageBitmap): Boolean? =
+        verdicts.get(url) ?: runCatching { isBrightLogo(picture) }.getOrNull()?.also { verdicts.put(url, it) }
+}
+
+/** Logos whose tone [LogoTone] keeps: a byte each, many carousels' worth. */
+private const val LOGO_TONES = 512
+
+/**
+ * How long a carousel page holds the name's place for its logo before setting the name in type:
+ * a logo known on this device is decoded well within it, one fetched in the time a page is read.
+ */
+private const val LOGO_WAIT_MS = 1_500L
 
 /**
  * Whether a title logo is white or near white: the mean luminance of its solid pixels, sampled,

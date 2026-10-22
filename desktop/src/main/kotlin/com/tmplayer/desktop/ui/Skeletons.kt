@@ -135,6 +135,29 @@ internal fun ChatListSkeleton(modifier: Modifier = Modifier) {
     }
 }
 
+/** Two [ChatListSkeleton] rows, at the chat list's foot while its older chats are read. */
+@Composable
+internal fun MoreChatsSkeleton() {
+    val shimmer = rememberShimmer()
+    val type = MaterialTheme.typography
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        repeat(2) { index ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                SkeletonBox(shimmer, Modifier.size(Avatar.Compact + 8.dp), CircleShape)
+                Column(Modifier.weight(1f)) {
+                    SkeletonText(shimmer, type.titleMedium, fraction = NAME_FRACTIONS[index % NAME_FRACTIONS.size] * 0.6f)
+                    SkeletonText(shimmer, type.bodySmall, fraction = 0.18f)
+                }
+                Spacer(Modifier.width(48.dp).height(48.dp))
+            }
+        }
+    }
+}
+
 /** The page header's line under the title while what it counts is still loading. */
 @Composable
 internal fun SubtitleSkeleton(modifier: Modifier = Modifier) {

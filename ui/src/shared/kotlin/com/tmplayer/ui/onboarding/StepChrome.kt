@@ -109,7 +109,20 @@ internal fun StepFrame(
     ) {
         val wide = maxWidth > maxHeight && maxWidth >= WIDE_FROM
         Column(Modifier.widthIn(max = if (wide) WIDE_MAX else NARROW_MAX).fillMaxSize()) {
+            // Which app is being set up: the mark and the name, on a line of their own over the
+            // step's line where the screen is narrow, at its start where there is room.
+            val brand: @Composable () -> Unit = {
+                com.tmplayer.ui.components.BrandLockup(layout = com.tmplayer.ui.components.BrandLayout.Row)
+            }
+            if (!wide) {
+                brand()
+                Spacer(Modifier.height(12.dp))
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (wide) {
+                    brand()
+                    Spacer(Modifier.width(24.dp))
+                }
                 Row(
                     Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,

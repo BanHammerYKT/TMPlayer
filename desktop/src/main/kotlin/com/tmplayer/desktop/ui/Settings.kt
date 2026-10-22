@@ -136,6 +136,12 @@ enum class SettingsCategory {
  */
 var settingsCategories: List<SettingsCategory> = SettingsCategory.entries
 
+/**
+ * A page's line in the list in place of the desktop's, for a build whose page holds less: the
+ * browser's Notifications has no downloads, storage or updates to speak of. Null keeps the line.
+ */
+var settingsSummaryOverride: (SettingsCategory) -> String? = { null }
+
 /** A page's name, as its row in the list and its heading say it. */
 @Composable
 internal fun titleOf(category: SettingsCategory): String {
@@ -438,7 +444,7 @@ private fun CategoryList(
                 }
                 SettingsCategory.Mouse -> s.settingsPageMouseSummary
                 SettingsCategory.Library -> s.settingsPageLibrarySummary
-                SettingsCategory.Notifications -> s.settingsPageNotificationsSummary
+                SettingsCategory.Notifications -> settingsSummaryOverride(category) ?: s.settingsPageNotificationsSummary
                 SettingsCategory.Storage -> disk?.takeIf { it.totalBytes > 0 }?.let {
                     s.settingsStorageFree(StorageRelocationPlan.size(it.freeBytes), StorageRelocationPlan.size(it.totalBytes))
                 } ?: s.settingsPageStorageSummary

@@ -38,6 +38,7 @@ import com.tmplayer.i18n.Messages
 import com.tmplayer.online.MetaExtras
 import com.tmplayer.online.MetaInfo
 import com.tmplayer.ui.i18n.LocalStrings
+import com.tmplayer.ui.online.MetaScoresRow
 import com.tmplayer.ui.online.rememberMetaExtras
 import com.tmplayer.ui.theme.Motion
 import com.tmplayer.ui.theme.Tone
@@ -45,8 +46,9 @@ import com.tmplayer.ui.theme.rememberReducedMotion
 
 /*
  * What the Home carousel says under a page's name on every device, after Reelbox's hero: a line of
- * facts (Film or Series, the year, two genres, the length or the seasons) and a few lines of the
- * overview, and the row of dots that says which page is up.
+ * facts (Film or Series, the year, two genres, the length or the seasons), the first few sites'
+ * scores with their marks, and a few lines of the overview, and the row of dots that says which
+ * page is up.
  */
 
 /**
@@ -107,6 +109,8 @@ fun FeaturedInfo(
             overflow = TextOverflow.Ellipsis,
             textAlign = textAlign,
         )
+        // The first three sites' scores, on one line, each with its mark.
+        extras?.let { MetaScoresRow(it, maxLines = 1, limit = 3, centered = textAlign == TextAlign.Center) }
         if (overview.isNotEmpty() && overviewLines > 0) {
             Text(
                 overview,

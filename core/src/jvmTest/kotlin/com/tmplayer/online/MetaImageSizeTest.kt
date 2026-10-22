@@ -35,4 +35,15 @@ class MetaImageSizeTest {
         )
         assertEquals("https://example.com/w342/a.jpg", MetaImageSize.atLeast("https://example.com/w342/a.jpg", 2000))
     }
+
+    @Test
+    fun stillsAreSizedToTheCard() {
+        val still = "https://image.tmdb.org/t/p/w300/s.jpg"
+        assertEquals("https://image.tmdb.org/t/p/w185/s.jpg", MetaImageSize.still(still, 128))
+        assertEquals("https://image.tmdb.org/t/p/w300/s.jpg", MetaImageSize.still(still, 256))
+        assertEquals("https://image.tmdb.org/t/p/w300/s.jpg", MetaImageSize.still("https://image.tmdb.org/t/p/original/s.jpg", 352))
+        assertEquals("https://image.tmdb.org/t/p/original/s.jpg", MetaImageSize.still(still, 520))
+        val tvmaze = "https://static.tvmaze.com/uploads/images/medium_landscape/1/4600.jpg"
+        assertEquals(tvmaze, MetaImageSize.still(tvmaze, 520))
+    }
 }

@@ -840,6 +840,17 @@ object Td {
             ?.takeIf { it.isNotBlank() }
     }
 
+    /**
+     * The country TDLib places a number in, by its area code where a calling code is shared
+     * ("+1 204..." is Canada, "+44 1534..." Jersey). Blank when it cannot tell. From TDLib's own
+     * tables, before sign in and with no line to Telegram.
+     */
+    suspend fun phoneCountry(digits: String): String {
+        val td = current ?: return ""
+        if (digits.isEmpty()) return ""
+        return td.getPhoneNumberInfo("+$digits").valueOrNull?.country?.countryCode.orEmpty()
+    }
+
     suspend fun logOut() {
         _auth.value = AuthState.Connecting
         runCatching { current?.logOut() }

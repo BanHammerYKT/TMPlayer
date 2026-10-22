@@ -352,4 +352,25 @@ class MetaExtrasTest {
         assertEquals(extras, MetaExtras.fromJson(extras.toJson()))
         assertEquals(MetaExtras(), MetaExtras.fromJson(MetaExtras().toJson()))
     }
+
+    @Test
+    fun aRuntimeVerdictIsKeptForTheFirstFrameOfATileSeenBefore() = runBlocking {
+        http.on("movie/10378") { filmPage }
+        val online = metadata()
+        val bunny = MediaItem(
+            chatId = 7, messageId = 1, fileId = 0, title = "Big Buck Bunny", sizeBytes = 1, durationSec = 600, mimeType = "video/mp4",
+            thumbnailFileId = 0, miniThumbnail = null, date = 0, fileName = "Big.Buck.Bunny.mkv",
+        )
+        // No year in the name: only the runtime (10 minutes) can back the match.
+        val name = com.tmplayer.data.ParsedName("Big Buck Bunny", null)
+        assertNull(online.peekMatched(bunny, name, film))
+        val matched = online.matched(bunny, name, film)
+        assertEquals(MatchBasis.Runtime, matched?.basis)
+        assertEquals(matched, online.peekMatched(bunny, name, film))
+        // A different length is a different verdict, not the one kept.
+        val longer = bunny.copy(durationSec = 7200)
+        assertNull(online.peekMatched(longer, name, film))
+        assertNull(online.matched(longer, name, film))
+        assertEquals(1, http.requests.size)
+    }
 }

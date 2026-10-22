@@ -121,16 +121,14 @@ fun NavGroupBody(open: Boolean, content: @Composable () -> Unit) {
 fun NavBrand(
     version: String,
     modifier: Modifier = Modifier,
-    logo: @Composable () -> Unit = {
-        Image(AppLogo.Mark, contentDescription = null, modifier = Modifier.size(28.dp))
-    },
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        logo()
-        Spacer(Modifier.width(12.dp))
-        Text("TMPlayer", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-        Spacer(Modifier.width(8.dp))
-        com.tmplayer.ui.components.BrandBadge(Modifier.padding(end = 8.dp))
+        // The mark, the name and the preview build's badge, as everywhere the brand stands.
+        com.tmplayer.ui.components.BrandLockup(
+            size = com.tmplayer.ui.components.BrandSize.Small,
+            layout = com.tmplayer.ui.components.BrandLayout.Row,
+            modifier = Modifier.padding(end = 8.dp),
+        )
         Text(
             "v$version",
             style = MaterialTheme.typography.labelMedium,

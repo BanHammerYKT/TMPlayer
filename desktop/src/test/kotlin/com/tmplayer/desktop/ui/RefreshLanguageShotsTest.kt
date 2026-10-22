@@ -185,9 +185,9 @@ class RefreshLanguageShotsTest {
         shell.openDetail(DetailRequest(bunny, "Film Club", selectThis = {}))
         try {
             shot("detail-side") {
-                Row(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxHeight()) { VideoGrid(shell, clips, "Film Club") }
-                    DetailPaneSide(shell)
+                Box(Modifier.fillMaxSize()) {
+                    VideoGrid(shell, clips, "Film Club")
+                    DetailPaneHost(shell)
                 }
             }
         } finally {

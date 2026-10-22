@@ -73,7 +73,10 @@ class App : Application() {
             if (item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
             backgroundScope.launch {
                 val local = runCatching { com.tmplayer.data.Td.localFileAvailability(item.fileId) }.getOrNull()
-                if (local != com.tmplayer.data.LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
+                // From its saved place, if it has one: where Continue watching opens it.
+                if (local != com.tmplayer.data.LocalFileAvailability.Complete) {
+                    com.tmplayer.player.StreamWarmup.warm(item) { SettingsStore(this@App).resumeStartFor(item) }
+                }
             }
         }
         // The stream warm-up stays out of Low storage mode and of "Save mobile data" on a metered
@@ -153,6 +156,7 @@ class App : Application() {
             store = MetadataStore(java.io.File(filesDir, "online/metadata.properties")),
             cache = MetadataCache(java.io.File(cacheDir, "online-metadata")),
             appVersion = BuildConfig.VERSION_NAME,
+            omdbKey = BuildConfig.OMDB_API_KEY,
         ).also { metadata -> backgroundScope.launch { runCatching { metadata.warmUp() }; runCatching { metadata.cache.prune() } } }
         Thumbnails.connectivity = NetworkMonitor
         NetworkMonitor.start(this)

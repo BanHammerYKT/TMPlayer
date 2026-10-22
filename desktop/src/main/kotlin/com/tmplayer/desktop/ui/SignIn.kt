@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +35,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,22 +69,25 @@ import com.tmplayer.data.AuthState
 import com.tmplayer.data.CodeInput
 import com.tmplayer.data.EmailReset
 import com.tmplayer.data.Failures
-import com.tmplayer.data.PhoneCountries
 import com.tmplayer.data.QrPhase
 import com.tmplayer.data.SignInMethod
 import com.tmplayer.data.Td
 import com.tmplayer.ui.auth.CountryPicker
-import com.tmplayer.ui.auth.InternationalGrouping
 import com.tmplayer.ui.auth.QrCode
 import com.tmplayer.ui.auth.QrExpiredVeil
 import com.tmplayer.ui.auth.QrLifeCue
 import com.tmplayer.ui.auth.QrRefreshButton
 import com.tmplayer.ui.auth.QrScannedVeil
 import com.tmplayer.ui.auth.SignInWords
-import com.tmplayer.ui.auth.keepInternational
 import com.tmplayer.ui.auth.rememberCountdown
-import com.tmplayer.ui.auth.rememberInternational
 import com.tmplayer.ui.auth.rememberQrClock
+import com.tmplayer.ui.auth.platformRegion
+import com.tmplayer.ui.auth.GuessFade
+import com.tmplayer.ui.auth.PhoneGrouping
+import com.tmplayer.ui.auth.rememberCountryGuess
+import com.tmplayer.ui.auth.rememberEntryCountry
+import com.tmplayer.ui.auth.rememberPhoneEntry
+import com.tmplayer.ui.auth.rememberPhonePattern
 import com.tmplayer.ui.auth.rememberSignInCountries
 import com.tmplayer.ui.i18n.LocalStrings
 import com.tmplayer.ui.components.AppLogo
@@ -83,7 +97,6 @@ import com.tmplayer.ui.theme.Tone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
 
 /**
  * Signing in on the desktop (B2.1): the QR code first, since the phone in the viewer's hand is
@@ -94,10 +107,14 @@ import java.util.Locale
 @Composable
 fun SignInScreen(auth: AuthState) {
     val s = LocalStrings.current
-    // No choice screen on a desktop: the QR code is the first answer, and the phone number is a
-    // link under it.
+    // No choice screen: on a computer the QR code is the first answer, scanned by the phone in the
+    // other hand, with the phone number a link under it. In a phone's or tablet's browser the
+    // number comes first, as on the Android app, since a screen cannot scan its own QR code; the
+    // QR code is the link there (user, 2026-10-22).
     LaunchedEffect(auth) {
-        if (auth == AuthState.ChooseMethod) Td.chooseSignInMethod(SignInMethod.Qr)
+        if (auth == AuthState.ChooseMethod) {
+            Td.chooseSignInMethod(if (com.tmplayer.desktop.os.OsInfo.isHandheld) SignInMethod.Phone else SignInMethod.Qr)
+        }
     }
     // No page header here, so the empty ground moves the window where the app draws its own
     // title bar; the fields and buttons on it still take their clicks.
@@ -113,8 +130,8 @@ fun SignInScreen(auth: AuthState) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Image(AppLogo.Mark, contentDescription = null, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)))
-            com.tmplayer.ui.components.BrandBadge()
+            // Which app is asking for the account: the mark and the name, with the browser's Beta word.
+            com.tmplayer.ui.components.BrandLockup(size = com.tmplayer.ui.components.BrandSize.Medium)
             when (auth) {
                 // Under the shell's loader, which fades out over whichever pane comes next.
                 AuthState.Connecting, AuthState.ChooseMethod -> Unit
@@ -287,30 +304,36 @@ private fun QrStep(number: Int, text: String) {
 }
 
 /**
- * The number: the country (flag, name, picker with search), then one international field drawn
- * grouped as the country writes it. The field starts on the country Telegram guesses from the
- * address it sees, else this computer's locale, and a pasted "+44 7700 900123" or "0044..." is
- * taken whole. [initial] and [onBack] when the number is being changed from the code step.
+ * The number, laid out as Telegram's own apps lay it out: the country (flag and name, a chevron,
+ * the picker with search behind it), then the dial code beside the national number. The country
+ * starts on the one Telegram guesses from the address it sees, else this computer's locale (the
+ * browser's language region on the web), and the fields stay closed until that guess is in, three
+ * seconds at most, so typing never races the code going in. A pasted or autofilled
+ * "+44 7700 900123" or "0044..." is taken apart whole; the rest of the rules are [PhoneEntry]'s,
+ * shared with the phone. [initial] and [onBack] when the number is being changed from the code
+ * step, which guesses nothing.
  */
 @Composable
 private fun PhonePane(wrong: Boolean, initial: String?, onBack: (() -> Unit)?) {
     val s = LocalStrings.current
     val scope = rememberCoroutineScope()
     val countries = rememberSignInCountries()
-    var number by remember { mutableStateOf(initial?.let(::keepInternational) ?: "+") }
+    val entry = rememberPhoneEntry(initial, countries)
     var picking by remember { mutableStateOf(false) }
     val request = rememberRequest()
     val focus = remember { FocusRequester() }
-    val (country, pattern) = rememberInternational(number, countries)
+    val dialFocus = remember { FocusRequester() }
+    val country = rememberEntryCountry(entry, countries)
+    val pattern = rememberPhonePattern(entry.dial, entry.national)
 
-    LaunchedEffect(Unit) { focus.requestFocus() }
-    // Telegram guesses the country from the address it sees, which saves typing the dial code.
-    LaunchedEffect(countries) {
-        if (countries.isEmpty() || number != "+") return@LaunchedEffect
-        val iso = runCatching { Td.guessedCountryCode() }.getOrDefault("").ifBlank { Locale.getDefault().country }
-        val dial = PhoneCountries.byIso(countries, iso)?.dialCode
-        if (dial != null && number == "+") number = "+$dial"
-    }
+    val detecting = rememberCountryGuess(
+        countries = countries,
+        wanted = initial == null && !entry.touched,
+        localIso = ::platformRegion,
+        onFound = entry::guess,
+    )
+    // Into the number the moment it opens, with the code already in front of it.
+    LaunchedEffect(detecting) { if (!detecting) runCatching { focus.requestFocus() } }
 
     if (picking) {
         Dialog(onDismissRequest = { picking = false }) {
@@ -319,8 +342,7 @@ private fun PhonePane(wrong: Boolean, initial: String?, onBack: (() -> Unit)?) {
                     countries = countries,
                     selected = country,
                     onPick = { picked ->
-                        val national = PhoneCountries.splitInternational(number, countries)?.second.orEmpty()
-                        number = "+${picked.dialCode}$national"
+                        entry.pick(picked)
                         picking = false
                         scope.launch { runCatching { focus.requestFocus() } }
                     },
@@ -330,37 +352,86 @@ private fun PhonePane(wrong: Boolean, initial: String?, onBack: (() -> Unit)?) {
         }
     }
 
-    val ready = number.count { it.isDigit() } >= 7
-    val submit = { if (ready) scope.send(request) { Td.submitPhoneNumber(number) } }
+    val ready = entry.ready(country)
+    val submit = { if (ready) scope.send(request) { Td.submitPhoneNumber(entry.full) } }
     Heading(s.signinPhoneTitle, s.signinPhoneBody)
-    OutlinedButton(onClick = { picking = true }, modifier = Modifier.fillMaxWidth()) {
-        Text(
-            country?.let { "${it.flag}  ${it.name}  +${it.dialCode}" } ?: s.loginChooseCountry,
-            modifier = Modifier.weight(1f),
-        )
-        Text(s.loginChange, color = Tone.muted)
+    // The country row. A code no country has says so here rather than showing somebody else's flag.
+    OutlinedButton(
+        onClick = { picking = true },
+        enabled = !detecting,
+        shape = RoundedCornerShape(Corner.Medium),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+    ) {
+        GuessFade(detecting, skeletonWidth = 180.dp, modifier = Modifier.weight(1f)) {
+            Text(
+                when {
+                    country != null -> "${country.flag}  ${country.name}"
+                    entry.dial.isNotEmpty() && countries.isNotEmpty() -> s.loginInvalidCountryCode
+                    else -> s.loginChooseCountry
+                },
+                color = if (country == null && entry.dial.isNotEmpty() && countries.isNotEmpty()) MaterialTheme.colorScheme.error else Color.Unspecified,
+                maxLines = 1,
+            )
+        }
+        Icon(TmIcons.ChevronRight, contentDescription = null, tint = Tone.muted, modifier = Modifier.size(20.dp))
     }
-    OutlinedTextField(
-        value = number,
-        onValueChange = { number = keepInternational(it); request.error = null },
-        label = { Text(s.signinPhoneLabel) },
-        singleLine = true,
-        isError = request.error != null || wrong,
-        supportingText = { request.error?.let { Text(it) } },
-        visualTransformation = InternationalGrouping(countries, pattern),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
-        keyboardActions = KeyboardActions(onNext = { submit() }, onDone = { submit() }),
-        modifier = Modifier.fillMaxWidth().focusRequester(focus),
-    )
+    // A number reads left to right in every language, Arabic and Persian included.
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Down by the number's floating label, so the two boxes line up.
+            Box(Modifier.width(DIAL_WIDTH).padding(top = 8.dp)) {
+                OutlinedTextField(
+                    value = entry.dial,
+                    onValueChange = { entry.typeDial(it, countries); request.error = null },
+                    enabled = !detecting,
+                    prefix = if (detecting) null else ({ Text("+") }),
+                    placeholder = if (detecting) null else ({ Text("+") }),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(onNext = { runCatching { focus.requestFocus() } }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(dialFocus),
+                )
+                // The code's shimmer, faded out as the guessed code comes in under it.
+                GuessFade(detecting, skeletonWidth = 44.dp, modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp)) {}
+            }
+            OutlinedTextField(
+                value = entry.national,
+                onValueChange = { entry.typeNational(it, countries); request.error = null },
+                enabled = !detecting,
+                label = { Text(s.signinPhoneLabel) },
+                singleLine = true,
+                isError = request.error != null || wrong,
+                supportingText = { request.error?.let { Text(it) } },
+                visualTransformation = PhoneGrouping(pattern),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onNext = { submit() }, onDone = { submit() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focus)
+                    // Backspace in an empty number goes back into the code, as in Telegram.
+                    .onPreviewKeyEvent { event ->
+                        val back = event.type == KeyEventType.KeyDown && event.key == Key.Backspace && entry.national.isEmpty()
+                        if (back) runCatching { dialFocus.requestFocus() }
+                        back
+                    },
+            )
+        }
+    }
     Button(onClick = { submit() }, enabled = !request.busy && ready, modifier = Modifier.fillMaxWidth()) {
         Text(if (request.busy) s.signinSending else s.signinNext)
     }
     if (onBack != null) {
         TextButton(onClick = onBack) { Text(s.commonBack) }
     } else {
-        TextButton(onClick = { scope.launch { Td.cancelPhoneEntry() } }) { Text(s.signinUseQr) }
+        // Straight to the QR code: going back to undecided would land a phone's browser on the
+        // number again, since that is its first answer.
+        TextButton(onClick = { scope.launch { Td.chooseSignInMethod(SignInMethod.Qr) } }) { Text(s.signinUseQr) }
     }
 }
+
+/** Wide enough for "+888", the longest code Telegram issues. */
+private val DIAL_WIDTH = 104.dp
 
 /** The code, or the number again when "Wrong number? Edit" was pressed. */
 @Composable

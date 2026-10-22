@@ -430,7 +430,7 @@ fun PlayerScreen(
     fun undoSeek() {
         val back = seekUndo.take(System.currentTimeMillis()) ?: return
         undoOffer = null
-        engine.seekTo(back)
+        engine.seekToExact(back)
         showFlash(Flash.Kind.Text, SeekMath.clock(back))
     }
 
@@ -488,7 +488,11 @@ fun PlayerScreen(
         if (current.fromTelegram && !item.isJoined && item.fileId > 0) {
             launch {
                 if (com.tmplayer.desktop.DownloadIndex.fileFor(settings, item.chatId, item.messageId) == null) {
-                    com.tmplayer.player.StreamWarmup.warm(item)
+                    // From the saved place too, as the opening below reads it, unless Start over.
+                    com.tmplayer.player.StreamWarmup.warm(
+                        item,
+                        if (ignoreSavedPosition) null else ({ settings.resumeStartFor(TelegramQualities.upload(item)) }),
+                    )
                 }
             }
         }
@@ -1878,7 +1882,7 @@ fun PlayerScreen(
                 onRetry = {
                     // The connections reopened and the stream asked for again from where it stands.
                     scope.launch { runCatching { com.tmplayer.data.Td.retryConnecting() } }
-                    engine.seekTo(liveStatus.value.positionMs)
+                    engine.seekToExact(liveStatus.value.positionMs)
                     refocus()
                 },
                 onDownloadFirst = if (savable && !current.isDownload) {

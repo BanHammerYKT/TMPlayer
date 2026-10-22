@@ -1293,7 +1293,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 if (!makeRoomForThisVideo(availability)) return@launch
                 // The head and the index on their way while the settings are read and the player
                 // is built ([StreamWarmup]); a no-op if the press already started it.
-                if (availability != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(fileId, fileSizeBytes)
+                // From the saved place, read as [resumeRead] reads it, where the video resumes.
+                if (availability != LocalFileAvailability.Complete) {
+                    com.tmplayer.player.StreamWarmup.warm(fileId, fileSizeBytes, durationSec * 1000L) {
+                        settings.resumeStartFor(currentItem())
+                    }
+                }
                 holdFile(fileId)
                 claimTheWatchCache()
                 val streamsLow = boundTheStream(availability)

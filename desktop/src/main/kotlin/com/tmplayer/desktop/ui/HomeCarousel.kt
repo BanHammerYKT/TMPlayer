@@ -60,6 +60,9 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import com.tmplayer.ui.theme.Focus
@@ -172,6 +175,9 @@ internal fun FeaturedCarousel(
             val wanted = picks.indexOfFirst { it.key == currentKey }
             if (wanted >= 0 && wanted != pager.currentPage) pager.scrollToPage(wanted)
         }
+        // Every page's title logo looked up, fetched and decoded ahead, from the page up on, so a
+        // turn shows the next page's logo at once.
+        com.tmplayer.ui.online.PrefetchTitleLogos(remember(picks) { picks.map { it.item to (it.series != null) } }, pager.currentPage)
 
         val still = rememberReducedMotion() || Motion.reduced
         val hover = remember { MutableInteractionSource() }
@@ -229,6 +235,40 @@ internal fun FeaturedCarousel(
                 .fillMaxSize()
                 .onSizeChanged { frameWidth = it.width }
                 .hoverable(hover)
+                // A mouse turns the pages by dragging too: Compose moves a pager under a finger
+                // only, so on the desktop and in the browser the picture would not follow a drag.
+                .pointerInput(count, rtl) {
+                    if (count < 2) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        if (down.type != PointerType.Mouse) return@awaitEachGesture
+                        var travelled = 0f
+                        var dragging = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            val dx = change.position.x - change.previousPosition.x
+                            travelled += dx
+                            if (!dragging && abs(travelled) > viewConfiguration.touchSlop) dragging = true
+                            if (dragging) {
+                                change.consume()
+                                pager.dispatchRawDelta(if (rtl) dx else -dx)
+                            }
+                        }
+                        if (dragging) {
+                            // A third of the width, or a flick past the slop, is a turn.
+                            val fraction = pager.currentPageOffsetFraction
+                            val page = when {
+                                fraction > DRAG_TURN -> pager.currentPage + 1
+                                fraction < -DRAG_TURN -> pager.currentPage - 1
+                                else -> pager.currentPage
+                            }.coerceIn(0, count - 1)
+                            target = page
+                            scope.launch { if (still) pager.scrollToPage(page) else pager.animateScrollToPage(page) }
+                        }
+                    }
+                }
                 .onPointerEvent(PointerEventType.Press, PointerEventPass.Initial) { event ->
                     if (event.changes.any { it.type == PointerType.Touch }) touchedAt = System.nanoTime()
                 }
@@ -315,23 +355,21 @@ internal fun FeaturedCarousel(
                 )
             }
             // Which page is up, at the foot of the end, level with Play; a click goes to that page.
-            CarouselDots(
-                count = count,
-                current = pager.currentPage,
-                onPick = { page -> go(page) },
-                modifier = Modifier
+            // The arrows stand either side of it: beside the picture's middle they covered a tall
+            // title logo, and in a narrow window the words themselves.
+            Row(
+                Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = side, bottom = PAGE_FOOT + (com.tmplayer.ui.browse.HERO_PILL_HEIGHT - DOTS_HEIGHT) / 2),
-            )
-            if (count > 1) {
-                // Pointer and touch only: the keyboard turns the pages with the arrow keys.
-                val arrows = hovered || focusedWithin || touchShown
-                AnimatedVisibility(arrows, Modifier.align(Alignment.CenterStart).padding(start = 12.dp), enter = fadeIn(), exit = fadeOut()) {
-                    ArrowButton(TmIcons.ArrowBack, s.homeRowScrollBack) { go(target - 1) }
-                }
-                AnimatedVisibility(arrows, Modifier.align(Alignment.CenterEnd).padding(end = 12.dp), enter = fadeIn(), exit = fadeOut()) {
-                    ArrowButton(TmIcons.ArrowForward, s.homeRowScrollOn) { go(target + 1) }
-                }
+                    .padding(end = side, bottom = PAGE_FOOT + (com.tmplayer.ui.browse.HERO_PILL_HEIGHT - ARROW_SIZE) / 2),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Pointer and touch only: the keyboard turns the pages with the arrow keys. Each
+                // keeps its place while hidden, so the dots never move when they come and go.
+                val arrows = count > 1 && (hovered || focusedWithin || touchShown)
+                if (count > 1) ArrowSlot(arrows) { ArrowButton(TmIcons.ArrowBack, s.homeRowScrollBack) { go(target - 1) } }
+                CarouselDots(count = count, current = pager.currentPage, onPick = { page -> go(page) })
+                if (count > 1) ArrowSlot(arrows) { ArrowButton(TmIcons.ArrowForward, s.homeRowScrollOn) { go(target + 1) } }
             }
         }
     }
@@ -459,7 +497,15 @@ private fun FeaturedPage(
 
 @Composable
 private fun ArrowButton(icon: ImageVector, label: String, onClick: () -> Unit) {
-    RoundButton(icon, label, size = 44.dp, onClick = onClick)
+    RoundButton(icon, label, size = ARROW_SIZE, onClick = onClick)
+}
+
+/** An arrow's place beside the dots, held while the arrow is hidden. */
+@Composable
+private fun ArrowSlot(shown: Boolean, arrow: @Composable () -> Unit) {
+    Box(Modifier.size(ARROW_SIZE)) {
+        AnimatedVisibility(shown, enter = fadeIn(), exit = fadeOut()) { arrow() }
+    }
 }
 
 /** A round button over the picture in the floating look: Details, the arrows. */
@@ -566,6 +612,9 @@ internal fun featuredHeight(width: Dp, height: Dp): Dp =
 
 private const val ADVANCE_MS = 6_000
 
+/** How far into the next page a mouse drag has to carry the picture to turn to it. */
+private const val DRAG_TURN = 0.2f
+
 /** How long the arrows stay up after a touch. */
 private const val TOUCH_ARROWS_MS = 4_000L
 
@@ -585,8 +634,8 @@ private val TOP_FADE = 48.dp
 /** The facts and the overview: a comfortable measure for three lines. */
 private val INFO_WIDTH = 560.dp
 
-/** The row of dots' own height: a 6 dp mark with its 8 dp target above and below. */
-private val DOTS_HEIGHT = 22.dp
+/** The arrows that turn the pages, beside the dots. */
+private val ARROW_SIZE = 44.dp
 private val WORDS_WIDTH = 640.dp
 
 /** Below Play, the foot of a page's words and buttons. */

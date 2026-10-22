@@ -37,7 +37,11 @@ import java.io.RandomAccessFile
  *
  * Then TDLib is left downloading the file from the end of the head with no limit, where playback
  * will read first, for [CONTINUE_MS] or until the player claims it: never idle in the second or
- * two between a press of Play and the player's first request. A warm-up that gives way (to a
+ * two between a press of Play and the player's first request. A video with a saved place (the
+ * `startAt` a caller passes: Continue watching, a resumed open) is left downloading from there
+ * instead, the byte its seek will read found in the index just fetched ([StreamIndex.offsetAt])
+ * or else guessed from the running time ([ResumeWindow]): the head and the index still come
+ * first, and the place is asked for only once they are here. A warm-up that gives way (to a
  * newer one, or to a play of another file) or runs out cancels its download, so a card the focus
  * passed over does not keep the line busy. While a video plays, a warm-up (of the next episode)
  * brings the head and the index only.
@@ -70,6 +74,9 @@ object StreamWarmup {
     /** How long the download is left running after the warm-up for a player that has not come. */
     private const val CONTINUE_MS = 20_000L
 
+    /** How long the caller's saved place may take to read before the warm-up does without it. */
+    private const val START_LOOKUP_MS = 1_500L
+
     /** A file warmed this recently is not warmed again. */
     private const val FRESH_MS = 10 * 60_000L
 
@@ -81,14 +88,21 @@ object StreamWarmup {
     private val warmedAt = LinkedHashMap<Int, Long>()
     private val jobs = LinkedHashMap<Int, Job>()
 
-    /** Warms [item]'s file; see the class. Does nothing for a cut video or a film in parts. */
-    fun warm(item: MediaItem) {
+    /**
+     * Warms [item]'s file; see the class. Does nothing for a cut video or a film in parts.
+     * [startAt], when given, says where the player will open it (0 for the start); asked only
+     * once the head and the index are here, and given [START_LOOKUP_MS] to answer.
+     */
+    fun warm(item: MediaItem, startAt: (suspend () -> Long)? = null) {
         if (item.pieces.isNotEmpty() || item.parts.size > 1) return
-        warm(item.fileId, item.sizeBytes)
+        warm(item.fileId, item.sizeBytes, item.durationSec * 1000L, startAt)
     }
 
-    /** Warms file [fileId] of [sizeBytes] bytes (0 when unknown); see the class. */
-    fun warm(fileId: Int, sizeBytes: Long) {
+    /**
+     * Warms file [fileId] of [sizeBytes] bytes (0 when unknown) and [durationMs] long (0 when
+     * unknown); see the class and [warm] for [startAt].
+     */
+    fun warm(fileId: Int, sizeBytes: Long, durationMs: Long = 0L, startAt: (suspend () -> Long)? = null) {
         if (fileId <= 0) return
         if (!runCatching { allowed() }.getOrDefault(false)) return
         val now = System.currentTimeMillis()
@@ -103,7 +117,7 @@ object StreamWarmup {
                 oldest.value.cancel()
                 jobs.remove(oldest.key)
             }
-            jobs[fileId] = Background.scope.launch { run(fileId, sizeBytes) }
+            jobs[fileId] = Background.scope.launch { run(fileId, sizeBytes, durationMs, startAt) }
         }
     }
 
@@ -134,7 +148,7 @@ object StreamWarmup {
 
     private fun isClaimed(fileId: Int) = synchronized(this) { fileId in claimed }
 
-    private suspend fun run(fileId: Int, sizeHint: Long) {
+    private suspend fun run(fileId: Int, sizeHint: Long, durationMs: Long, startAt: (suspend () -> Long)?) {
         val started = System.currentTimeMillis()
         val session = Td.awaitConnectedSessionOrNull(3_000) ?: return
         val td = session.client
@@ -150,11 +164,12 @@ object StreamWarmup {
         try {
             val head = minOf(HEAD_BYTES, size)
             if (!fetch(td, fileId, 0, head, heard)) return
-            val bytes = readHead(td, fileId, head) ?: return
+            val bytes = readAt(td, fileId, 0, head) ?: return
             val index = StreamIndex.locate(bytes, size)
-            if (index != null) fetch(td, fileId, index.start, index.length, heard)
+            val indexHere = index != null && fetch(td, fileId, index.start, index.length, heard)
             Logger.i(TAG, "Warmed file $fileId: head ${head / 1024} KB${index?.let { ", index ${it.length / 1024} KB at ${it.start}" } ?: ""} in ${System.currentTimeMillis() - started} ms")
-            keepGoing(td, fileId, head, size)
+            val resume = startAt?.let { resumeFrom(td, fileId, bytes, index?.takeIf { indexHere }, size, durationMs, it, heard) }
+            keepGoing(td, fileId, resume ?: head, size)
         } finally {
             listener.cancel()
             // Whatever was asked for and is not the player's now stops: a warm-up given way, run
@@ -168,6 +183,45 @@ object StreamWarmup {
             }
         }
     }
+
+    /**
+     * Where a resumed video's download is to carry on from: the byte its seek to the place
+     * [startAt] gives will read, put back a little ([ResumeWindow]); null for a video opening at
+     * the start, a place inside the head, or while a video plays (the line is the stream's then).
+     * [head] is the file's first bytes and [index] the index [StreamIndex.locate] found, when it
+     * is on the disk. An MP4 whose moov comes first but runs past the head has the rest of its
+     * moov fetched here, which the player reads next anyway.
+     */
+    private suspend fun resumeFrom(
+        td: TdlClient,
+        fileId: Int,
+        head: ByteArray,
+        index: StreamIndex.Range?,
+        size: Long,
+        durationMs: Long,
+        startAt: suspend () -> Long,
+        heard: Channel<Unit>,
+    ): Long? {
+        if (playingAny() || isClaimed(fileId)) return null
+        val startMs = withTimeoutOrNull(START_LOOKUP_MS) { runCatching { startAt() }.getOrDefault(0L) } ?: 0L
+        if (startMs <= 0) return null
+        var found = index
+        if (found == null) {
+            val moov = StreamIndex.mp4Moov(head)
+            if (moov != null && moov.length <= StreamIndex.MOOV_BYTES && moov.end <= size &&
+                fetch(td, fileId, head.size.toLong(), moov.end - head.size, heard)
+            ) {
+                found = moov
+            }
+        }
+        val indexBytes = found?.let { readAt(td, fileId, it.start, it.length) }
+        val mapped = StreamIndex.offsetAt(head, indexBytes, found?.start ?: -1L, startMs)
+        val from = mapped?.let { ResumeWindow.indexed(it, size) } ?: ResumeWindow.estimate(startMs, durationMs, size)
+        Logger.i(TAG, "Resume of file $fileId at $startMs ms: from byte ${from ?: "-"} (${if (mapped != null) "index" else "running time"})")
+        return from?.takeIf { it > head.size }
+    }
+
+    private fun playingAny() = synchronized(this) { claimed.isNotEmpty() }
 
     /**
      * Leaves TDLib downloading the file from [from] with no limit, where playback will read once
@@ -204,11 +258,14 @@ object StreamWarmup {
     private suspend fun have(td: TdlClient, fileId: Int, offset: Long): Long =
         td.getFileDownloadedPrefixSize(fileId, offset).valueOrNull?.size ?: 0L
 
-    private suspend fun readHead(td: TdlClient, fileId: Int, length: Long): ByteArray? {
+    /** Bytes `[offset, offset + length)` of the file as they are on the disk, cut at its end. */
+    private suspend fun readAt(td: TdlClient, fileId: Int, offset: Long, length: Long): ByteArray? {
         val path = td.getFile(fileId).valueOrNull?.local?.path?.takeIf { it.isNotBlank() } ?: return null
         return runCatching {
             RandomAccessFile(path, "r").use { f ->
-                val n = minOf(length, f.length()).toInt()
+                val n = minOf(length, f.length() - offset).toInt()
+                if (n <= 0) return@use null
+                f.seek(offset)
                 ByteArray(n).also { f.readFully(it) }
             }
         }.getOrNull()

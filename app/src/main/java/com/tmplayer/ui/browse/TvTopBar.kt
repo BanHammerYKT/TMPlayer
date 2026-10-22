@@ -54,6 +54,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -106,7 +107,7 @@ internal object TvBarSignals {
  * The bar: the account's picture at the start, which opens what the phone's picture opens
  * (Favourites, Downloads, History, Watch later, Settings, Refresh where the page has something to
  * fetch again ([onRefresh]), and Update when there is one); then Search, and the tabs Home and
- * Chats in the phone's order; and at the end the app's mark, which takes no focus.
+ * Chats in the phone's order; and at the end the app's mark and name, which take no focus.
  *
  * Nothing is behind it: every page but Home starts below it and is clipped at its foot, and Home's
  * carousel picture melts into the page at its top; once Home's rows scroll up under the bar, the
@@ -208,8 +209,12 @@ internal fun TvTopBar(
                 BarTab(s.browseTabChats, TmIcons.Chats, current == TvBarTab.Chats && !searchOpen, onChats, Modifier.focusRequester(focusOf(TvBarTab.Chats, chatsFocus)))
             }
             Spacer(Modifier.width(18.dp))
-            // The app's own mark, the way a television's home screen signs itself: the picture's size.
-            com.tmplayer.ui.components.AppMark(CLUSTER_ITEM)
+            // The app's own mark and its name, the way a television's home screen signs itself:
+            // the mark at the picture's size.
+            com.tmplayer.ui.components.BrandLockup(
+                size = com.tmplayer.ui.components.BrandSize(CLUSTER_ITEM, BRAND_NAME_TYPE, 12.dp),
+                layout = com.tmplayer.ui.components.BrandLayout.Row,
+            )
         }
     }
 
@@ -260,6 +265,9 @@ private val RING_GAP = 3.dp
 
 /** The height of a tab's pill and the size of the account's picture, so the bar reads as one line. */
 private val CLUSTER_ITEM = 40.dp
+
+/** The app's name beside its mark at the bar's end, read from a sofa. */
+private val BRAND_NAME_TYPE = 22.sp
 
 /** One of the tabs: its icon and name in a pill, the icon filled while its page is shown. */
 @Composable

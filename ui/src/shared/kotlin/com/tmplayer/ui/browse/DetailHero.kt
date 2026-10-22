@@ -87,9 +87,8 @@ internal data class Fact(val text: String, val chip: Boolean = false, val accent
  * two copies of a film apart.
  */
 @Composable
-internal fun FactLine(facts: List<Fact>, modifier: Modifier = Modifier) {
+internal fun FactLine(facts: List<Fact>, modifier: Modifier = Modifier, style: TextStyle = MaterialTheme.typography.labelLarge) {
     if (facts.isEmpty()) return
-    val style = MaterialTheme.typography.labelLarge
     val dot = Tone.muted
     Layout(
         modifier = modifier,
@@ -174,6 +173,8 @@ internal fun HeroPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    /** A large window's title page: a size up, with a wider stance, as the one thing to press. */
+    large: Boolean = false,
 ) {
     val tv = !isTouch()
     val interactions = remember { MutableInteractionSource() }
@@ -190,7 +191,8 @@ internal fun HeroPill(
         modifier
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .widthIn(max = HeroPillMax)
-            .heightIn(min = if (tv) 48.dp else 52.dp)
+            .heightIn(min = if (tv) 48.dp else if (large) 56.dp else 52.dp)
+            .then(if (large) Modifier.widthIn(min = 176.dp) else Modifier)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -201,7 +203,7 @@ internal fun HeroPill(
             .background(if (focused) Tone.focusFill else Tone.hero)
             .focusRing(focused, CircleShape)
             .clickable(interactionSource = interactions, indication = if (tv) null else LocalIndication.current, onClick = onClick)
-            .padding(start = 20.dp, end = 24.dp, top = 6.dp, bottom = 6.dp),
+            .padding(start = if (large) 24.dp else 20.dp, end = if (large) 30.dp else 24.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
     ) {
@@ -217,7 +219,7 @@ internal fun HeroPill(
             }
         }
         // A long label in a long language wraps rather than losing its end.
-        Text(label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = ink, maxLines = 2)
+        Text(label, style = if (large) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = ink, maxLines = 2)
     }
 }
 

@@ -45,3 +45,4 @@ com/tmplayer/data/BackupService.kt
 com/tmplayer/data/Feedback.kt
 com/tmplayer/data/LogExport.kt
 com/tmplayer/data/PageQueries.kt
+com/tmplayer/data/EpisodeAlerts.kt

@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.tmplayer.ui.components.loadWhenShown
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -251,7 +252,13 @@ internal fun MoreVideosSheet(
                     com.tmplayer.ui.components.TmButton(onClick = list::loadMore) { Text(s.commonTryAgain) }
                 }
                 state.failure != null -> Text(state.failure.orEmpty(), color = Tone.muted, modifier = Modifier.padding(16.dp))
-                !state.done -> ChoiceLine(if (round) s.gridAudioMore else s.detailCommentsMore, icon = TmIcons.Add, modifier = if (state.items.isEmpty()) Modifier.focusRequester(first) else Modifier) { list.loadMore() }
+                !state.done -> ChoiceLine(
+                    if (round) s.gridAudioMore else s.detailCommentsMore,
+                    icon = TmIcons.Add,
+                    // The next page as the foot comes into view, as a grid reads on.
+                    modifier = (if (state.items.isEmpty()) Modifier.focusRequester(first) else Modifier)
+                        .loadWhenShown(list::loadMore),
+                ) { list.loadMore() }
                 state.items.isEmpty() -> Text(empty, color = Tone.muted, modifier = Modifier.padding(16.dp))
             }
         }

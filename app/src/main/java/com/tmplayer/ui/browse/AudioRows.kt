@@ -15,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.tmplayer.ui.components.loadWhenShown
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
@@ -99,7 +100,7 @@ internal fun AudioSheet(chatId: Long, chatTitle: String, onPlay: (MediaItem) -> 
                     Text(state.failure.orEmpty(), color = Tone.muted, modifier = Modifier.weight(1f))
                     TmButton(onClick = list::loadMore) { Text(s.commonTryAgain) }
                 }
-                !state.done -> ChoiceLine(s.gridAudioMore, icon = TmIcons.Add) { list.loadMore() }
+                !state.done -> ChoiceLine(s.gridAudioMore, icon = TmIcons.Add, modifier = Modifier.loadWhenShown(list::loadMore)) { list.loadMore() }
                 state.items.isEmpty() -> Text(s.gridAudioNone, color = Tone.muted, modifier = Modifier.padding(16.dp))
             }
         }

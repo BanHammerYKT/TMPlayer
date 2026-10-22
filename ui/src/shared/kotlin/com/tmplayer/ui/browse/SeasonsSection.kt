@@ -62,7 +62,6 @@ import com.tmplayer.ui.theme.Scrims
 import com.tmplayer.ui.components.WatchedBadge
 import com.tmplayer.ui.components.isTouch
 import com.tmplayer.ui.i18n.LocalStrings
-import com.tmplayer.ui.online.MetaPicture
 import com.tmplayer.ui.online.rememberMeta
 import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Tone
@@ -309,7 +308,7 @@ private fun GuideRow(
             // picture tells the episodes apart less than Telegram's frames, which stay underneath.
             if (inChat != null) MediaArt(inChat.item.miniThumbnail, inChat.item.thumbnailFileId, Modifier.fillMaxSize(), cover = rememberCover(inChat.item), compactCover = true)
             val own = inChat?.takeIf { episode.meta?.stillUrl == null }?.let { rememberMeta(it.item) }
-            MetaPicture(episode.meta?.stillUrl ?: own?.episode?.stillUrl, Modifier.fillMaxSize(), maxWidth = 400)
+            EpisodeStill(episode.meta?.stillUrl ?: own?.episode?.stillUrl, Modifier.fillMaxSize())
             val fraction = if (finished) 1f else point?.fraction ?: 0f
             if (fraction > 0f) {
                 Box(Modifier.matchParentSize().background(Scrims.tileFoot))

@@ -243,7 +243,7 @@ class ChatListViewModel(
      */
     private suspend fun reorder(repository: ChatRepository) {
         val current = chats ?: return
-        val order = runCatching { repository.chatOrder() }.getOrNull() ?: return
+        val order = runCatching { repository.chatOrder(limit) }.getOrNull() ?: return
         if (order.isEmpty()) return
         val byId = current.associateBy { it.id }
         // Arranged, not merely reordered. TDLib's order takes no view on pinning, so applying it
@@ -293,6 +293,63 @@ class ChatListViewModel(
 
     /** When the list last finished syncing, for [refreshIfStale]. */
     private var syncedAt = 0L
+
+    /**
+     * How many chats of the main list are read: [ChatRepository.CHAT_LIMIT] at first, a further
+     * [ChatRepository.CHAT_LIMIT] each time the list's end comes near while Telegram may have more
+     * ([loadMoreChats]), so an account with a thousand chats can still scroll to its oldest.
+     */
+    private var limit = ChatRepository.CHAT_LIMIT
+
+    private val _paging = MutableStateFlow(ChatPaging())
+
+    /** Whether the list may go on past the chats read, and whether the next ones are on their way. */
+    val paging: StateFlow<ChatPaging> = _paging.asStateFlow()
+
+    private var moreJob: Job? = null
+
+    /** Whether Telegram may hold more of the main list than [limit] let in: the list came back full. */
+    private fun mayHoldMore(list: List<ChatSummary>): Boolean = list.count { !it.isArchived } >= limit
+
+    /**
+     * Reads the next [ChatRepository.CHAT_LIMIT] chats of the main list, when the list came back
+     * full: the list's end trigger ([com.tmplayer.ui.components.LoadMoreAhead]). One at a time; a
+     * failure keeps the rows there are and says so, and calling this again tries again.
+     */
+    fun loadMoreChats() {
+        val current = chats ?: return
+        val now = _paging.value
+        if (moreJob?.isActive == true || loadJob?.isActive == true || !now.more) return
+        _paging.value = now.copy(loading = true, failure = null)
+        moreJob = viewModelScope.launch {
+            try {
+                val session = Td.awaitConnectedSessionOrNull()
+                if (session == null) {
+                    _paging.value = _paging.value.copy(loading = false, failure = Failures.OFFLINE)
+                    return@launch
+                }
+                val wanted = limit + ChatRepository.CHAT_LIMIT
+                val sync = ChatRepository(session.client).syncChats(limit = wanted, known = current)
+                if (!session.isCurrent()) return@launch
+                Td.noteFailure(sync.failure)
+                if (sync.chats.size >= current.size) {
+                    limit = wanted
+                    chats = sync.chats
+                    publish()
+                    if (sync.complete) rememberSnapshot(sync.chats)
+                }
+                _paging.value = ChatPaging(
+                    more = mayHoldMore(chats.orEmpty()),
+                    failure = sync.failure?.let { Failures.humanise(it) },
+                )
+            } catch (cancelled: CancellationException) {
+                _paging.value = _paging.value.copy(loading = false)
+                throw cancelled
+            } catch (error: Throwable) {
+                _paging.value = _paging.value.copy(loading = false, failure = Failures.humanise(error))
+            }
+        }
+    }
 
     // After every property, not above them: on Dispatchers.Main.immediate (the desktop's, and
     // Android's) the snapshot coroutine runs inside this block, and a field declared below it
@@ -351,7 +408,7 @@ class ChatListViewModel(
                     // An empty answer here is TDLib's database still waking, not an empty
                     // account; the connected sync below is the one allowed to say "no chats".
                     // Either way the cold-start snapshot is kept until something real beats it.
-                    repository.cachedChats().takeIf { it.isNotEmpty() } ?: chats
+                    repository.cachedChats(limit).takeIf { it.isNotEmpty() } ?: chats
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
@@ -389,7 +446,7 @@ class ChatListViewModel(
                 }
                 // Handed what the local read already produced, so the sync fetches only chats it
                 // has not seen rather than the whole list a second time.
-                val sync = repository.syncChats(known = chats.orEmpty())
+                val sync = repository.syncChats(limit = limit, known = chats.orEmpty())
                 // A failed sync is not an empty library. The pages that did arrive are still
                 // worth showing, and the flood wait inside the message is what stops Refresh
                 // from making the next attempt worse.
@@ -398,6 +455,7 @@ class ChatListViewModel(
                 if (sync.complete) syncedAt = System.currentTimeMillis()
                 if (session.isCurrent()) publish()
                 if (sync.complete) rememberSnapshot(sync.chats)
+                if (sync.complete) _paging.value = ChatPaging(more = mayHoldMore(sync.chats))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -480,9 +538,12 @@ class ChatListViewModel(
     /** Removes one account's data immediately when authorization is lost. */
     fun reset() {
         loadJob?.cancel()
+        moreJob?.cancel()
         account = null
         chats = null
         syncedAt = 0L
+        limit = ChatRepository.CHAT_LIMIT
+        _paging.value = ChatPaging()
         _state.value = loading()
         // The cold-start snapshots go with it: they exist so the next launch opens on the last
         // sync, and after a sign-out "the last sync" is somebody else's name, face and chats.
@@ -525,6 +586,15 @@ class ChatListViewModel(
         }
     }
 }
+
+/**
+ * Where the chat list's paging stands ([ChatListViewModel.paging]).
+ *
+ * @param more true when the main list came back full, so Telegram may hold older chats.
+ * @param loading true while the next chats are read: the list's foot shows placeholder rows.
+ * @param failure why the last read failed; the foot offers Try again.
+ */
+data class ChatPaging(val more: Boolean = false, val loading: Boolean = false, val failure: String? = null)
 
 /**
  * Shown under the first chat list on a device, which is the slow one: every launch after it opens

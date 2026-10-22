@@ -129,7 +129,7 @@ internal fun TvSearchScreen(
     val offer = rememberLinkOffer(text, byUsername)
     val briefs = remember(state.chats, chats) { state.chats + chats.associate { it.id to ChatBrief.of(it) } }
     var focusedGroup by remember { mutableStateOf<ResultGroup?>(null) }
-    val grid = rememberLazyGridState()
+    val grid = com.tmplayer.ui.components.rememberAheadGridState()
 
     Column(
         Modifier.fillMaxSize().padding(

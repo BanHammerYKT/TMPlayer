@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.dp
@@ -118,6 +120,8 @@ class FeaturedCarouselRenderTest {
                     val under = 24.dp
                     val height = featuredHeight(maxWidth, maxHeight - under) + under
                     Column(Modifier.fillMaxSize()) {
+                      // The carousel with the app's name over its top corner, as HomePane sets it.
+                      Box {
                         FeaturedCarousel(
                             picks = shown,
                             height = height,
@@ -130,6 +134,8 @@ class FeaturedCarouselRenderTest {
                             onPlay = { _, _ -> },
                             onDetails = {},
                         )
+                        PhoneHomeBrand(Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = under + BRAND_TOP), onArt = true)
+                      }
                         // The first row under it.
                         Box(
                             Modifier.fillMaxWidth().height(40.dp)

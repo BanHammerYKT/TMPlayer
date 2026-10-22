@@ -227,9 +227,10 @@ class BrowseKeyboardTest {
         assertEquals(null, shell.detail)
         assertEquals("Video 5", shell.nowPlaying?.item?.title)
         shell.closePlayer()
-        onNode(poster(1)).performMouseInput { rightClick() }
+        // The first poster stays in sight to the start of the sheet, under its scrim.
+        onNode(poster(0)).performMouseInput { rightClick() }
         waitForIdle()
-        onNode(poster(1)).performMouseInput { click(androidx.compose.ui.geometry.Offset(10f, 10f)) }
+        onNode(poster(0)).performMouseInput { click(androidx.compose.ui.geometry.Offset(10f, 10f)) }
         waitForIdle()
         assertEquals(null, shell.detail)
     }
@@ -248,9 +249,11 @@ class BrowseKeyboardTest {
         onNode(poster(0)).performMouseInput { rightClick() }
         waitForIdle()
         onNodeWithText("Play").assertExists()
-        onNodeWithText("Watched").assertExists()
+        // Beside Play the everyday actions are round buttons, named by their descriptions.
+        onNode(androidx.compose.ui.test.hasContentDescription("Mark as watched")).assertExists()
         for (gone in listOf("Download", "Copy link", "Copy Telegram link", "Open with", "Open in another player", "Select videos")) {
             onNodeWithText(gone, substring = true).assertDoesNotExist()
+            onNode(androidx.compose.ui.test.hasContentDescription(gone, substring = true)).assertDoesNotExist()
         }
         shell.closeDetail()
     }

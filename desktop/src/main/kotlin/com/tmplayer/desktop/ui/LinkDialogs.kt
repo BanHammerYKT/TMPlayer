@@ -31,6 +31,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.tmplayer.ui.components.loadWhenShown
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -252,7 +253,7 @@ internal fun MoreVideosDialog(
                         OutlinedButton(onClick = list::loadMore) { Text(s.commonTryAgain) }
                     }
                     shown.failure != null -> Text(shown.failure.orEmpty(), color = Tone.muted, modifier = Modifier.padding(vertical = 8.dp))
-                    !shown.done -> TextButton(onClick = list::loadMore) { Text(if (round) s.gridAudioMore else s.detailCommentsMore) }
+                    !shown.done -> TextButton(onClick = list::loadMore, modifier = Modifier.loadWhenShown(list::loadMore)) { Text(if (round) s.gridAudioMore else s.detailCommentsMore) }
                     shown.items.isEmpty() -> Text(empty, color = Tone.muted, modifier = Modifier.padding(vertical = 8.dp))
                 }
             }

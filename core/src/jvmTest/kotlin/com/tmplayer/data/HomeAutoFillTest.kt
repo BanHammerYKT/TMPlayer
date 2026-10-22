@@ -38,6 +38,29 @@ class HomeAutoFillTest {
     }
 
     @Test
+    fun `Saved Messages is always one of Home's chats, after the starred ones`() {
+        val saved = ChatSummary(7, "Saved Messages", null, 0, ChatKind.Saved)
+        val chats = listOf(chat(1), chat(2), saved, chat(5))
+        // Nothing of it among the newest videos across the account, as with a library kept there.
+        val recent = listOf(video(1), video(2), video(2))
+        assertEquals(listOf(5L, 7L, 2L, 1L), HomeRows.homeChats(chats, favourites = setOf(5), recent = recent).map { it.id })
+        // Known before the search answers, so its videos are asked for at once.
+        assertEquals(listOf(7L), HomeRows.homeChats(chats, emptySet(), recent = null).map { it.id })
+        // Starred, it keeps its starred place and is not listed twice.
+        assertEquals(listOf(7L, 2L, 1L), HomeRows.homeChats(chats, setOf(7), recent).map { it.id })
+    }
+
+    @Test
+    fun `pinned chats are read after Saved Messages, before the busiest ones`() {
+        val pinned = ChatSummary(8, "Pinned shows", null, 0, ChatKind.Channel, isPinned = true)
+        val archivedPin = ChatSummary(9, "Old pin", null, 0, ChatKind.Channel, isPinned = true, isArchived = true)
+        val chats = listOf(chat(1), chat(2), pinned, archivedPin)
+        val recent = listOf(video(1), video(2), video(2))
+        assertEquals(listOf(8L, 2L, 1L), HomeRows.homeChats(chats, emptySet(), recent).map { it.id })
+        assertEquals(listOf(8L), HomeRows.homeChats(chats, emptySet(), recent = null).map { it.id })
+    }
+
+    @Test
     fun `nothing starred and the search still running holds the carousel's place`() {
         val rows = HomeRows.build(emptyList(), emptyList(), emptyMap(), recent = null, recentMinStarred = 1, autoFill = true)
         val recent = rows.single() as HomeRow.Recent

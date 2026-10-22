@@ -645,7 +645,7 @@ fun PageDiscButton(
 
 /** The Episodes button's action for an episode of a show, or null for anything else. */
 @Composable
-private fun episodesButton(item: MediaItem, meta: MetaInfo?, target: BringIntoViewRequester): (() -> Unit)? {
+internal fun episodesButton(item: MediaItem, meta: MetaInfo?, target: BringIntoViewRequester): (() -> Unit)? {
     val episode = remember(item.id) { SeriesShelf.episodeOf(item).episode != null }
     if (!episode && meta?.kind != MetaKind.Show) return null
     val scope = rememberCoroutineScope()

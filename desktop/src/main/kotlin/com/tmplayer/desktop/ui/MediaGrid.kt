@@ -59,6 +59,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.TmAlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import com.tmplayer.ui.components.TmDropdownMenu
@@ -82,6 +83,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import com.tmplayer.ui.components.loadWhenShown
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -314,9 +316,9 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
             // visit, so coming back to a chat finds the same pages at the same place.
             val restored = remember(model) { model.restoredScroll }
             val back = gridReturn ?: restored
-            val grid = rememberLazyGridState(back.first, back.second)
+            val grid = com.tmplayer.ui.components.rememberAheadGridState(back.first, back.second)
             LaunchedEffect(grid) { gridReturn = null }
-            val rowsGrid = rememberLazyGridState()
+            val rowsGrid = com.tmplayer.ui.components.rememberAheadGridState()
             DisposableEffect(model, grid) {
                 onDispose { model.rememberScroll(grid.firstVisibleItemIndex, grid.firstVisibleItemScrollOffset) }
             }
@@ -385,6 +387,12 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                 return@StateBox
             }
             val course = read.value
+            // Each cell's entry, for the fast scroller's bubble in the chat's order.
+            val entryByKey: Map<Any, com.tmplayer.data.ShelfEntry> = remember(arranged) {
+                arranged.associateBy {
+                    "media-" + if (it is com.tmplayer.data.ShelfEntry.Show) it.series.cover.id else (it as com.tmplayer.data.ShelfEntry.File).item.id
+                }
+            }
             val shows = remember(arranged) {
                 arranged.filterIsInstance<com.tmplayer.data.ShelfEntry.Show>().associate { it.series.cover.id to it.series }
             }
@@ -459,6 +467,7 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                 },
                 loadingMore = content.loadingMore,
                 footerSlow = { SlowAnswerLine(content.items.size, onRetry = model::retryMore) },
+                scrollLabel = { key -> entryByKey[key]?.let { com.tmplayer.ui.browse.ScrollLabels.video(it, shownSort, s) } },
                 // A chat lists its videos only: compressed files are not shown (user, 2026-10-19).
                 footer = if (!content.moreFailed) null else {
                     {
@@ -532,7 +541,7 @@ internal fun VideoGrid(
     state: ShellState,
     items: List<MediaItem>,
     chatTitle: String,
-    grid: LazyGridState = rememberLazyGridState(),
+    grid: LazyGridState = com.tmplayer.ui.components.rememberAheadGridState(),
     onNav: (KeyboardNav) -> Unit = {},
     header: (@Composable () -> Unit)? = null,
     loadingMore: Boolean = false,
@@ -550,7 +559,7 @@ internal fun VideoGrid(
     /** The videos as rows of a small poster and the name ([Poster]'s row), in as many columns as fit. */
     rows: Boolean = false,
     /** The rows' own scroll, kept apart from the tiles' so each arrangement keeps its place. */
-    rowsGrid: LazyGridState = rememberLazyGridState(),
+    rowsGrid: LazyGridState = com.tmplayer.ui.components.rememberAheadGridState(),
     /** Room over the first row: more where the page's own buttons float over the grid's top. */
     topPadding: Dp = 8.dp,
     /** The width a tile asks for; a chat's page draws its posters larger than the other grids. */
@@ -561,6 +570,8 @@ internal fun VideoGrid(
     footer: (@Composable () -> Unit)? = null,
     /** Under the next page's spinner once it runs long: [SlowAnswerLine] with its Try again. */
     footerSlow: (@Composable () -> Unit)? = null,
+    /** The fast scroller's bubble for a cell's key (`media-<id>`), or null for none. */
+    scrollLabel: ((Any) -> String?)? = null,
 ) {
     val watch = if (series.isEmpty()) null else rememberSeriesWatch(state)
     // Every file on its own, episodes included: a chat lists what was posted, one by one.
@@ -629,12 +640,16 @@ internal fun VideoGrid(
         }
         }
       }
-        VerticalScrollbar(
-            rememberScrollbarAdapter(shown),
-            Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 4.dp),
-        )
         // The selection bar takes the bottom centre while it is up.
         if (!selection.active) ScrollToTop(shown)
+        // The hold to scroll handle on a long chat, its bubble saying where in the chat's order the
+        // grid is; a short one keeps the scrollbar.
+        FastScroller(shown, label = scrollLabel) {
+            VerticalScrollbar(
+                rememberScrollbarAdapter(shown),
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().padding(vertical = 4.dp),
+            )
+        }
         if (selection.active) {
             SelectionBar(state, selection, items, chatTitle, index, Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp))
         } else if (bottomBar != null) {
@@ -645,16 +660,8 @@ internal fun VideoGrid(
 
 /** Calls [loadMore] once the last few posters are on screen. */
 @Composable
-internal fun LoadMoreNearEnd(grid: LazyGridState, enabled: Boolean, loadMore: () -> Unit) {
-    LaunchedEffect(grid, enabled) {
-        if (!enabled) return@LaunchedEffect
-        snapshotFlow {
-            val info = grid.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            info.totalItemsCount > 0 && last >= info.totalItemsCount - LOAD_AHEAD
-        }.distinctUntilChanged().collect { near -> if (near) loadMore() }
-    }
-}
+internal fun LoadMoreNearEnd(grid: LazyGridState, enabled: Boolean, loadMore: () -> Unit) =
+    com.tmplayer.ui.components.LoadMoreAhead(grid, enabled, ahead = LOAD_AHEAD - 1, onLoadMore = loadMore)
 
 /** The toolbar's poster size step: smaller and larger, through [POSTER_STEPS]. */
 @Composable
@@ -703,7 +710,7 @@ fun ContinuePage(state: ShellState, tabs: @Composable () -> Unit = {}) {
             list == null -> VideoGridSkeleton(state.posterWidth * CONTINUE_WIDTH, posters = false, nameBelow = false)
             list.isEmpty() -> EmptyNote(HistoryTab.Continue.emptyIcon, s.continueEmpty, s.browseGoToChats) { state.showChats(com.tmplayer.ui.browse.BrowseSection.of(com.tmplayer.ui.browse.BrowseTab.Chats)) }
             else -> {
-                val grid = rememberLazyGridState()
+                val grid = com.tmplayer.ui.components.rememberAheadGridState()
                 val records by rememberUpdatedState(list)
                 // Today, Yesterday and Earlier over the cards, by when each was last played.
                 val days = remember(list) { daySections(list, System.currentTimeMillis()) { it.updatedAt } }
@@ -736,8 +743,11 @@ fun ContinuePage(state: ShellState, tabs: @Composable () -> Unit = {}) {
                             }
                         }
                     }
-                    VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
                     ScrollToTop(grid)
+                    // The hold to scroll handle on a long list, the scrollbar on a short one.
+                    FastScroller(grid, label = days.scrollLabels({ "${it.chatId}:${it.messageId}" }, { it.title }, state.historySort == com.tmplayer.ui.browse.ChatSort.Name)) {
+                        VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+                    }
                 }
             }
         }
@@ -1515,7 +1525,9 @@ internal fun MetaNoticeCard(state: ShellState, modifier: Modifier = Modifier) {
 }
 
 private val PLAY_KEYS = setOf(Key.Enter, Key.NumPadEnter, Key.Spacebar, Key.P)
-private val IS_MAC = System.getProperty("os.name").orEmpty().lowercase().contains("mac")
+// From OsInfo rather than os.name, which the browser build has no answer for: a Mac browser
+// gets Cmd+click and Ctrl+click as the Mac app does.
+private val IS_MAC: Boolean get() = com.tmplayer.desktop.os.OsInfo.isMac
 private const val HOVER_INTENT_MS = 300L
 private const val SEARCH_SETTLE_MS = 300L
 private const val LOAD_AHEAD = 8
@@ -1657,7 +1669,7 @@ internal fun AudioListSheet(state: ShellState, chat: ChatSummary, onDismiss: () 
                         Text(shown.failure.orEmpty(), color = Tone.muted, modifier = Modifier.weight(1f))
                         OutlinedButton(onClick = list::loadMore) { Text(s.commonTryAgain) }
                     }
-                    !shown.done -> TextButton(onClick = list::loadMore) { Text(s.gridAudioMore) }
+                    !shown.done -> TextButton(onClick = list::loadMore, modifier = Modifier.loadWhenShown(list::loadMore)) { Text(s.gridAudioMore) }
                     shown.items.isEmpty() -> Text(s.gridAudioNone, color = Tone.muted)
                 }
             }

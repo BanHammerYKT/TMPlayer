@@ -1,5 +1,6 @@
 package com.tmplayer.desktop.ui
 
+import com.tmplayer.ui.components.FastScroller
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -327,8 +328,7 @@ internal fun BoxScope.SearchPalette(
         if (selected <= first || selected >= last) list.animateScrollToItem((selected - 2).coerceAtLeast(0))
     }
     // The next page well before the end, as the grids page.
-    val nearEnd by remember { derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 6 } }
-    LaunchedEffect(list) { snapshotFlow { nearEnd }.collect { if (it) search.loadMore() } }
+    com.tmplayer.ui.components.LoadMoreAhead(list, enabled = !ui.loadingMore && !ui.endReached, ahead = 5) { search.loadMore() }
 
     fun move(by: Int) {
         if (pickable.isEmpty()) return
@@ -415,9 +415,10 @@ internal fun BoxScope.SearchPalette(
                     FilterRow(ui, search)
                 }
                 androidx.compose.material3.HorizontalDivider(color = Tone.outline)
+                Box(Modifier.fillMaxWidth().heightIn(max = LIST_HEIGHT)) {
                 LazyColumn(
                     state = list,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = LIST_HEIGHT),
+                    modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(8.dp),
                 ) {
                     itemsIndexed(rows, key = { _, row -> row.key }) { index, row ->
@@ -432,6 +433,9 @@ internal fun BoxScope.SearchPalette(
                             onRetry = search::retry,
                         )
                     }
+                }
+                // A long run of results is one hold away from its end.
+                FastScroller(list)
                 }
                 Text(
                     s.searchPaletteHint(if (OsInfo.isMac) s.keysCmd else s.keysCtrl),

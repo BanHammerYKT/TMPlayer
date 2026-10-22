@@ -31,6 +31,7 @@ internal object MetaFixture {
             store = store,
             cache = MetadataCache(File(dir, "cache")),
             appVersion = "render",
+            omdbKey = "render-omdb",
             http = Canned(refuse = state == "refused"),
         )
         OnlineMetadata.current = online
@@ -46,6 +47,15 @@ internal object MetaFixture {
             }
             if (refuse && "themoviedb" in url) return HttpResponse(401, body = "{}".toByteArray())
             if ("api.tvmaze.com" in url) return HttpResponse(404, body = "{}".toByteArray())
+            // OMDb's scores for the two titles, made up: a fresh tomato for Bunny, a rotten splat for Harbour Lights.
+            if ("omdbapi.com" in url) {
+                val body = when {
+                    "tt1254207" in url -> OMDB_BUNNY
+                    "tt9900702" in url -> OMDB_HARBOUR
+                    else -> """{"Response":"False","Error":"Incorrect IMDb ID."}"""
+                }
+                return HttpResponse(200, body = body.toByteArray())
+            }
             val body = when {
                 "search/movie" in url && "Big Buck Bunny" in url -> """{"results":[$BUNNY]}"""
                 "search/tv" in url && "Harbour Lights" in url -> """{"results":[$HARBOUR]}"""
@@ -65,13 +75,19 @@ internal object MetaFixture {
     )
 
     /** The detail page's extras (facts, cast, trailer) for the two titles, as TMDB appends them. Made up but for Bunny's facts. */
-    private const val BUNNY_EXTRAS = """{"id":10378,"genres":[{"name":"Animation"},{"name":"Comedy"},{"name":"Family"}],"runtime":10,"vote_average":6.5,"vote_count":200,
+    private const val BUNNY_EXTRAS = """{"id":10378,"genres":[{"name":"Animation"},{"name":"Comedy"},{"name":"Family"}],"runtime":10,"vote_average":6.5,"vote_count":200,"external_ids":{"imdb_id":"tt1254207"},
         "credits":{"cast":[],"crew":[{"name":"Sacha Goedegebure","job":"Director"}]},
         "videos":{"results":[{"site":"YouTube","key":"YE7VzlLtp-4","type":"Trailer","official":true,"iso_639_1":"en","published_at":"2008-05-20"}]},
         "release_dates":{"results":[{"iso_3166_1":"US","release_dates":[{"certification":"G","type":3}]}]},
         "recommendations":{"results":[]},"similar":{"results":[]}}"""
 
-    private const val HARBOUR_EXTRAS = """{"id":7002,"genres":[{"name":"Drama"},{"name":"Documentary"}],"episode_run_time":[42],"number_of_seasons":2,"vote_average":7.9,"vote_count":340,
+    private const val OMDB_BUNNY = """{"Response":"True","imdbRating":"7.8","imdbVotes":"12,345","Metascore":"78",
+        "Ratings":[{"Source":"Internet Movie Database","Value":"7.8/10"},{"Source":"Rotten Tomatoes","Value":"92%"},{"Source":"Metacritic","Value":"78/100"}]}"""
+
+    private const val OMDB_HARBOUR = """{"Response":"True","imdbRating":"6.1","imdbVotes":"4,210","Metascore":"N/A",
+        "Ratings":[{"Source":"Internet Movie Database","Value":"6.1/10"},{"Source":"Rotten Tomatoes","Value":"35%"}]}"""
+
+    private const val HARBOUR_EXTRAS = """{"id":7002,"genres":[{"name":"Drama"},{"name":"Documentary"}],"episode_run_time":[42],"number_of_seasons":2,"vote_average":7.9,"vote_count":340,"external_ids":{"imdb_id":"tt9900702"},
         "created_by":[{"name":"Mara Lindqvist"}],
         "aggregate_credits":{"cast":[
           {"name":"Mara Lindqvist","total_episode_count":12,"profile_path":null,"roles":[{"character":"Herself","episode_count":12}]},

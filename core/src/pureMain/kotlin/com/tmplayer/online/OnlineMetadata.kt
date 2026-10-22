@@ -2,7 +2,14 @@ package com.tmplayer.online
 
 import com.tmplayer.data.MediaItem
 import com.tmplayer.i18n.Translator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -23,7 +30,10 @@ import kotlinx.coroutines.sync.withPermit
  * - **Providers.** TMDB for films and shows, with the build's key (`TMDB_API_KEY`) or the
  *   viewer's own; TVmaze for shows and their episodes, with no key; AniList for anime, with no
  *   key. A show from TMDB takes its episode from TMDB too, in the UI language; one from TVmaze
- *   from TVmaze. Anime asks AniList first.
+ *   from TVmaze. Anime asks AniList first. A detail page with an IMDb id also asks OMDb, with the
+ *   viewer's own key or the build's (`OMDB_API_KEY`), for IMDb's, Rotten Tomatoes' and
+ *   Metacritic's scores, and Wikidata, with no key, for Rotten Tomatoes' and Metacritic's where
+ *   OMDb could not be asked or lacked them; the answer is kept 30 days.
  * - **Safe matching.** Only a title with the same words, or most of them and the same year, is
  *   taken ([MetaMatch]); otherwise the file keeps its own name. `{tmdb-123}` in a name forces it.
  * - **Never in the way.** A refused TMDB key turns TMDB off with a sentence saying so (shows still
@@ -44,11 +54,15 @@ class OnlineMetadata(
     private val language: () -> String = { Translator.messages.tag },
     /** The viewer's region, for the age rating: the device's country, else the US. */
     private val region: () -> String = { MetaRules.region() },
+    /** The build's OMDb key for the other sites' scores; blank, with no key of the viewer's own, asks OMDb nothing. */
+    private val omdbKey: String = "",
 ) {
     private val userAgent = "TMPlayer/$appVersion (+https://tmplayer.org)"
     private val tmdb = TmdbApi(http, RateLimiter(TmdbApi.GAP_MS, now, sleep), userAgent)
     private val tvmaze = TvMazeApi(http, RateLimiter(TvMazeApi.GAP_MS, now, sleep), userAgent)
     private val anilist = AniListApi(http, RateLimiter(AniListApi.GAP_MS, now, sleep), userAgent)
+    private val omdb = OmdbApi(http, RateLimiter(OmdbApi.GAP_MS, now, sleep), userAgent)
+    private val wikidata = WikidataApi(http, RateLimiter(WikidataApi.GAP_MS, now, sleep), userAgent)
     /**
      * Pictures fetched side by side. They come from the providers' image CDNs, which carry no
      * request limit of their own, so they are not queued behind one another as the API calls are:
@@ -74,12 +88,41 @@ class OnlineMetadata(
     /** Whether this build carries a TMDB key of its own. */
     val buildHasKey: Boolean get() = buildKey.isNotBlank()
 
+    /** Whether this build carries an OMDb key of its own. */
+    val buildHasOmdbKey: Boolean get() = omdbKey.isNotBlank()
+
     fun setEnabled(value: Boolean) = store.update { it.copy(enabled = value, offByChoice = !value) }
 
     fun setSkipTimes(value: Boolean) = store.update { it.copy(skipTimes = value) }
 
     /** The viewer's own TMDB key; blank goes back to the build's. A new key gets a fresh chance. */
     fun setOwnKey(key: String) = store.update { it.copy(ownKey = key.trim(), refusedKey = "", refusedAt = 0) }
+
+    /**
+     * The viewer's own OMDb key; blank goes back to the build's. A new key gets a fresh chance:
+     * the pause is lifted, and pages whose scores came from Wikidata alone ask OMDb on the next visit.
+     */
+    fun setOmdbKey(key: String) {
+        store.update { it.copy(omdbKey = key.trim(), omdbRefusedKey = "") }
+        omdbPausedUntil = 0
+    }
+
+    /** What Settings says about OMDb. */
+    fun omdbState(s: MetaSettings = store.now): OmdbState {
+        val own = s.omdbKey.isNotBlank()
+        return when {
+            own && s.omdbRefusedKey.isNotEmpty() && s.omdbRefusedKey == print(s.omdbKey) -> OmdbState.OwnKeyRefused
+            own -> OmdbState.OwnKey
+            omdbKey.isNotBlank() -> OmdbState.AppKey
+            else -> OmdbState.NoKey
+        }
+    }
+
+    private fun activeOmdbKey(s: MetaSettings = store.now): String = s.omdbKey.ifBlank { omdbKey }
+
+    /** True when OMDb can be asked right now: a key it has not refused, and no pause. */
+    private fun omdbUsable(s: MetaSettings = store.now): Boolean =
+        omdbState(s).let { it == OmdbState.AppKey || it == OmdbState.OwnKey } && now() >= omdbPausedUntil
 
     /** What Settings says about TMDB, whether or not lookups are on. */
     fun tmdbState(s: MetaSettings = store.now): TmdbState {
@@ -458,12 +501,12 @@ class OnlineMetadata(
             val reply = when (info.provider) {
                 MetaProvider.Tmdb -> skipApi.theIntroDb(info.id, null, null, season, episode)
                 MetaProvider.TvMaze -> {
-                    val ids = extras(info) ?: return@withLock emptyList()
+                    val ids = providerExtras(info) ?: return@withLock emptyList()
                     if (ids.imdbId == null && ids.tvdbId == null) return@withLock emptyList()
                     skipApi.theIntroDb(null, ids.imdbId, ids.tvdbId, season, episode)
                 }
                 MetaProvider.AniList -> {
-                    val mal = extras(info)?.malId ?: return@withLock emptyList()
+                    val mal = providerExtras(info)?.malId ?: return@withLock emptyList()
                     skipApi.aniSkip(mal, episode ?: 1, item.durationSec.coerceAtLeast(0))
                 }
             }
@@ -471,7 +514,7 @@ class OnlineMetadata(
             var segments = (reply as? MetaReply.Ok)?.value ?: return@withLock emptyList()
             // TheIntroDB had nothing: IntroDB.app, the other community database, by IMDb id.
             if (segments.isEmpty() && info.provider != MetaProvider.AniList) {
-                val imdb = extras(info)?.imdbId
+                val imdb = providerExtras(info)?.imdbId
                 if (imdb != null) {
                     val second = skipApi.introDbApp(imdb, season, episode)
                     segments = (second as? MetaReply.Ok)?.value ?: return@withLock emptyList()
@@ -483,7 +526,7 @@ class OnlineMetadata(
             if (segments.isEmpty() && show && info.provider != MetaProvider.AniList) {
                 val anime = (lookup(query.showOnly().copy(anime = true)) as? MetaResult.Found)?.info
                     ?.takeIf { it.provider == MetaProvider.AniList }
-                val mal = anime?.let { extras(it)?.malId }
+                val mal = anime?.let { providerExtras(it)?.malId }
                 if (mal != null) {
                     val aniReply = skipApi.aniSkip(mal, episode ?: 1, item.durationSec.coerceAtLeast(0))
                     segments = (aniReply as? MetaReply.Ok)?.value ?: return@withLock emptyList()
@@ -503,17 +546,52 @@ class OnlineMetadata(
     suspend fun matched(item: MediaItem, name: com.tmplayer.data.ParsedName, info: MetaInfo): MatchedMeta? {
         MetaConfidence.basis(name, info)?.let { return MatchedMeta(info, it) }
         if (!MetaConfidence.needsRuntime(name, info, item.durationSec)) return null
-        val runtime = extras(info)?.runtimeMin
-        return MetaConfidence.basis(name, info, item.durationSec, runtime)?.let { MatchedMeta(info, it) }
+        val key = runtimeKey(item, name, info)
+        runtimeVerdicts[key]?.let { return it.matched }
+        val extras = providerExtras(info) ?: return null
+        val verdict = MetaConfidence.basis(name, info, item.durationSec, extras.runtimeMin)?.let { MatchedMeta(info, it) }
+        runtimeVerdicts[key] = RuntimeVerdict(verdict)
+        return verdict
     }
 
+    /**
+     * What [matched] would answer, from memory only, for a tile's first frame: the title and year
+     * or the episode code at once, else a verdict on the runtime reached before this run. Without
+     * it a tile whose match rests on the runtime drew its own thumbnail first on every visit, and
+     * the poster faded in over it a moment later, even with both decoded already.
+     */
+    fun peekMatched(item: MediaItem, name: com.tmplayer.data.ParsedName, info: MetaInfo): MatchedMeta? {
+        MetaConfidence.basis(name, info)?.let { return MatchedMeta(info, it) }
+        if (!MetaConfidence.needsRuntime(name, info, item.durationSec)) return null
+        return runtimeVerdicts[runtimeKey(item, name, info)]?.matched
+    }
+
+    /** [matched]'s verdicts that took the provider's runtime, a "no" included, for this run. */
+    private val runtimeVerdicts = LruMap<String, RuntimeVerdict>(MEMORY_ENTRIES)
+
+    private class RuntimeVerdict(val matched: MatchedMeta?)
+
+    private fun runtimeKey(item: MediaItem, name: com.tmplayer.data.ParsedName, info: MetaInfo): String =
+        listOf(info.provider.name, info.kind.name, info.id, item.durationSec, name.hashCode()).joinToString("|")
+
+    /**
+     * The detail page's extras: the provider's, with the other sites' scores from OMDb the first
+     * time the page is opened ([withScores]). Matching and skip times take [providerExtras], so
+     * only an opened page spends an OMDb request.
+     */
     suspend fun extras(info: MetaInfo): MetaExtras? {
+        val found = providerExtras(info) ?: return null
+        return withScores(extrasKey(info, tmdbLanguage(), region()), info, found)
+    }
+
+    /** The provider's extras alone, from memory, the disk cache or the provider. */
+    private suspend fun providerExtras(info: MetaInfo): MetaExtras? {
         if (!store.now.enabled) return null
         val lang = tmdbLanguage()
         val key = extrasKey(info, lang, region())
-        rememberedExtras(key)?.let { return it }
+        rememberedExtras(key, info)?.let { return it }
         return lockFor(key).withLock {
-            rememberedExtras(key)?.let { return@withLock it }
+            rememberedExtras(key, info)?.let { return@withLock it }
             val found = fetchExtras(info, lang) ?: return@withLock null
             cache.putExtras(key, found)
             extrasMemory[key] = found
@@ -521,12 +599,142 @@ class OnlineMetadata(
         }
     }
 
-    private fun rememberedExtras(key: String): MetaExtras? {
+    private fun rememberedExtras(key: String, info: MetaInfo): MetaExtras? {
         extrasMemory[key]?.let { return it }
-        val stored = cache.extras(key) ?: return null
+        val stored = cache.extras(key)?.withProviderScore(info.provider) ?: return null
         extrasMemory[key] = stored
         return stored
     }
+
+    /**
+     * An answer kept before the provider's score had its own place in [MetaExtras.scores] carries
+     * it in [MetaExtras.rating] alone; it is put in the list here, AniList's back on its scale.
+     * (TVmaze never fills the rating, so an old TVmaze answer gains its score on its next fetch.)
+     */
+    private fun MetaExtras.withProviderScore(provider: MetaProvider): MetaExtras {
+        val rating = rating ?: return this
+        val score = when (provider) {
+            MetaProvider.Tmdb -> MetaScore(ScoreSource.Tmdb, rating)
+            MetaProvider.TvMaze -> MetaScore(ScoreSource.TvMaze, rating)
+            MetaProvider.AniList -> MetaScore(ScoreSource.AniList, kotlin.math.round(rating * 10))
+        }
+        if (scores.any { it.source == score.source }) return this
+        return copy(scores = MetaScore.merge(scores, listOf(score)))
+    }
+
+    // ---- the other sites' scores, from OMDb and Wikidata ---------------------------------------
+
+    /** Asks still running, by extras key, so a page opened twice asks once. */
+    private val scoreJobs = HashMap<String, Deferred<MetaExtras?>>()
+    private val scoreJobsLock = PlainLock()
+
+    /** Outlives a caller that stopped waiting, so a slow answer is still kept for next time. */
+    private val scoreScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Until when OMDb is left alone: the build's key was refused or the day's requests are spent. */
+    @Volatile
+    private var omdbPausedUntil = 0L
+
+    /** Until when Wikidata is left alone, after it asked for a wait. */
+    @Volatile
+    private var wikidataPausedUntil = 0L
+
+    /**
+     * Whether [extras] should ask for the other sites' scores: never asked, asked more than
+     * [SCORES_KEEP_S] ago, or answered by Wikidata alone while OMDb can now be asked (a key was
+     * added, or the build's key has a new day).
+     */
+    private fun scoresDue(extras: MetaExtras): Boolean = when {
+        !extras.scoresAsked -> true
+        now() / 1000 - extras.scoresAt > SCORES_KEEP_S -> true
+        !extras.scoresFromOmdb && omdbUsable() -> true
+        else -> false
+    }
+
+    /**
+     * [extras] with OMDb's and Wikidata's scores in front of the provider's, the first time a
+     * title with an IMDb id is opened and again once they are 30 days old (answers kept from
+     * before they were asked gain them then too). The page waits at most [OMDB_WAIT_MS]; an
+     * answer that comes later is kept for the next visit.
+     */
+    private suspend fun withScores(key: String, info: MetaInfo, extras: MetaExtras): MetaExtras {
+        val imdb = extras.imdbId
+        if (imdb == null || !scoresDue(extras)) return extras
+        if (!omdbUsable() && now() < wikidataPausedUntil) return extras
+        val job = scoreJobsLock.locked {
+            scoreJobs.getOrPut(key) { scoreScope.async(start = CoroutineStart.LAZY) { askScores(key, info, imdb) } }
+        }
+        job.start()
+        return withTimeoutOrNull(OMDB_WAIT_MS) { job.await() } ?: extras
+    }
+
+    private suspend fun askScores(key: String, info: MetaInfo, imdb: String): MetaExtras? = try {
+        val fromOmdb = if (omdbUsable()) askOmdb(imdb) else null
+        val wanted = listOf(ScoreSource.RottenTomatoes, ScoreSource.Metacritic)
+        val fromWikidata = if (fromOmdb == null || wanted.any { s -> fromOmdb.none { it.source == s } }) askWikidata(imdb) else null
+        val current = rememberedExtras(key, info)
+        when {
+            current == null || !scoresDue(current) -> current
+            // Nobody answered: offline, a server error or a pause. Asked again on the next visit.
+            fromOmdb == null && fromWikidata == null -> null
+            else -> {
+                val merged = current.copy(
+                    // OMDb's first, then Wikidata's, then what was kept (the provider's own, and any
+                    // site that did not answer this time).
+                    scores = MetaScore.merge(fromOmdb.orEmpty(), MetaScore.merge(fromWikidata.orEmpty(), current.scores)),
+                    scoresAsked = true,
+                    scoresAt = now() / 1000,
+                    scoresFromOmdb = fromOmdb != null,
+                )
+                cache.putExtras(key, merged)
+                extrasMemory[key] = merged
+                merged
+            }
+        }
+    } finally {
+        scoreJobsLock.locked { scoreJobs.remove(key) }
+    }
+
+    /** OMDb's scores for [imdb], or null when it did not answer (and why is noted for next time). */
+    private suspend fun askOmdb(imdb: String): List<MetaScore>? {
+        val s = store.now
+        val key = activeOmdbKey(s)
+        val own = s.omdbKey.isNotBlank()
+        return when (val reply = omdb.scores(key, imdb)) {
+            is MetaReply.Ok -> reply.value
+            // A refused key of the viewer's own stays off until they change it, as Settings says;
+            // the build's is left alone until the next UTC day, in case it was a blip.
+            MetaReply.Refused -> {
+                if (own) {
+                    store.update { it.copy(omdbRefusedKey = print(key)) }
+                } else {
+                    omdbPausedUntil = nextDay()
+                }
+                null
+            }
+            // A spent day: nothing more is asked until the next UTC day.
+            is MetaReply.Throttled -> {
+                omdbPausedUntil = if (reply.retryAfterMs == OmdbApi.SPENT) nextDay() else now() + reply.retryAfterMs
+                null
+            }
+            is MetaReply.Failed -> null
+        }
+    }
+
+    /** Wikidata's Rotten Tomatoes and Metacritic scores for [imdb], or null when it did not answer. */
+    private suspend fun askWikidata(imdb: String): List<MetaScore>? {
+        if (now() < wikidataPausedUntil) return null
+        return when (val reply = wikidata.scores(imdb)) {
+            is MetaReply.Ok -> reply.value
+            is MetaReply.Throttled -> {
+                wikidataPausedUntil = now() + reply.retryAfterMs
+                null
+            }
+            MetaReply.Refused, is MetaReply.Failed -> null
+        }
+    }
+
+    private fun nextDay(): Long = (now() / DAY_MS + 1) * DAY_MS
 
     /** The provider's answer, an empty one for a 404, or null when it could not be asked. */
     private suspend fun fetchExtras(info: MetaInfo, lang: String): MetaExtras? {
@@ -689,8 +897,10 @@ class OnlineMetadata(
      * (the TLS set up, the certificates read, the handshake) took over a second, and every poster
      * on Home waited behind it (2026-10-21). One small request to each host, whose answer does not
      * matter; the connection stays in the keep-alive pool for the lookups. Nothing while off.
+     * The logo answers kept on the disk are read into memory first ([warmLogos]).
      */
     suspend fun warmUp() {
+        warmLogos()
         if (!store.now.enabled) return
         listOf("https://api.themoviedb.org/3/", "https://image.tmdb.org/t/p/w92/").forEach { url ->
             runCatching { http.send(HttpRequest("HEAD", url, mapOf("User-Agent" to userAgent))) }
@@ -706,6 +916,23 @@ class OnlineMetadata(
 
     private fun logoKey(info: MetaInfo, lang: String): String =
         listOf("logo", info.provider.name, info.kind.name, info.id, lang).joinToString("|")
+
+    /** Whether [warmLogos] has run, so it reads the disk once a run. */
+    private var logosWarm = false
+
+    /**
+     * Reads the logo answers kept on this device into memory, the newest first, as many as memory
+     * holds: [peekLogo] reads memory only, and on the first frame after a cold start it found
+     * none, so the carousel waited on the disk for a logo it had. Called once at start, off the
+     * main thread; an answer learnt meanwhile is not overwritten.
+     */
+    fun warmLogos() {
+        if (logosWarm) return
+        logosWarm = true
+        runCatching { cache.logos(MEMORY_ENTRIES) }.getOrNull()?.asReversed()?.forEach { (key, answer) ->
+            logoMemory.locked { if (this[key] == null) this[key] = answer }
+        }
+    }
 
     /**
      * What is known of [info]'s title logo without asking anyone: a [LogoAnswer] (its url may be
@@ -771,6 +998,7 @@ class OnlineMetadata(
         extrasMemory.clear()
         seasonMemory.clear()
         logoMemory.clear()
+        runtimeVerdicts.clear()
     }
 
     companion object {
@@ -781,12 +1009,21 @@ class OnlineMetadata(
         const val ENGLISH = "en-US"
         const val REFUSED_RETRY_MS = 24L * 60 * 60 * 1000
         const val RETRY_MS = 1_000L
+        /** How long a detail page waits for OMDb's scores before showing the provider's alone. */
+        const val OMDB_WAIT_MS = 4_000L
+        /** How long the other sites' scores are kept before a visit asks for them again: 30 days. */
+        const val SCORES_KEEP_S = 30L * 24 * 60 * 60
+        private const val DAY_MS = 24L * 60 * 60 * 1000
         /** Pictures fetched at once: a row's worth on screen, and few enough to leave the video its line. */
         const val IMAGE_PARALLEL = 6
         private const val MEMORY_ENTRIES = 600
 
-        /** A few detail pages' worth: each holds a cast list and a recommendation list. */
-        private const val EXTRAS_MEMORY_ENTRIES = 24
+        /**
+         * A screen or two of Home's tiles: each holds a cast list and a recommendation list, a few
+         * kilobytes. [matched] reads the runtime from here for every tile whose year is missing,
+         * and at 24 a scroll down Home and back read them all from the disk again.
+         */
+        private const val EXTRAS_MEMORY_ENTRIES = 96
 
         /** Where posters may come from. Nothing else is fetched, whatever an answer says. */
         val IMAGE_HOSTS = setOf("image.tmdb.org", "static.tvmaze.com", "s4.anilist.co", "img.anili.st")

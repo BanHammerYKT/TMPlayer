@@ -34,6 +34,8 @@ object About {
     const val TMDB = "https://www.themoviedb.org"
     const val TVMAZE = "https://www.tvmaze.com"
     const val ANILIST = "https://anilist.co"
+    const val OMDB = "https://www.omdbapi.com"
+    const val WIKIDATA = "https://www.wikidata.org"
 
     /**
      * The support page, tagged with the place the viewer came from (`card1`, `card2`, `card3`,
@@ -170,6 +172,8 @@ object About {
                     Link("TMDB", L.metadataAboutTmdbDetail, TMDB),
                     Link("TVmaze", L.metadataAboutTvmazeDetail, TVMAZE),
                     Link("AniList", L.metadataAboutAnilistDetail, ANILIST),
+                    Link("OMDb", L.metadataAboutOmdbDetail, OMDB),
+                    Link("Wikidata", L.metadataAboutWikidataDetail, WIKIDATA),
                 ),
                 note = L.metadataAboutNotice,
                 tmdbLogo = true,

@@ -86,7 +86,9 @@ internal fun SeriesOpened(
     /** The chat the show is in, for the page's facts line. */
     chatTitle: String? = null,
 ) {
-    SeriesPage(series, watch, onPlay, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle)
+    // Every episode its chat holds, not only those the screen behind had read.
+    val whole = com.tmplayer.ui.browse.rememberWholeSeries(series)
+    SeriesPage(whole, watch, onPlay, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle)
 }
 
 /**

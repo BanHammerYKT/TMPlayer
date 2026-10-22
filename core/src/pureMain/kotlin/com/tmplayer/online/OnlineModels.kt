@@ -18,6 +18,21 @@ enum class TmdbState {
     OwnKeyRefused,
 }
 
+/** What Settings says about OMDb, which adds IMDb's score. Wikidata's scores come in every state. */
+enum class OmdbState {
+    /** The build's key, shared by every install, so it may run out for the day. */
+    AppKey,
+
+    /** The viewer's own key. */
+    OwnKey,
+
+    /** No key: Rotten Tomatoes and Metacritic come from Wikidata, and there is no IMDb score. */
+    NoKey,
+
+    /** OMDb refused the viewer's own key. */
+    OwnKeyRefused,
+}
+
 /**
  * The poster and overview switches as this device knows them.
  *
@@ -32,6 +47,10 @@ data class MetaSettings(
     val ownKey: String = "",
     val refusedKey: String = "",
     val refusedAt: Long = 0,
+    /** An OMDb key of the viewer's own, used instead of the build's for IMDb's score. */
+    val omdbKey: String = "",
+    /** A fingerprint of an own OMDb key that OMDb refused, so it is not asked again until it changes. */
+    val omdbRefusedKey: String = "",
     /** Skip intro, recap and credits buttons in the player, from TheIntroDB and AniSkip. */
     val skipTimes: Boolean = true,
     /**

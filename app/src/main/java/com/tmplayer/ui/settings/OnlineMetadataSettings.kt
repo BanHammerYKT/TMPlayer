@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import com.tmplayer.i18n.Translator
 import com.tmplayer.online.MetaWords
+import com.tmplayer.online.OmdbState
 import com.tmplayer.online.OnlineMetadata
 import com.tmplayer.online.TmdbState
 import com.tmplayer.ui.auth.PaneField
@@ -31,15 +32,20 @@ import kotlinx.coroutines.withContext
 
 /**
  * Settings, Posters and details: the switch (off until the viewer turns it on), the TMDB key with
- * the viewer's own as an override, and the cache with its purge. Drawn in every build that set the
+ * the viewer's own as an override, the OMDb key the same way, and the cache with its purge. Drawn in every build that set the
  * feature up; without a TMDB key of the build's own, the key row says to add one.
  */
-internal fun LazyListScope.onlineMetadataSection(onEditKey: () -> Unit, toggleModifier: Modifier = Modifier) {
+internal fun LazyListScope.onlineMetadataSection(
+    onEditKey: () -> Unit,
+    onEditOmdbKey: () -> Unit,
+    toggleModifier: Modifier = Modifier,
+) {
     if (OnlineMetadata.current == null) return
     sectionTitle { LocalStrings.current.metadataTitle }
     item { MetadataToggleRow(toggleModifier) }
     item { SkipTimesToggleRow() }
     item { MetadataKeyRow(onEditKey) }
+    item { OmdbKeyRow(onEditOmdbKey) }
     item { MetadataCacheRow() }
 }
 
@@ -90,6 +96,22 @@ private fun MetadataKeyRow(onEditKey: () -> Unit) {
         icon = TmIcons.Lock,
         tint = if (trouble) Tone.caution else Color.Unspecified,
         onClick = onEditKey,
+    )
+}
+
+/** The OMDb key, for IMDb's score: the build's, the viewer's own, or none (Wikidata's scores alone). */
+@Composable
+private fun OmdbKeyRow(onEdit: () -> Unit) {
+    val s = LocalStrings.current
+    val online = OnlineMetadata.current ?: return
+    val settings by online.settings.collectAsState()
+    val state = online.omdbState(settings)
+    ActionRow(
+        title = s.metadataOmdbKey,
+        subtitle = MetaWords.omdbKey(state),
+        icon = TmIcons.Lock,
+        tint = if (state == OmdbState.OwnKeyRefused) Tone.caution else Color.Unspecified,
+        onClick = onEdit,
     )
 }
 
@@ -152,6 +174,36 @@ fun MetadataKeyDialog(onClose: () -> Unit) {
                 value = key,
                 onValueChange = { key = it },
                 placeholder = s.metadataKey,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
+            )
+        },
+    )
+}
+
+/** The viewer's own OMDb key, over Settings. Empty goes back to the build's. */
+@Composable
+fun OmdbKeyDialog(onClose: () -> Unit) {
+    val s = LocalStrings.current
+    val online = OnlineMetadata.current ?: return onClose()
+    var key by remember { mutableStateOf(online.store.now.omdbKey) }
+    TvConfirm(
+        title = s.metadataOmdbKeyTitle,
+        message = MetaWords.omdbKeyMessage(online.buildHasOmdbKey),
+        detail = MetaWords.omdbKey(online.omdbState()),
+        confirmLabel = s.commonOk,
+        destructive = false,
+        icon = TmIcons.Lock,
+        onDismiss = onClose,
+        onConfirm = {
+            online.setOmdbKey(key)
+            onClose()
+        },
+        extra = {
+            PaneField(
+                value = key,
+                onValueChange = { key = it },
+                placeholder = s.metadataOmdbKey,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, autoCorrectEnabled = false),
             )

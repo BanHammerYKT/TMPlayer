@@ -65,6 +65,7 @@ fun BoxScope.ScrollToTop(state: LazyGridState, modifier: Modifier = Modifier, bo
         glide = { state.animateScrollToItem(it) },
         modifier = modifier,
         bottom = bottom,
+        owner = state,
     )
 }
 
@@ -94,6 +95,7 @@ fun BoxScope.ScrollToTop(state: LazyListState, modifier: Modifier = Modifier, bo
         glide = { state.animateScrollToItem(it) },
         modifier = modifier,
         bottom = bottom,
+        owner = state,
     )
 }
 
@@ -106,6 +108,7 @@ private fun BoxScope.ScrollToTop(
     glide: suspend (Int) -> Unit,
     modifier: Modifier,
     bottom: Dp,
+    owner: Any,
 ) {
     if (!isTouch()) return
     val s = LocalStrings.current
@@ -175,7 +178,8 @@ private fun BoxScope.ScrollToTop(
     }
 
     AnimatedVisibility(
-        visible = shown,
+        // Not while the list's fast scroller is being dragged: a drag up is not a call for the top.
+        visible = shown && !FastScrollHeld.isHeld(owner),
         modifier = modifier
             .align(Alignment.BottomCenter)
             .padding(bottom = lift + bottom),

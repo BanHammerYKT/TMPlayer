@@ -81,13 +81,15 @@ private fun Links(version: String, supporter: Boolean, onRead: () -> Unit) {
     val s = LocalStrings.current
     var supporting by remember { mutableStateOf(false) }
     if (supporting) SupportPopup(from = "about", onClose = { supporting = false })
-    Row(horizontalArrangement = Arrangement.spacedBy(20.dp), verticalAlignment = Alignment.CenterVertically) {
-        Image(AppLogo.Mark, contentDescription = null, modifier = Modifier.size(72.dp).clip(RoundedCornerShape(16.dp)))
+    // The mark and the name, then the version and the licence under them.
+    com.tmplayer.ui.components.BrandLockup(size = com.tmplayer.ui.components.BrandSize.Large)
+    Row {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             // Clicked seven times, it shows the developer rows in Settings (see DevOptions).
             Text(
-                s.settingsAppVersion(version),
-                style = MaterialTheme.typography.titleLarge,
+                // The name is the lockup's above, so this line is the version alone.
+                "${s.settingsVersion} $version",
+                style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.clickable(
                     interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                     indication = null,

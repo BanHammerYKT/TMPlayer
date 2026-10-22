@@ -1068,7 +1068,7 @@ private fun Root() {
                 .getOrDefault(LocalFileAvailability.Missing)
             // A stream: its head and index start coming now, while the room is measured and the
             // player is built ([com.tmplayer.player.StreamWarmup]).
-            if (local != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item)
+            if (local != LocalFileAvailability.Complete) com.tmplayer.player.StreamWarmup.warm(item) { settings.resumeStartFor(item) }
             val canReachTelegram = telegramConnected || networkStatus != NetworkStatus.Offline
             if (!canReachTelegram && local != LocalFileAvailability.Complete) {
                 toast(
@@ -1507,6 +1507,7 @@ private fun Root() {
                 settings = settings,
                 purpose = PinPurpose.Check,
                 title = s.lockEnterForApp,
+                brand = true,
                 onDone = {
                     AppLockSession.unlock()
                     // The PIN has just been given; Settings need not ask for it again this visit.
@@ -1836,6 +1837,9 @@ private fun Root() {
                         }
                     },
                     onHomeArtWanted = homeViewModel::requestArt,
+                    homeFeedOf = homeViewModel::seeAll,
+                    chatPaging = chatsViewModel.paging.collectAsStateWithLifecycle().value,
+                    onMoreChats = chatsViewModel::loadMoreChats,
                     onHomeLaterArtWanted = homeViewModel::requestArt,
                     onPlayMedia = { item, chatTitle -> play(item, chatTitle = chatTitle) },
                     homeRefreshing = homeViewModel.refreshing.collectAsStateWithLifecycle().value,

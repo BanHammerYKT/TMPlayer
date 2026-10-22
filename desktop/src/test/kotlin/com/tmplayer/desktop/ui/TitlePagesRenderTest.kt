@@ -1,6 +1,8 @@
 package com.tmplayer.desktop.ui
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -14,9 +16,13 @@ import com.tmplayer.data.MediaItem
 import com.tmplayer.data.SeriesShelf
 import com.tmplayer.data.ShelfEntry
 import com.tmplayer.data.WatchPoint
+import com.tmplayer.online.MetaExtras
 import com.tmplayer.online.MetaQuery
 import com.tmplayer.online.MetaResult
+import com.tmplayer.online.MetaScore
 import com.tmplayer.online.OnlineMetadata
+import com.tmplayer.online.ScoreSource
+import com.tmplayer.ui.online.MetaFactsLines
 import com.tmplayer.ui.browse.DetailRow
 import com.tmplayer.ui.browse.LocalSeriesWatch
 import com.tmplayer.ui.browse.MediaDetailScreen
@@ -153,6 +159,78 @@ class TitlePagesRenderTest {
         }
     }
 
+    /**
+     * The scores row under the facts line: each site's mark then its score, a rotten splat under
+     * 60 per cent, Metacritic's number on its band's colour, wrapping when narrow, one line on the
+     * show page, and the old "★ 7.8" for an answer kept from before the scores. Drawn at 1x and 2x.
+     */
+    @Test
+    fun scoreRows() {
+        fun extras(vararg scores: Pair<ScoreSource, Double>, rating: Double? = null) = MetaExtras(
+            genres = listOf("Animation", "Comedy"), runtimeMin = 10, certification = "PG", rating = rating,
+            directors = listOf("Sacha Goedegebure"), scores = scores.map { MetaScore(it.first, it.second) },
+        )
+        val fresh = extras(ScoreSource.Imdb to 7.8, ScoreSource.RottenTomatoes to 92.0, ScoreSource.Metacritic to 78.0, ScoreSource.Tmdb to 7.6)
+        val rotten = extras(ScoreSource.Imdb to 5.1, ScoreSource.RottenTomatoes to 35.0, ScoreSource.Metacritic to 45.0, ScoreSource.Tmdb to 5.4)
+        val shows = extras(ScoreSource.Imdb to 8.4, ScoreSource.Metacritic to 29.0, ScoreSource.AniList to 72.0, ScoreSource.TvMaze to 6.9)
+        val old = extras(rating = 7.8)
+        for (dark in listOf(true, false)) {
+            val theme = if (dark) "dark" else "light"
+            for (scale in listOf(1, 2)) {
+                save("scores-${scale}x-$theme.png", render(412 * scale, 560 * scale, dark, scale.toFloat()) {
+                    androidx.compose.foundation.layout.Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(20.dp),
+                    ) {
+                        MetaFactsLines(fresh)
+                        MetaFactsLines(rotten)
+                        MetaFactsLines(shows)
+                        MetaFactsLines(old)
+                        // Narrow: the row wraps; and one line only, as the show page asks.
+                        MetaFactsLines(fresh, Modifier.width(220.dp))
+                        MetaFactsLines(fresh, Modifier.width(220.dp), maxLines = 1)
+                    }
+                })
+            }
+        }
+    }
+
+    /**
+     * The Home carousel's words (shared by phone, TV and desktop): the facts line, then up to three
+     * sites' scores with their marks on one line, start aligned as on the desktop and centred as
+     * on a phone.
+     */
+    @Test
+    fun featuredInfo() = kotlinx.coroutines.runBlocking {
+        val online = MetaFixture.install("on")
+        try {
+            warm(online, bunny, episodes[4])
+            val show = (SeriesShelf.arrange(episodes + smallEpisodes).first() as ShelfEntry.Show).series
+            val film = com.tmplayer.data.FeaturedPick(ShelfEntry.File(bunny))
+            val series = com.tmplayer.data.FeaturedPick(ShelfEntry.Show(show))
+            val filmInfo = (online.lookup(MetaQuery.of(bunny.fileName)!!) as MetaResult.Found).info
+            val showInfo = (online.lookup(MetaQuery.of(episodes[4].fileName)!!.showOnly()) as MetaResult.Found).info
+            for (dark in listOf(true, false)) {
+                val theme = if (dark) "dark" else "light"
+                save("featured-info-$theme.png", render(412, 420, dark) {
+                    androidx.compose.foundation.layout.Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(28.dp),
+                    ) {
+                        com.tmplayer.ui.browse.FeaturedInfo(film, filmInfo, overviewLines = 2)
+                        com.tmplayer.ui.browse.FeaturedInfo(series, showInfo, overviewLines = 2)
+                        com.tmplayer.ui.browse.FeaturedInfo(
+                            film, filmInfo, Modifier.fillMaxSize(), overviewLines = 2,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                    }
+                })
+            }
+        } finally {
+            OnlineMetadata.current = null
+        }
+    }
+
     @Composable
     private fun Series(show: com.tmplayer.data.Series) {
         SeriesPanel(
@@ -180,8 +258,8 @@ class TitlePagesRenderTest {
         }
     }
 
-    private fun render(width: Int, height: Int, dark: Boolean, page: @Composable () -> Unit): ByteArray =
-        ImageComposeScene(width, height, Density(1f)) {
+    private fun render(width: Int, height: Int, dark: Boolean, scale: Float = 1f, page: @Composable () -> Unit): ByteArray =
+        ImageComposeScene(width, height, Density(scale)) {
             TmMaterialTheme(dark = dark) {
                 CompositionLocalProvider(LocalSeriesWatch provides watch) {
                     Surface(Modifier.fillMaxSize(), color = Tone.background) { page() }

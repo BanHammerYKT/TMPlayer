@@ -8,6 +8,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tmplayer.data.ChatRepository
 import com.tmplayer.data.ChatSummary
+import com.tmplayer.data.FeedLane
+import com.tmplayer.data.FeedMerge
+import com.tmplayer.data.MediaCursors
+import com.tmplayer.data.MediaPage
 import com.tmplayer.data.HomeCache
 import com.tmplayer.data.HomeRow
 import com.tmplayer.data.HomeRows
@@ -53,6 +57,20 @@ interface HomeSource {
      */
     suspend fun chatMediaPage(chatId: Long): Pair<List<MediaItem>, Boolean> = chatMedia(chatId) to true
 
+    /**
+     * [chatMediaPage], with where its read stopped ([FeedLane]: the cursors and the oldest date
+     * read), so a See all page can read on from there. A source that cannot tell leaves the lane
+     * null, and the page starts that chat from its newest video again.
+     */
+    suspend fun chatMediaRead(chatId: Long): Pair<List<MediaItem>, FeedLane?> {
+        val (items, ended) = chatMediaPage(chatId)
+        return items to if (ended) FeedLane(chatId, oldest = items.minOfOrNull { it.date }, done = true) else null
+    }
+
+    /** One page of [chatId]'s videos from [cursors], newest first, for a See all page reading on. */
+    suspend fun chatMediaFrom(chatId: Long, cursors: MediaCursors): MediaPage =
+        MediaPage(emptyList(), cursors, endReached = true)
+
     /** The newest videos across every chat. */
     suspend fun recentMedia(): List<MediaItem>
 
@@ -84,7 +102,26 @@ object TdHomeSource : HomeSource {
         repository().mediaPage(chatId, pageSize = CHAT_PAGE).items
 
     override suspend fun chatMediaPage(chatId: Long): Pair<List<MediaItem>, Boolean> =
-        repository().mediaPage(chatId, pageSize = CHAT_PAGE).let { it.items to it.endReached }
+        chatMediaRead(chatId).let { (items, lane) -> items to (lane?.done == true) }
+
+    override suspend fun chatMediaRead(chatId: Long): Pair<List<MediaItem>, FeedLane?> {
+        // Telegram's first answer is often short of the page asked for (Saved Messages gave 8
+        // of 20 with more to come), so the next pages are read until a row's worth has come,
+        // the chat runs out, or HOME_PAGES were read: a show a few uploads down was missing.
+        val repository = repository()
+        val items = ArrayList<MediaItem>()
+        var lane = FeedLane(chatId)
+        repeat(HOME_PAGES) {
+            val page = repository.mediaPage(chatId, lane.cursors, pageSize = CHAT_PAGE)
+            items += page.items
+            lane = FeedMerge.advance(listOf(lane), chatId, page).single()
+            if (lane.done || items.size >= CHAT_PAGE) return items to lane
+        }
+        return items to lane
+    }
+
+    override suspend fun chatMediaFrom(chatId: Long, cursors: MediaCursors): MediaPage =
+        repository().mediaPage(chatId, cursors, pageSize = MORE_PAGE)
 
     override suspend fun recentMedia(): List<MediaItem> = repository().recentMedia()
 
@@ -123,6 +160,12 @@ object TdHomeSource : HomeSource {
      * folding several episodes into one tile, and a fraction of a full grid page.
      */
     private const val CHAT_PAGE = 20
+
+    /** The most pages Home reads of one chat for its rows. */
+    private const val HOME_PAGES = 4
+
+    /** Per search when a See all page reads on: a grid's page, as a chat's own grid reads. */
+    private const val MORE_PAGE = 40
 }
 
 /**
@@ -167,6 +210,9 @@ class HomeViewModel(
 
     /** Continue watching and Watch later videos as Telegram describes them, by progress key, for their pictures. */
     val art: StateFlow<Map<String, MediaItem>> = _art.asStateFlow()
+
+    /** The See all pages opened, by row key, kept while Home lives so going back and in again keeps their pages. */
+    private val feeds = com.tmplayer.platform.LruMap<String, RowFeed>(FEEDS_KEPT)
 
     private val gate = Semaphore(PARALLEL)
     private val asked = HashSet<String>()
@@ -378,17 +424,20 @@ class HomeViewModel(
     /** Fetches a starred chat's row, once (again after a post in it). */
     fun request(chatId: Long) = once("chat:$chatId") {
         follow(chatId)
-        val (items, ended) = runCatching {
-            kotlinx.coroutines.withTimeoutOrNull(ROW_TIMEOUT_MS) { source.chatMediaPage(chatId) }
+        val (items, lane) = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(ROW_TIMEOUT_MS) { source.chatMediaRead(chatId) }
                 ?: throw java.io.IOException("Home row timed out")
         }.getOrElse { failure ->
             if (failure is CancellationException) throw failure
             failedChats += chatId
-            emptyList<MediaItem>() to true
+            emptyList<MediaItem>() to FeedLane(chatId, done = true)
         }
+        val ended = lane?.done == true
         if (items.isNotEmpty()) failedChats -= chatId
         // A failed refresh keeps the tiles it had rather than emptying the row.
         if (items.isEmpty() && chatId in failedChats && !_loaded.value[chatId].isNullOrEmpty()) return@once
+        // Where the read stopped, for a See all page to read on from; a failed read leaves none.
+        if (chatId in failedChats || lane == null) reads.remove(chatId) else reads[chatId] = lane
         val kept = withinLimits(items)
         _partial.update { if (ended) it - chatId else it + chatId }
         // Unchanged rows are not written again, so nothing recomposes for an answer that is the same.
@@ -486,6 +535,9 @@ class HomeViewModel(
         _partial.value = emptySet()
         _recent.value = null
         _art.value = emptyMap()
+        reads.clear()
+        feeds.values.forEach { it.close() }
+        feeds.clear()
         _refreshing.value = false
         refreshedAt = 0L
         if (cached) HomeCache.clear()
@@ -544,6 +596,38 @@ class HomeViewModel(
 
     private var availabilityJob: Job? = null
 
+    /**
+     * The videos behind [row]'s "See all" page, read on through its chats a page at a time past
+     * what Home holds (see [RowFeed] and [FeedMerge]); null for a row that reads no chats. Kept
+     * per row while Home lives, so leaving the page and opening it again finds it as it was.
+     * Starts from what Home has: the page draws at once, with the row's own tiles first.
+     */
+    fun seeAll(row: HomeRow): RowFeed? {
+        val chats = when (row) {
+            is HomeRow.Across -> row.chatIds
+            is HomeRow.Recent -> row.chatIds
+            is HomeRow.Chat -> listOf(row.chatId)
+            else -> return null
+        }.filterNot { it in com.tmplayer.data.HiddenChats.ids.value }
+        HomeRows.seeAll(row, emptyList()) ?: return null
+        val key = row.key
+        feeds[key]?.let { return it.also { feed -> feed.reshape(row) } }
+        val held = _loaded.value.filterKeys { it in chats }
+        val ids = chats.toHashSet()
+        val seed = held.values.flatten() + _recent.value.orEmpty().filter { it.chatId in ids }
+        val feed = RowFeed(
+            scope = viewModelScope,
+            lanes = FeedMerge.lanes(chats, reads, held),
+            seed = seed,
+            row = row,
+            read = { chatId, cursors -> source.chatMediaFrom(chatId, cursors) },
+            keep = { withinLimits(it) },
+            work = work,
+        )
+        feeds[key] = feed
+        return feed
+    }
+
     private fun once(key: String, fetch: suspend () -> Unit) {
         if (!asked.add(key)) return
         jobs += viewModelScope.launch { gate.withPermit { fetch() } }
@@ -558,6 +642,9 @@ class HomeViewModel(
     companion object {
         /** Rows fetched at once: enough to fill a screen quickly, few enough to stay polite to Telegram. */
         const val PARALLEL = 3
+
+        /** See all pages whose read is kept at once: going back and in again finds the same pages. */
+        const val FEEDS_KEPT = 4
 
         /** How many of Home's chats have their grid prefetched in a run: the first rows, not all of them. */
         const val PREFETCH_CHATS = 6
@@ -589,6 +676,13 @@ class HomeViewModel(
          * arrives while the app is open asks again on its own.
          */
         const val SHOW_TTL_MS = 10 * 60 * 1000L
+
+        /**
+         * Where Home's read of each chat stopped, for a See all page to read on from ([seeAll]).
+         * For the process, like [showCache]: the desktop builds Home again on every visit, and a
+         * Home drawn from its cache does not read its chats again within [STALE_MS].
+         */
+        private val reads = java.util.concurrent.ConcurrentHashMap<Long, FeedLane>()
 
         /**
          * Each show's search, by [ShowReached.key], with when it was made. For the process, not
@@ -637,6 +731,10 @@ fun rememberHomeRows(
     val home = remember(chats, favourites, recent, autoFill) {
         if (autoFill) HomeRows.homeChats(chats, favourites, recent) else HomeRows.favouriteChats(chats, favourites)
     }
+    // Filling itself, Home has no chat rows to ask for their videos when drawn, so Movies and
+    // Shows saw only the newest videos across every chat: a show posted before the last few
+    // dozen uploads anywhere never reached them. Each of Home's chats is asked for its own.
+    LaunchedEffect(home, autoFill) { if (autoFill) home.forEach { model.request(it.id) } }
     // "Not the same video" pulls a copy out of its folded card at once, so the rows are built
     // again when a correction changes.
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
@@ -678,6 +776,8 @@ private fun PrefetchHomeArt(rows: List<HomeRow>) {
                 }
             }
         }.distinctBy { it.item.id }
+            // The carousel's first: it is the top of Home, and its logos are what a page turn shows.
+            .sortedByDescending { it.logo }
     }
     LaunchedEffect(items) {
         val gate = Semaphore(PREFETCH_PARALLEL)
@@ -691,7 +791,8 @@ private fun PrefetchHomeArt(rows: List<HomeRow>) {
                         if (known != null && !logo) return@withPermit
                         val info = known ?: (online.lookup(query) as? com.tmplayer.online.MetaResult.Found)?.info ?: return@withPermit
                         if (known == null) info.posterUrl?.let { runCatching { online.image(it) } }
-                        if (logo && online.peekLogo(info) == null) runCatching { online.logo(info)?.let { online.image(it) } }
+                        // Decoded too, not only fetched: a page turned to has its logo on the first frame.
+                        if (logo) com.tmplayer.ui.online.prefetchTitleLogo(info)
                     }
                 }
             }

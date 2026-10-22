@@ -131,10 +131,15 @@ fun BrandLoader(
     ) {
         if (!reveal) return@Box
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // The app's mark, standing still (user, 2026-10-19: the moving playhead went); a blank
-            // loader that has waited long enough to speak shows only its words.
+            // The app's mark, standing still (user, 2026-10-19: the moving playhead went), with
+            // the name under it (user, 2026-10-22); a blank loader that has waited long enough to
+            // speak shows only its words.
             if (!blank) {
-                LogoMark(size = size.logo, progress = { sweepAt?.takeIf { it >= 0f } ?: RESTING })
+                BrandLockup(
+                    size = BrandSize(size.logo, (size.logo.value * NAME_SHARE).sp, 20.dp),
+                    layout = BrandLayout.Stacked,
+                    mark = { side -> LogoMark(size = side, progress = { sweepAt?.takeIf { it >= 0f } ?: RESTING }) },
+                )
                 Spacer(Modifier.height(size.gap))
             }
             Crossfade(label, animationSpec = tween(LINE_FADE_MS, easing = Motion.Standard), label = "loaderLabel") {
@@ -238,6 +243,9 @@ private class LoaderSizes(
         }
     }
 }
+
+/** The name's type under the loader's mark, as a share of the mark's side. */
+private const val NAME_SHARE = 0.38f
 
 private const val LINE_FADE_MS = 500
 private const val LINE_ALPHA = 0.72f

@@ -66,6 +66,8 @@ fun EdgeBackdrop(
         val frameH = constraints.maxHeight
         val wide = frameW > frameH * WIDE_RATIO
         val pictureW = if (wide) (frameW * share).toInt() else frameW
+        // The size the carousel's next pages are decoded at ahead ([prefetchBackdrop]).
+        androidx.compose.runtime.SideEffect { if (pictureW > 0) edgeDrawnWidth = pictureW }
         val art = rememberBackdropArt(source, pictureW)
         val topFadePx = with(density) { topFade.toPx() }
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl

@@ -133,6 +133,7 @@ import com.tmplayer.i18n.Translator
 import com.tmplayer.ui.components.BigEmpty
 import com.tmplayer.ui.components.ChoiceList
 import com.tmplayer.ui.components.ScrollToTop
+import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.TvConfirm
 import com.tmplayer.ui.components.isTouch
 import com.tmplayer.ui.components.rememberToast
@@ -1104,6 +1105,7 @@ fun DownloadsScreen(
                         content = body,
                     )
                     ScrollToTop(listState)
+                    FastScroller(listState)
                 }
             }
         }
@@ -2133,6 +2135,7 @@ private fun PhoneDownloads(
                         content = body,
                     )
                     ScrollToTop(listState)
+                    FastScroller(listState)
                 }
             }
         }

@@ -142,6 +142,9 @@ internal fun TvFeaturedCarousel(
         var currentKey by remember { mutableStateOf(picks.first().key) }
         val index = picks.indexOfFirst { it.key == currentKey }.coerceAtLeast(0)
         val pick = picks[index]
+        // Every page's title logo looked up, fetched and decoded ahead, from the page up on, so a
+        // turn shows the next page's logo at once.
+        com.tmplayer.ui.online.PrefetchTitleLogos(remember(picks) { picks.map { it.item to (it.series != null) } }, index)
         val go: (Int) -> Unit = { to -> latest.getOrNull(((to % count) + count) % count)?.let { currentKey = it.key } }
 
         val still = rememberReducedMotion() || Motion.reduced

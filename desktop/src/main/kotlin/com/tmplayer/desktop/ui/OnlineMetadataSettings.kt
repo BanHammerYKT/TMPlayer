@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.tmplayer.i18n.Translator
 import com.tmplayer.online.MetaWords
+import com.tmplayer.online.OmdbState
 import com.tmplayer.online.OnlineMetadata
 import com.tmplayer.online.TmdbState
 import com.tmplayer.ui.components.TmAlertDialog
@@ -36,8 +37,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Settings, Posters and details, on the desktop: the same rows as phone and TV (the switch, the
- * TMDB key with the viewer's own as an override, the cache with its purge), drawn as this page's
+ * Settings, Posters and details, on the desktop and the web: the same rows as phone and TV (the
+ * switch, the TMDB and OMDb keys with the viewer's own as an override, the cache with its purge), drawn as this page's
  * own rows.
  */
 @Composable
@@ -49,6 +50,8 @@ internal fun OnlineMetadataGroup(toggleModifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val toast = rememberToast()
     var editingKey by remember { mutableStateOf(false) }
+    var editingOmdbKey by remember { mutableStateOf(false) }
+    val omdbState = online.omdbState(settings)
     var clearingCache by remember { mutableStateOf(false) }
     var bytes by remember { mutableLongStateOf(0L) }
     LaunchedEffect(Unit) { bytes = withContext(Dispatchers.IO) { online.cacheBytes() } }
@@ -74,6 +77,12 @@ internal fun OnlineMetadataGroup(toggleModifier: Modifier = Modifier) {
         titleColor = if (state == TmdbState.AppKey || state == TmdbState.OwnKey) Color.Unspecified else Tone.caution,
     ) { editingKey = true }
     Action(
+        s.metadataOmdbKey,
+        MetaWords.omdbKey(omdbState),
+        TmIcons.Lock,
+        titleColor = if (omdbState == OmdbState.OwnKeyRefused) Tone.caution else Color.Unspecified,
+    ) { editingOmdbKey = true }
+    Action(
         s.metadataClearCache,
         if (bytes > 0) s.metadataCacheDetail(Translator.messages.formatter.size(bytes)) else s.metadataCacheEmpty,
         TmIcons.Delete,
@@ -98,6 +107,7 @@ internal fun OnlineMetadataGroup(toggleModifier: Modifier = Modifier) {
     }
 
     if (editingKey) MetadataKeyDialog(onClose = { editingKey = false })
+    if (editingOmdbKey) OmdbKeyDialog(onClose = { editingOmdbKey = false })
 }
 
 @Composable
@@ -118,6 +128,32 @@ internal fun MetadataKeyDialog(onClose: () -> Unit) {
         confirmButton = {
             TextButton(onClick = {
                 online.setOwnKey(key)
+                onClose()
+            }) { Text(s.commonOk) }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text(s.commonCancel) } },
+    )
+}
+
+/** The viewer's own OMDb key, for IMDb's score. Empty goes back to the build's. */
+@Composable
+internal fun OmdbKeyDialog(onClose: () -> Unit) {
+    val s = LocalStrings.current
+    val online = OnlineMetadata.current ?: return
+    var key by remember { mutableStateOf(online.store.now.omdbKey) }
+    TmAlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(s.metadataOmdbKeyTitle) },
+        text = {
+            Column(Modifier.width(420.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(MetaWords.omdbKeyMessage(online.buildHasOmdbKey))
+                OutlinedTextField(key, { key = it }, label = { Text(s.metadataOmdbKey) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text(MetaWords.omdbKey(online.omdbState()), style = MaterialTheme.typography.bodySmall, color = Tone.muted)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                online.setOmdbKey(key)
                 onClose()
             }) { Text(s.commonOk) }
         },

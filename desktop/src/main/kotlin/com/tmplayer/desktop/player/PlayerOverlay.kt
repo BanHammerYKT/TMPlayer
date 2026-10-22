@@ -518,7 +518,8 @@ internal fun BoxScope.PlayerOverlay(
                     ControlsPill {
                         VolumeControl(status.volume, status.muted, onVolume, onToggleMute)
                         castButton?.invoke()
-                        OverlayButton(TmIcons.PictureInPicture, s.playerMiniHint(commandKey(s)), onMiniPlayer)
+                        // Left out where there is no mini player to open (a browser without picture in picture).
+                        if (miniPlayerAvailable) OverlayButton(TmIcons.PictureInPicture, s.playerMiniHint(commandKey(s)), onMiniPlayer)
                         OverlayButton(
                             if (fullscreen) TmIcons.FullscreenExit else TmIcons.Fullscreen,
                             if (fullscreen) s.playerExitFullscreenHint else s.playerFullscreenHint,

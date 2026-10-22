@@ -24,6 +24,24 @@ object MetaImageSize {
     }
 
     /**
+     * An episode's still at the copy that suits a card [pixels] wide on the screen: TMDB's `w185`
+     * for a small card, `w300` up to well past its own width (a still drawn larger than its
+     * pixels still reads at a card's size, and arrives at once), and the original only past that. Up or
+     * down from whichever size [url] names, so a list of small cards never waits on full size
+     * stills. Other providers name one size, and [url] is kept.
+     */
+    fun still(url: String, pixels: Int): String {
+        val match = TMDB.matchEntire(url) ?: return url
+        val (head, _, tail) = match.destructured
+        val size = when {
+            pixels <= 185 -> "w185"
+            pixels <= STILL_STRETCH -> "w300"
+            else -> "original"
+        }
+        return "$head$size$tail"
+    }
+
+    /**
      * A small copy of [url] to show blurred while the copy for the slot loads: TMDB's `w92` for a
      * poster or a logo, `w300` for a backdrop or a still. A few kilobytes, so it lands in one
      * round trip. Null when [url] is not TMDB's, or is already that small: other providers name
@@ -87,6 +105,9 @@ object MetaImageSize {
         "w1280" to listOf("original"),
     )
     private val TMDB_WIDTHS = mapOf("w185" to 185, "w342" to 342, "w500" to 500, "w780" to 780, "w1280" to 1280)
+
+    /** The widest card a `w300` still is drawn on before the original is asked for. */
+    private const val STILL_STRETCH = 420
 
     private const val TVMAZE_PORTRAIT = 210
     private const val TVMAZE_LANDSCAPE = 250

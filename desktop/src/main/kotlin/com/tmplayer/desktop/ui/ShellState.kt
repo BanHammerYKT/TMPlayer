@@ -338,7 +338,7 @@ class ShellState(
      *   off, if anywhere.
      */
     fun openPlayer(item: MediaItem, startFromBeginning: Boolean) {
-        warmStream(item)
+        warmStream(item, fromStart = startFromBeginning)
         if (item.versions.size <= 1) {
             nowPlaying = PlayRequest(item, startFromBeginning, chatTitleOf(item.chatId))
             return
@@ -355,13 +355,14 @@ class ShellState(
     /**
      * Starts the head and the index of [item]'s stream coming the moment it is asked for
      * ([com.tmplayer.player.StreamWarmup]), unless it plays from the Downloads folder. Also the
-     * call for a card under the pointer for a moment, or the details pane's Play.
+     * call for a card under the pointer for a moment, or the details pane's Play. A video with a
+     * saved place is warmed there too, unless it is to start over ([fromStart]).
      */
-    fun warmStream(item: MediaItem) {
+    fun warmStream(item: MediaItem, fromStart: Boolean = false) {
         if (item.isJoined || item.fileId <= 0) return
         Background.scope.launch {
             if (com.tmplayer.desktop.DownloadIndex.fileFor(settings, item.chatId, item.messageId) == null) {
-                com.tmplayer.player.StreamWarmup.warm(item)
+                com.tmplayer.player.StreamWarmup.warm(item, if (fromStart) null else ({ settings.resumeStartFor(item) }))
             }
         }
     }

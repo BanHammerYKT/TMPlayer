@@ -192,18 +192,22 @@ internal fun SeriesPoster(
 @Composable
 internal fun SeriesPage(
     state: ShellState,
-    series: Series,
+    shown: Series,
     watch: SeriesWatch,
     onClose: () -> Unit,
     startOpen: Boolean = false,
 ) {
+    // Every episode its chat holds, not only those the screen behind had read.
+    val series = com.tmplayer.ui.browse.rememberWholeSeries(shown)
     val s = LocalStrings.current
     BackHandler(enabled = true) { onClose() }
     val scope = rememberCoroutineScope()
     val toast = rememberToast()
     val history by state.settings.downloadHistory.collectAsState(initial = emptyList())
     val index = remember(history) { history.associateBy { "${it.chatId}:${it.messageId}" } }
-    Box(Modifier.fillMaxSize()) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        // A large window's page keeps a wider margin, in step with its larger type.
+        val margin = if (maxWidth >= 1200.dp) 56.dp else 32.dp
         SeriesPanel(
             series = series,
             watch = watch,
@@ -219,7 +223,7 @@ internal fun SeriesPage(
             } else {
                 null
             },
-            contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 24.dp),
+            contentPadding = PaddingValues(start = margin, end = margin, bottom = 24.dp),
             modifier = Modifier.fillMaxSize(),
             seasonPicker = { selected, onSelect ->
                 SeasonDropdown(series.seasons, selected, onSelect, startOpen)

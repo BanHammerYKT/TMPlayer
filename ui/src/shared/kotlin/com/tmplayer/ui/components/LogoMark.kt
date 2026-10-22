@@ -68,6 +68,3 @@ private val TILE = Color(0xFF1E1E28)
 private val SCREEN = Color(0xFF0E0E12)
 private val TRACK = Color(0xFF3A3A46)
 private val INK = Color(0xFFEDEDF2)
-
-/** The name the app is installed under. A brand, never translated. */
-private const val BRAND_NAME = "TMPlayer"

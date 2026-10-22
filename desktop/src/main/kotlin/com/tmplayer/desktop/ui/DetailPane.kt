@@ -1,5 +1,17 @@
 package com.tmplayer.desktop.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.unit.Dp
+import com.tmplayer.ui.theme.Tone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -11,18 +23,12 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,13 +46,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.key
 import com.tmplayer.data.BookmarkJump
@@ -66,9 +65,8 @@ import com.tmplayer.desktop.DownloadIndex
 import com.tmplayer.desktop.os.OpenExternal
 import com.tmplayer.desktop.setWatchLater
 import com.tmplayer.desktop.setWatched
-import com.tmplayer.ui.browse.DETAIL_PANE_WIDTH
 import com.tmplayer.ui.browse.DetailRow
-import com.tmplayer.ui.browse.MediaDetailPanel
+import com.tmplayer.ui.browse.WideDetailPanel
 import com.tmplayer.ui.browse.detailRow
 import com.tmplayer.ui.components.rememberToast
 import com.tmplayer.ui.i18n.LocalStrings
@@ -85,47 +83,90 @@ import java.awt.datatransfer.StringSelection
 import java.io.File
 
 /**
- * The detail pane (R5) over whatever page is showing, when [ShellState.detail] asks for one: the
- * shared [MediaDetailPanel] along the right edge, over a scrim. Esc, Back or a click on the scrim
- * closes it, and focus goes back to the poster it came from.
+ * The detail sheet (R5) over whatever page is showing, when [ShellState.detail] asks for one: the
+ * large title page ([WideDetailPanel]) on a sheet that floats over the page from the end edge,
+ * over a scrim. The page under it never moves or resizes. Esc, Back, the sheet's Close or a click
+ * on the scrim closes it, and focus goes back to the poster it came from. Focus stays inside the
+ * sheet while it is open, so Tab walks the sheet's buttons rather than the page hidden under it.
  *
- * What the shell draws where the page is too narrow to keep beside the pane ([DetailPaneSide]),
- * and what the render tests draw over a page of their own.
+ * The sheet slides a little way in from the end edge as it fades in, and back out as it closes;
+ * with less motion asked for it only fades.
  */
 @Composable
 fun BoxScope.DetailPaneHost(state: ShellState) {
-    val request = state.detail ?: return
-    BackHandler { state.closeDetail() }
-    Box(
-        Modifier
-            .matchParentSize()
-            .background(FloatingTone.scrim)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.closeDetail() },
-    )
-    PaneSheet(state, request, Modifier.align(Alignment.CenterEnd))
+    val request = state.detail
+    // The last request shown, so the sheet keeps its content while it leaves. Not state: it only
+    // ever changes along with [ShellState.detail], which already recomposes this.
+    val last = remember { arrayOfNulls<DetailRequest>(1) }
+    if (request != null) last[0] = request
+    val shown = request ?: last[0]
+    val open = request != null
+    BackHandler(enabled = open) { state.closeDetail() }
+    val still = com.tmplayer.ui.components.rememberLessMotion()
+    val fade = androidx.compose.animation.core.tween<Float>(com.tmplayer.ui.theme.Motion.Normal)
+    AnimatedVisibility(
+        visible = open,
+        modifier = Modifier.matchParentSize(),
+        enter = fadeIn(fade),
+        exit = fadeOut(fade),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(FloatingTone.scrim)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.closeDetail() },
+        )
+    }
+    BoxWithConstraints(Modifier.matchParentSize()) {
+        val width = sheetWidth(maxWidth)
+        val full = width >= maxWidth
+        val slide = androidx.compose.animation.core.tween<androidx.compose.ui.unit.IntOffset>(
+            com.tmplayer.ui.theme.Motion.Normal,
+            easing = com.tmplayer.ui.theme.Motion.Standard,
+        )
+        AnimatedVisibility(
+            visible = open,
+            modifier = Modifier.align(Alignment.CenterEnd),
+            enter = fadeIn(fade) + if (still) EnterTransition.None else slideInHorizontally(slide) { it / 10 },
+            exit = fadeOut(fade) + if (still) ExitTransition.None else slideOutHorizontally(slide) { it / 10 },
+        ) {
+            shown?.let { PaneSheet(state, it, open, full, Modifier.width(width)) }
+        }
+    }
 }
 
 /**
- * The detail pane docked as a side panel beside the page, with no scrim: the page stays in view
- * and in reach, a click on another poster swaps what the pane shows, and Esc, Back, its close
- * button or a click on an empty part of the page hide it (see [closeDetailOnEmptyClick]).
+ * How wide the sheet is over a page [available] wide: most of a laptop's window, never wider than
+ * a title page reads well at, and the whole window where a sheet would leave no page to see.
  */
-@Composable
-fun DetailPaneSide(state: ShellState) {
-    val request = state.detail ?: return
-    BackHandler { state.closeDetail() }
-    PaneSheet(state, request, Modifier)
+internal fun sheetWidth(available: Dp): Dp = when {
+    available < SHEET_WHOLE_BELOW -> available
+    else -> (available * 0.62f).coerceIn(SHEET_MIN, SHEET_MAX).coerceAtMost(available - SHEET_INSET * 2)
 }
 
+private val SHEET_WHOLE_BELOW = 840.dp
+private val SHEET_MIN = 760.dp
+private val SHEET_MAX = 1080.dp
+private val SHEET_INSET = 12.dp
+
+/** Frames to wait for Play to be placed before giving its focus up. */
+private const val FOCUS_TRIES = 10
+
 @Composable
-private fun PaneSheet(state: ShellState, request: DetailRequest, modifier: Modifier) {
+private fun PaneSheet(state: ShellState, request: DetailRequest, open: Boolean, full: Boolean, modifier: Modifier) {
+    val shape = if (full) RoundedCornerShape(0.dp) else RoundedCornerShape(Corner.ExtraLarge)
     Surface(
-        shape = RoundedCornerShape(topStart = Corner.ExtraLarge, bottomStart = Corner.ExtraLarge),
-        color = FloatingTone.sheet,
-        border = floatingBorder(),
+        shape = shape,
+        // The page's own colour, so the backdrop's fade runs into it; the border and the scrim
+        // set it apart from the page under it.
+        color = Tone.background,
+        border = if (full) null else floatingBorder(),
         modifier = modifier
             .fillMaxHeight()
-            .width(DETAIL_PANE_WIDTH)
+            .padding(if (full) 0.dp else SHEET_INSET)
+            // Focus that would leave the open sheet stays in it; once it is closing, it may go.
+            .focusProperties { onExit = { if (open && state.detail != null) cancelFocusChange() } }
+            .focusGroup()
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
                     state.closeDetail()
@@ -135,13 +176,10 @@ private fun PaneSheet(state: ShellState, request: DetailRequest, modifier: Modif
                 }
             },
     ) {
-        // A new video is a new pane: nothing of the last one's state carries over.
+        // A new video is a new sheet: nothing of the last one's state carries over.
         key(request.item.id) { DetailPane(state, request) }
     }
 }
-
-/** From this width of page the pane docks beside it: the pane and a row of posters still fit. */
-internal val DOCK_FROM = DETAIL_PANE_WIDTH + 560.dp
 
 @Composable
 private fun DetailPane(state: ShellState, request: DetailRequest) {
@@ -322,20 +360,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
         if (action == DetailAction.CancelDownload) row.copy(label = s.downloadsCancel) else row
     }
 
-    Column(Modifier.fillMaxWidth()) {
-        // The pane's own close sits at its start, pointing the way the pane goes: at the end it
-        // stood beside the window's close button, and one was taken for the other.
-        Row(
-            Modifier.fillMaxWidth().padding(start = 8.dp, end = 24.dp, top = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TipIconButton(TmIcons.ChevronRight, s.detailClose, { close() }, shortcut = "Esc")
-            Text(
-                s.detailHeading,
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.weight(1f).padding(start = 4.dp).semantics { heading() },
-            )
-        }
+    Box(Modifier.fillMaxSize()) {
         // A film posted more than once opens on the copy that would play, and a copy chosen from
         // its list is remembered for the video before the pane turns to it.
         fun turnTo(copy: MediaItem) = state.openDetail(
@@ -348,14 +373,14 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
         }
         // Keyed by the video, so "More like this" opening another starts it at the top.
         androidx.compose.runtime.key(item.id) {
-            MediaDetailPanel(
+            WideDetailPanel(
                 item = item,
                 chatTitle = title,
                 watched = point,
                 finished = finished,
                 rows = rows,
+                onClose = { close() },
                 firstAction = first,
-                contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 24.dp),
                 onOpenItem = { other ->
                     state.openDetail(DetailRequest(other, state.chatTitleOf(other.chatId), outsideChat = true, onClosed = request.onClosed))
                 },
@@ -373,12 +398,17 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                     }
                 },
                 copyStarted = { SettingsStore.progressKey(it.chatId, it.messageId) in progress },
-                // Play's everyday companions under it, the rest at the foot, as on the phone.
-                actionsAtFoot = true,
             )
         }
     }
-    LaunchedEffect(item.id) { runCatching { first.requestFocus() } }
+    // Play takes focus once it is placed: the sheet lays its page out to its own size, so Play
+    // is composed a frame after this effect starts, and a request before then is lost.
+    LaunchedEffect(item.id) {
+        repeat(FOCUS_TRIES) {
+            androidx.compose.runtime.withFrameNanos { }
+            if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect
+        }
+    }
 
     if (commentsOpen) {
         val commentScope = rememberCoroutineScope()
@@ -461,19 +491,3 @@ internal fun DesktopSheet(onDismiss: () -> Unit, content: @Composable androidx.c
 }
 
 private val SHEET_WIDTH = 600.dp
-
-/**
- * Closes the docked detail pane on a click that lands on an empty part of the page. A click a
- * card or a button takes is consumed by it and leaves the pane alone (a card swaps what it
- * shows), and so does a drag or a scroll.
- */
-internal fun Modifier.closeDetailOnEmptyClick(state: ShellState, docked: Boolean): Modifier =
-    if (!docked) this else pointerInput(state) {
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            val shown = state.detail ?: return@awaitEachGesture
-            val up = waitForUpOrCancellation(pass = PointerEventPass.Final) ?: return@awaitEachGesture
-            if ((up.position - down.position).getDistance() > viewConfiguration.touchSlop) return@awaitEachGesture
-            if (state.detail === shown) state.closeDetail()
-        }
-    }
