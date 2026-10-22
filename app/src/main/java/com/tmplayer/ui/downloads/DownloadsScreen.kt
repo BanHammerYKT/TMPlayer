@@ -118,6 +118,11 @@ import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.SettingsStore
 import com.tmplayer.data.ShareMedia
 import com.tmplayer.data.FreeUpSpace
+import com.tmplayer.data.FolderCopy
+import com.tmplayer.data.FolderExport
+import com.tmplayer.ui.components.FolderCopyConfirmDialog
+import com.tmplayer.ui.components.FolderCopyProgressDialog
+import com.tmplayer.ui.components.FolderCopyResultDialog
 import com.tmplayer.data.StorageChart
 import com.tmplayer.data.StorageSplit
 import com.tmplayer.ui.components.StorageDonutPanel
@@ -309,9 +314,51 @@ fun DownloadsScreen(
         picked = emptySet()
     }
 
+    // Save to folder. Its steps live in FolderExport, not here, so a rotation or the app going to
+    // the background loses none of them: the question, the progress, the result. The screen only
+    // draws them, and counts itself as watching so the end is not also said in the shade.
+    val folder by FolderExport.state.collectAsStateWithLifecycle()
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        FolderExport.watchers.incrementAndGet()
+        onDispose { FolderExport.watchers.decrementAndGet() }
+    }
+    var removeAfterSaving by rememberSaveable { mutableStateOf(false) }
+    // The folder the picker came back with, handled further down once the rows are counted.
+    var pickedTree by remember { mutableStateOf<android.net.Uri?>(null) }
+    // Offered where there is a folder picker that works: every phone and tablet. A television's
+    // "picker" is a stub that answers Cancel at once (Android TV ships no DocumentsUI), so there
+    // the button says why it cannot instead.
+    val touch = isTouch()
+    val canSaveToFolder = remember(touch) {
+        touch && android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE)
+            .resolveActivity(context.packageManager) != null
+    }
+    var explainingNoFolder by remember { mutableStateOf(false) }
+    val folderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
+    ) { tree ->
+        if (tree == null) {
+            FolderExport.pendingKeys = null
+            FolderExport.dropPreparing()
+        } else {
+            pickedTree = tree
+        }
+    }
+
     // Only the rows that are still on the list. A selection that outlived its videos would offer
     // to delete or share things that are no longer there.
     val chosen = remember(picked, rows) { rows.filter { it.key in picked } }
+    // The selection's running total, and a warning when it is more than the room left in the
+    // folder saved to last (read off the main thread: it is a statfs()).
+    val chosenBytes = remember(chosen) { chosen.sumOf { it.bytes } }
+    var lastFolderFree by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    LaunchedEffect(picking, folder.outcome) {
+        if (picking) lastFolderFree = withContext(Dispatchers.IO) { FolderExport.lastFolderFree() }
+    }
+    val chosenSize = if (chosen.isEmpty()) null else Translator.messages.formatter.bytes(chosenBytes)
+    val chosenWarning = lastFolderFree?.takeIf { chosen.isNotEmpty() && chosenBytes > it.second }?.let { (name, free) ->
+        L.downloadsSaveToFolderOverLast(free = Translator.messages.formatter.bytes(free), folder = name)
+    }
 
     // Every row, because every row is a download.
     val shown = rows
@@ -611,6 +658,69 @@ fun DownloadsScreen(
         }
     }
 
+    /**
+     * Save to folder (one video or a selection): the system's folder picker, then the
+     * confirmation with the sizes and the room there (FolderExport.prepare), then the copy with its
+     * progress and Cancel, then a toast for a whole run or a dialog that names everything skipped,
+     * failed or stopped. The downloads stay where they are unless the confirmation's "Remove from
+     * TMPlayer's downloads after saving" was ticked.
+     */
+    fun saveToFolder(ticked: List<DownloadRow>) {
+        if (ticked.isEmpty()) return
+        if (!canSaveToFolder) {
+            explainingNoFolder = true
+            return
+        }
+        if (FolderExport.busy) {
+            toast(L.downloadsSaveToFolderBusy)
+            return
+        }
+        scope.launch {
+            // One video from a chat that forbids saving is said at once, before any picker opens.
+            if (ticked.size == 1 && !Td.maySave(ticked[0].record.chatId, ticked[0].record.messageId)) {
+                toast(ContentProtection.NOT_SAVABLE)
+                return@launch
+            }
+            FolderExport.pendingKeys = ticked.map { it.key }
+            runCatching { folderPicker.launch(null) }.onFailure {
+                FolderExport.pendingKeys = null
+                explainingNoFolder = true
+            }
+        }
+    }
+
+    // The picker's answer, once the rows it was opened for are on the list again (after a
+    // rotation they are measured afresh). A row deleted meanwhile is simply not in the plan.
+    LaunchedEffect(pickedTree, counted) {
+        val tree = pickedTree ?: return@LaunchedEffect
+        if (!counted) return@LaunchedEffect
+        pickedTree = null
+        val keys = FolderExport.pendingKeys.orEmpty().toSet()
+        FolderExport.pendingKeys = null
+        val chosenNow = rows.filter { it.key in keys }
+        if (chosenNow.isEmpty()) return@LaunchedEffect
+        FolderExport.prepare(
+            context,
+            tree,
+            chosenNow.map { row ->
+                FolderExport.Candidate(row.key, row.record, row.fileId, row.title, whole = !row.cached && !row.missing && row.complete)
+            },
+            settings,
+        )
+    }
+
+    // The end of a run: a toast when every video went, the dialog otherwise. The list is measured
+    // again either way, since a removal after saving changes it.
+    LaunchedEffect(folder.outcome) {
+        val outcome = folder.outcome ?: return@LaunchedEffect
+        if (outcome.copied > 0) leavePicking()
+        if (outcome.moved > 0) refresh(history)
+        if (outcome.clean) {
+            toast(outcome.headline + (if (outcome.moved > 0) ". " + L.downloadsSaveToFolderMoved(count = outcome.moved) else ""))
+            FolderExport.consume()
+        }
+    }
+
     fun deleteMany(these: List<DownloadRow>) {
         scope.launch {
             val stuck = these.filterNot { removeOne(it) }
@@ -638,6 +748,9 @@ fun DownloadsScreen(
             checked = row.key in picked,
             onPlay = { if (row.partial) saveToDownloads(row) else onPlay(row.record) },
             onShare = { share(listOf(row)) },
+            // A phone's card has room for it as a square beside Delete; a television's card stays
+            // Watch, Share and Delete, and its heading's Save to folder says why it cannot.
+            onSaveToFolder = if (canSaveToFolder) ({ saveToFolder(listOf(row)) }) else null,
             onDelete = { if (row.missing) removeMissing(row) else confirmingDelete = row },
             onToggle = { picked = if (row.key in picked) picked - row.key else picked + row.key },
             onHold = {
@@ -993,6 +1106,9 @@ fun DownloadsScreen(
             onLeavePicking = { leavePicking() },
             onSelectAll = { picked = shown.map { it.key }.toSet() },
             onShareChosen = { share(chosen) },
+            onSaveChosen = { saveToFolder(chosen) },
+            chosenSize = chosenSize,
+            chosenWarning = chosenWarning,
             onDeleteChosen = { confirmingDeleteMany = true },
             listState = listState,
             body = body,
@@ -1012,6 +1128,9 @@ fun DownloadsScreen(
             onLeavePicking = { leavePicking() },
             onSelectAll = { picked = shown.map { it.key }.toSet() },
             onShareChosen = { share(chosen) },
+            onSaveChosen = { saveToFolder(chosen) },
+            chosenSize = chosenSize,
+            chosenWarning = chosenWarning,
             onDeleteChosen = { confirmingDeleteMany = true },
             listState = listState,
             refocus = deleted,
@@ -1032,7 +1151,7 @@ fun DownloadsScreen(
                     title = {
                         Text(
                             if (picking) {
-                                if (chosen.isEmpty()) L.downloadsSelectVideos else L.downloadsSelected(count = chosen.size)
+                                if (chosen.isEmpty()) L.downloadsSelectVideos else listOfNotNull(L.downloadsSelected(count = chosen.size), chosenSize).joinToString(DOT)
                             } else {
                                 L.downloadsTitle
                             },
@@ -1085,6 +1204,7 @@ fun DownloadsScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         PrimaryAction(L.commonShare, TmIcons.Share) { share(chosen) }
+                        if (canSaveToFolder) SecondaryAction(L.downloadsSaveToFolder, TmIcons.Folder, { saveToFolder(chosen) })
                         SecondaryAction(
                             label = L.commonDelete,
                             icon = TmIcons.Delete,
@@ -1113,6 +1233,43 @@ fun DownloadsScreen(
 
     // The app's one confirmation (TvConfirm): Material's dialog on a phone, the remote's panel
     // with Cancel focused on a television, where a stock dialog drew in a look of its own.
+    // Save to folder's dialogs, drawn from FolderExport's state so they come back after a rotation.
+    folder.offer?.let { offer ->
+        FolderCopyConfirmDialog(
+            plan = offer.plan,
+            remove = removeAfterSaving,
+            onRemove = { removeAfterSaving = it },
+            onSave = { items ->
+                if (!FolderExport.start(context, offer, items, removeAfterSaving)) toast(L.downloadsSaveToFolderBusy)
+                removeAfterSaving = false
+            },
+            onCancel = {
+                FolderExport.dismissOffer(context)
+                removeAfterSaving = false
+            },
+        )
+    }
+    if (folder.preparing) com.tmplayer.ui.components.FolderCopyPreparingDialog()
+    folder.progress?.let { progress -> FolderCopyProgressDialog(progress, onCancel = { FolderExport.cancel() }) }
+    folder.outcome?.takeIf { !it.clean }?.let { outcome -> FolderCopyResultDialog(outcome, onClose = { FolderExport.consume() }) }
+    if (explainingNoFolder) {
+        TvConfirm(
+            title = L.downloadsSaveToFolder,
+            message = L.downloadsSaveToFolderTvUnavailable,
+            confirmLabel = L.commonClose,
+            onConfirm = {
+                explainingNoFolder = false
+                // The remote goes back to the tab rather than nowhere, as after a delete.
+                deleted++
+            },
+            onDismiss = {
+                explainingNoFolder = false
+                deleted++
+            },
+            destructive = false,
+        )
+    }
+
     confirmingDelete?.let { row ->
         TvConfirm(
             title = if (row.cached) L.downloadsDeleteCachedTitle else L.downloadsDeleteOneTitle,
@@ -1813,6 +1970,8 @@ private fun DownloadCard(
     onDelete: () -> Unit,
     onToggle: () -> Unit,
     onHold: (() -> Unit)?,
+    /** Save to folder, for a finished download; null where there is no folder picker. */
+    onSaveToFolder: (() -> Unit)? = null,
 ) {
     val s = LocalStrings.current
     val details = listOfNotNull(
@@ -1893,6 +2052,7 @@ private fun DownloadCard(
                     else -> {
                         PrimaryAction(s.navWatch, TmIcons.Play, onPlay)
                         SecondaryAction(s.commonShare, TmIcons.Share, onShare)
+                        onSaveToFolder?.let { IconOnlyAction(s.downloadsSaveToFolder, TmIcons.Folder, it) }
                         IconOnlyAction(s.commonDelete, TmIcons.Delete, onDelete, danger = true)
                     }
                 }
@@ -2090,6 +2250,10 @@ private fun PhoneDownloads(
     onLeavePicking: () -> Unit,
     onSelectAll: () -> Unit,
     onShareChosen: () -> Unit,
+    onSaveChosen: () -> Unit,
+    /** The selection's total size, and the line when it is more than the last folder has room for. */
+    chosenSize: String?,
+    chosenWarning: String?,
     onDeleteChosen: () -> Unit,
     listState: androidx.compose.foundation.lazy.LazyListState,
     body: LazyListScope.() -> Unit,
@@ -2151,17 +2315,29 @@ private fun PhoneDownloads(
 
         if (picking) {
             StickyActionBar(Modifier.align(Alignment.BottomCenter), compact = compact, fill = true) {
-                Text(
-                    if (chosenCount == 0) s.downloadsSelectVideos else s.downloadsSelected(count = chosenCount),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = Tone.text,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(start = 14.dp),
-                )
+                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                    Text(
+                        if (chosenCount == 0) s.downloadsSelectVideos else s.downloadsSelected(count = chosenCount),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Tone.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    // The running total, or in red when the last folder saved to has less room.
+                    (chosenWarning ?: chosenSize)?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (chosenWarning != null) MaterialTheme.colorScheme.error else Tone.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 // Everything the list is showing, and never more than that.
                 TextButton(onClick = onSelectAll, enabled = !allChosen) { Text(s.downloadsSelectAll, maxLines = 1) }
                 FloatingBarIcon(TmIcons.Share, s.commonShare, onShareChosen, enabled = chosenCount > 0)
+                FloatingBarIcon(TmIcons.Folder, s.downloadsSaveToFolder, onSaveChosen, enabled = chosenCount > 0)
                 FloatingBarIcon(TmIcons.Delete, s.commonDelete, onDeleteChosen, tint = MaterialTheme.colorScheme.error, enabled = chosenCount > 0)
             }
         } else if (!hosted && actions != null) {
@@ -2195,6 +2371,10 @@ private fun TvDownloads(
     onLeavePicking: () -> Unit,
     onSelectAll: () -> Unit,
     onShareChosen: () -> Unit,
+    /** Save to folder; on a television without a folder picker it explains why it cannot. */
+    onSaveChosen: () -> Unit,
+    chosenSize: String?,
+    chosenWarning: String?,
     onDeleteChosen: () -> Unit,
     listState: androidx.compose.foundation.lazy.LazyListState,
     /** Bumped after a delete, whose row took the remote with it: focus goes back to the tab. */
@@ -2246,7 +2426,7 @@ private fun TvDownloads(
                     when {
                         !picking -> s.downloadsTitle
                         chosenCount == 0 -> s.downloadsSelectVideos
-                        else -> s.downloadsSelected(count = chosenCount)
+                        else -> listOfNotNull(s.downloadsSelected(count = chosenCount), chosenSize).joinToString(DOT)
                     },
                     style = TvTheme.typography.titleLarge,
                     color = Tone.text,
@@ -2260,6 +2440,7 @@ private fun TvDownloads(
                         TvPill(s.downloadsSelectAll, TmIcons.Checklist, enabled = !allChosen, onClick = onSelectAll)
                         if (chosenCount > 0) {
                             TvPill(s.commonShare, TmIcons.Share, onClick = onShareChosen)
+                            TvPill(s.downloadsSaveToFolder, TmIcons.Folder, onClick = onSaveChosen)
                             TvPill(s.commonDelete, TmIcons.Delete, danger = true, onClick = onDeleteChosen)
                         }
                     }

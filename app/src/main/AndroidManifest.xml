@@ -174,6 +174,15 @@
             android:foregroundServiceType="dataSync" />
 
         <!--
+          Save to folder (FolderExport): copies of downloads into a folder the viewer picked, kept
+          going with the app out of sight. Not exported, for the same reason.
+        -->
+        <service
+            android:name=".data.FolderExportService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
           Background audio on a phone: holds the player activity's own media session while the
           player is out of sight. No MediaSessionService intent filter, so neither another app nor
           a media button can start it with no video behind it. There is no MediaButtonReceiver

@@ -84,7 +84,15 @@ import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.Td
 import com.tmplayer.desktop.DesktopPaths
 import com.tmplayer.desktop.DesktopSettings
+import com.tmplayer.desktop.DesktopFolderExport
 import com.tmplayer.desktop.DownloadIndex
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import com.tmplayer.desktop.os.OpenExternal
 import com.tmplayer.i18n.L
 import com.tmplayer.player.StreamStats
@@ -177,6 +185,60 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
     // Where the Recently played heading sits, for Settings' Recently played row to land on.
     val cachedHeadingAt = remember { intArrayOf(-1) }
     BackHandler(enabled = picked.isNotEmpty()) { picked = emptySet() }
+
+    // Save to folder: the question, the progress and the result live in DesktopFolderExport, so
+    // a batch keeps going while the viewer is on another page and is drawn again on return.
+    val folder by DesktopFolderExport.state.collectAsState()
+    var removeAfterSaving by remember { mutableStateOf(false) }
+    val pickedRecords = remember(picked, history) { history.filter { it.key in picked } }
+    val pickedBytes = pickedRecords.sumOf { it.sizeBytes }
+    var lastFolderFree by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    LaunchedEffect(picked.isNotEmpty(), folder.outcome) {
+        if (picked.isNotEmpty()) {
+            lastFolderFree = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { DesktopFolderExport.lastFolderFree() }
+        }
+    }
+    val selectAll = { picked = history.map { it.key }.toSet() }
+
+    /**
+     * Save to folder for one download or the selection: the OS's folder dialog, then the
+     * confirmation with the sizes and the room there, the copy with its progress, and the result.
+     */
+    fun saveToFolder(records: List<ResumeRecord>) {
+        if (records.isEmpty()) return
+        if (DesktopFolderExport.busy) {
+            toast(s.downloadsSaveToFolderBusy)
+            return
+        }
+        scope.launch {
+            if (records.size == 1 && !Td.maySave(records[0].chatId, records[0].messageId)) {
+                toast(ContentProtection.NOT_SAVABLE)
+                return@launch
+            }
+            val start = DesktopFolderExport.lastDir ?: downloadsDir.parentFile
+            val dir = com.tmplayer.desktop.os.FolderPicker.pick(s.downloadsSaveToFolderPick, start) ?: return@launch
+            // Asked again now: the list can have changed while the dialog was up.
+            val now = state.settings.downloadsNow().map { it.chatId to it.messageId }.toSet()
+            val candidates = records.filter { (it.chatId to it.messageId) in now }.map { record ->
+                val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    when (DownloadIndex.state(record)) {
+                        DownloadIndex.FileState.Present -> record.localPath?.let(::File)
+                        DownloadIndex.FileState.Missing -> null
+                        DownloadIndex.FileState.Legacy ->
+                            if (DownloadIndex.legacyAvailability(record) == LocalFileAvailability.Complete) {
+                                runCatching { Td.localFilePath(Td.currentFileId(record.chatId, record.messageId, record.fileId)) }
+                                    .getOrNull()?.let(::File)
+                            } else {
+                                null
+                            }
+                    }
+                }
+                DesktopFolderExport.Candidate(record, com.tmplayer.data.VideoCorrections.titleFor(record.chatId, record.messageId, record.title), file)
+            }
+            if (candidates.isEmpty()) return@launch
+            DesktopFolderExport.prepare(dir, candidates)
+        }
+    }
     // The episodes of one show together in watching order, other videos newest first.
     // The page's order, remembered once: newest, by name, or the largest first, to make room.
     val downloadsSort by state.settings.downloadsSort.collectAsState(initial = com.tmplayer.data.DownloadShelf.Sort.Newest)
@@ -187,13 +249,39 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
     // Where the Downloaded heading sits, for "Choose downloads to delete" to scroll to.
     val doneHeadingAt = remember { intArrayOf(0) }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            // Ctrl+A (Cmd+A on a Mac) picks every download while a selection is on; with none,
+            // the key is left to whatever has focus.
+            val chord = event.isCtrlPressed || event.isMetaPressed
+            if (picked.isNotEmpty() && chord && event.key == Key.A && event.type == KeyEventType.KeyDown) {
+                selectAll()
+                true
+            } else {
+                false
+            }
+        },
+    ) {
         PageHeader(
             s.navDownloads,
-            s.downloadsKeptIn(downloadsDir.path),
+            if (picked.isEmpty()) {
+                s.downloadsKeptIn(downloadsDir.path)
+            } else {
+                // The running total, and a warning when the folder saved to last has less room.
+                val warning = lastFolderFree?.takeIf { pickedBytes > it.second }?.let { (name, free) ->
+                    s.downloadsSaveToFolderOverLast(free = MediaMapper.formatSize(free), folder = name)
+                }
+                listOfNotNull(s.downloadsSelected(count = picked.size), MediaMapper.formatSize(pickedBytes), warning).joinToString("  ·  ")
+            },
             actions = {
                 if (picked.isNotEmpty()) {
                     TextButton(onClick = { picked = emptySet() }) { Text(s.commonClearSelection) }
+                    TextButton(onClick = selectAll, enabled = picked.size < history.size) { Text(s.downloadsSelectAll) }
+                    OutlinedButton(onClick = { saveToFolder(pickedRecords) }) {
+                        Icon(TmIcons.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(s.downloadsSaveToFolder)
+                    }
                     OutlinedButton(onClick = { confirm = history.filter { it.key in picked } }) {
                         Text(s.downloadsDeleteSelected(picked.size), color = Tone.danger)
                     }
@@ -234,6 +322,7 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
                     }
                 },
                 onRemove = { confirm = listOf(record) },
+                onSaveToFolder = { saveToFolder(listOf(record)) },
             )
         }
         // A press on a part of the ring's legend: that part's own way to free it, or its list.
@@ -345,6 +434,8 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
                                 if (picked.isEmpty()) {
                                     TextButton(onClick = { OpenExternal.open(downloadsDir.apply { mkdirs() }) }) { Text(s.downloadsOpenFolder) }
                                     if (history.isNotEmpty()) {
+                                        // Starts a selection with everything in it, for Save to folder or Delete.
+                                        TextButton(onClick = selectAll) { Text(s.downloadsSelectAll) }
                                         TextButton(onClick = { confirm = history }) { Text(s.downloadsDeleteAll, color = Tone.danger) }
                                     }
                                 }
@@ -690,6 +781,36 @@ fun DownloadsPage(state: ShellState, downloadsDir: File = DesktopPaths.downloads
         )
     }
 
+    folder.offer?.let { offer ->
+        com.tmplayer.ui.components.FolderCopyConfirmDialog(
+            plan = offer.plan,
+            remove = removeAfterSaving,
+            onRemove = { removeAfterSaving = it },
+            onSave = { items ->
+                if (!DesktopFolderExport.start(state.settings, offer, items, removeAfterSaving)) toast(s.downloadsSaveToFolderBusy)
+                removeAfterSaving = false
+            },
+            onCancel = {
+                DesktopFolderExport.dismissOffer()
+                removeAfterSaving = false
+            },
+        )
+    }
+    if (folder.preparing) com.tmplayer.ui.components.FolderCopyPreparingDialog()
+    folder.progress?.let { com.tmplayer.ui.components.FolderCopyProgressDialog(it, onCancel = { DesktopFolderExport.cancel() }) }
+    folder.outcome?.takeIf { !it.clean }?.let {
+        com.tmplayer.ui.components.FolderCopyResultDialog(it, onClose = { DesktopFolderExport.consume() })
+    }
+    // A whole run is a toast; the selection is left once anything was saved.
+    LaunchedEffect(folder.outcome) {
+        val outcome = folder.outcome ?: return@LaunchedEffect
+        if (outcome.copied > 0) picked = emptySet()
+        if (outcome.clean) {
+            toast(outcome.headline + (if (outcome.moved > 0) ". " + s.downloadsSaveToFolderMoved(count = outcome.moved) else ""))
+            DesktopFolderExport.consume()
+        }
+    }
+
     confirm?.let { doomed ->
         val one = doomed.size == 1
         ConfirmDialog(
@@ -1017,6 +1138,7 @@ private fun KeptRow(
     onOpenElsewhere: () -> Unit,
     onResume: () -> Unit,
     onRemove: () -> Unit,
+    onSaveToFolder: () -> Unit,
 ) {
     val s = LocalStrings.current
     val missing = fileState == DownloadIndex.FileState.Missing ||
@@ -1043,6 +1165,7 @@ private fun KeptRow(
                 add(RowMenuEntry(s.navWatch, TmIcons.Play, action = onPlay))
                 if (present) add(RowMenuEntry(s.commonOpenElsewhere, TmIcons.OpenExternal, action = onOpenElsewhere))
                 add(RowMenuEntry(s.downloadsShowInFolder, TmIcons.Folder, action = onShowInFolder))
+                add(RowMenuEntry(s.downloadsSaveToFolder, TmIcons.FolderOpen, action = onSaveToFolder))
                 add(RowMenuEntry(s.downloadsDeleteDownload, TmIcons.Delete, danger = true, action = onRemove))
             }
         }
@@ -1068,6 +1191,7 @@ private fun KeptRow(
             else -> {
                 if (present) TipIconButton(TmIcons.OpenExternal, s.commonOpenElsewhere, onOpenElsewhere)
                 TipIconButton(TmIcons.Folder, s.downloadsShowInFolder, onShowInFolder)
+                TipIconButton(TmIcons.FolderOpen, s.downloadsSaveToFolder, onSaveToFolder)
                 TipIconButton(TmIcons.Delete, s.downloadsDeleteDownload, onRemove)
             }
         }
