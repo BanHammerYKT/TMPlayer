@@ -48,13 +48,21 @@ class RowFeed internal constructor(
      * @param loading true while a page is being read: the foot shows placeholder tiles.
      * @param failure why the last read failed; the foot offers Try again ([loadMore]).
      * @param done true once every chat has been read to its end.
+     * @param resting true after a read that found nothing new to show: the list's end stays in
+     *   view, so asking again by itself would read every chat to its start (a Shows row of four
+     *   shows, whose pages bring only more episodes of them, did that over and over on a TV).
+     *   The next read waits for the viewer to scroll ([wants]).
      */
     data class State(
         val entries: List<ShelfEntry> = emptyList(),
         val loading: Boolean = false,
         val failure: String? = null,
         val done: Boolean = false,
-    )
+        val resting: Boolean = false,
+    ) {
+        /** Whether the list may ask for its next page now; [scrolling] is the viewer moving it. */
+        fun wants(scrolling: Boolean): Boolean = !loading && !done && failure == null && (!resting || scrolling)
+    }
 
     private var row: HomeRow = row
     private var lanes: List<FeedLane> = lanes
@@ -84,7 +92,7 @@ class RowFeed internal constructor(
      */
     fun loadMore() {
         if (job?.isActive == true || _state.value.done) return
-        _state.update { it.copy(loading = true, failure = null) }
+        _state.update { it.copy(loading = true, failure = null, resting = false) }
         job = scope.launch {
             try {
                 val before = _state.value.entries.size
@@ -102,7 +110,8 @@ class RowFeed internal constructor(
                     publish()
                     if (_state.value.entries.size > before) break
                 }
-                _state.update { it.copy(loading = false) }
+                val found = _state.value.entries.size > before
+                _state.update { it.copy(loading = false, resting = !found) }
             } catch (e: CancellationException) {
                 _state.update { it.copy(loading = false) }
                 throw e

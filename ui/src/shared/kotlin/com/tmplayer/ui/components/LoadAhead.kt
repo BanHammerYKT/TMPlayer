@@ -36,10 +36,20 @@ import kotlinx.coroutines.flow.distinctUntilChanged
  * grid on every platform.
  */
 @Composable
-fun LoadMoreAhead(state: LazyListState, enabled: Boolean, ahead: Int = LIST_AHEAD, onLoadMore: () -> Unit) {
+fun LoadMoreAhead(state: LazyListState, enabled: Boolean, ahead: Int = LIST_AHEAD, onLoadMore: () -> Unit) =
+    LoadMoreAhead(state, enabled, count = 0, ahead = ahead, onLoadMore = onLoadMore)
+
+/**
+ * [LoadMoreAhead] for a list that holds [count] items, which it asks about only once its layout
+ * has them all: a row composed ahead below the screen is not laid out again as pages land, and
+ * its last layout kept saying the end was in view, so a Home row on a television read every
+ * chat to its start by itself, at a core and a half, while nobody touched it.
+ */
+@Composable
+fun LoadMoreAhead(state: LazyListState, enabled: Boolean, count: Int, ahead: Int = LIST_AHEAD, onLoadMore: () -> Unit) {
     LoadMoreWhen(state, enabled, onLoadMore) {
         val info = state.layoutInfo
-        nearEnd(info.visibleItemsInfo.lastOrNull()?.index, info.totalItemsCount, ahead)
+        info.totalItemsCount >= count && nearEnd(info.visibleItemsInfo.lastOrNull()?.index, info.totalItemsCount, ahead)
     }
 }
 

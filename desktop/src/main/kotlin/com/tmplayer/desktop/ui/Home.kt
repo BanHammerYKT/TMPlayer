@@ -440,7 +440,7 @@ private fun RowPage(
             }
             val list = com.tmplayer.ui.components.rememberAheadListState()
             if (feed != null && fed != null) {
-                LoadMoreAhead(list, enabled = !fed.loading && !fed.done && fed.failure == null, ahead = FEED_LINES_AHEAD) { feed.loadMore() }
+                LoadMoreAhead(list, enabled = fed.wants(scrolling = list.isScrollInProgress), ahead = FEED_LINES_AHEAD) { feed.loadMore() }
             }
             LazyColumn(
                 Modifier.fillMaxSize().homeEndScrolls(list),

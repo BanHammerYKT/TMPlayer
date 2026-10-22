@@ -612,7 +612,8 @@ private fun ShelfRows(
         val fed = paging.state
         com.tmplayer.ui.components.LoadMoreAhead(
             list,
-            enabled = fed == null || (!fed.loading && !fed.done && fed.failure == null),
+            enabled = fed == null || fed.wants(scrolling = list.isScrollInProgress),
+            count = entries.size,
             ahead = ROW_TILES_AHEAD,
             onLoadMore = paging.more,
         )

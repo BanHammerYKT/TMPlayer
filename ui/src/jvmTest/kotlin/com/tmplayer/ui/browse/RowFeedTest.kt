@@ -80,12 +80,12 @@ class RowFeedTest {
         }
     }
 
-    private fun TestScope.feed(): RowFeed {
+    private fun TestScope.feed(keep: suspend (List<MediaItem>) -> List<MediaItem> = { it }): RowFeed {
         // Home holds each chat's newest few, as its rows read them.
         val held = chats.mapValues { (_, items) -> items.take(3) }
         val lanes = held.map { (chatId, items) -> FeedLane(chatId, MediaCursors(video = 3), oldest = items.minOf { it.date }) }
         val row = HomeRow.Across(HomeRow.Across.Kind.Videos, listOf(ShelfEntry.File(held.getValue(2).first())), chatIds = listOf(1, 2))
-        return RowFeed(this, lanes, held.values.flatten(), row, ::read, keep = { it }, work = dispatcher)
+        return RowFeed(this, lanes, held.values.flatten(), row, ::read, keep = keep, work = dispatcher)
     }
 
     private fun ids(feed: RowFeed) = feed.state.value.entries.map { (it as ShelfEntry.File).item.id }
@@ -146,6 +146,35 @@ class RowFeedTest {
         advanceUntilIdle()
         assertNull(feed.state.value.failure)
         assertTrue(ids(feed).size > before.size)
+    }
+
+    @Test
+    fun `a read that finds nothing new rests until the viewer scrolls`() = runTest(dispatcher) {
+        // Every page rejected by the size limits: past what Home held, nothing new can be shown.
+        val feed = feed(keep = { emptyList() })
+        advanceUntilIdle()
+        // What Home held still comes out as the reads move past it, so a few rounds find that.
+        repeat(10) {
+            if (!feed.state.value.resting && !feed.state.value.done) {
+                feed.loadMore()
+                advanceUntilIdle()
+            }
+        }
+        val state = feed.state.value
+        assertFalse(state.loading)
+        assertTrue(state.resting || state.done)
+        assertFalse("asks again by itself", state.wants(scrolling = false))
+        if (!state.done) assertTrue(state.wants(scrolling = true))
+    }
+
+    @Test
+    fun `a read that finds something does not rest`() = runTest(dispatcher) {
+        val feed = feed()
+        advanceUntilIdle()
+        feed.loadMore()
+        advanceUntilIdle()
+        assertFalse(feed.state.value.resting)
+        assertTrue(feed.state.value.wants(scrolling = false))
     }
 
     @Test
