@@ -17,11 +17,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
 import com.tmplayer.data.FormFactor
+import kotlinx.coroutines.launch
 import com.tmplayer.ui.theme.TMPlayerTheme
 import com.tmplayer.ui.theme.Tone
 import org.junit.Assert.assertTrue
@@ -44,11 +45,19 @@ import java.time.Duration
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class FastScrollerRenderTest {
 
+    @org.junit.After
+    fun tearDown() {
+        com.tmplayer.ui.theme.Motion.reduced = false
+    }
+
     private fun idle(ms: Long) = repeat((ms / 50).toInt()) { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50)) }
 
     private fun render(out: String) {
         // The answer is kept for the process, and a television test before this one leaves it set.
         FormFactor.override(false)
+        // The handle's slide and fade land at once: what is checked is where it stands, and in a
+        // long run of render tests an animation's frames did not always come before the picture.
+        com.tmplayer.ui.theme.Motion.reduced = true
         val state = LazyListState(firstVisibleItemIndex = 60)
         var accent = 0
         var ground = 0
@@ -65,18 +74,24 @@ class FastScrollerRenderTest {
                         }
                     }
                     FastScroller(state, label = { key -> "Episode ${(key as Int) + 1}" })
-                    LaunchedEffect(Unit) {
-                        state.scroll {
-                            scrollBy(1f)
-                            kotlinx.coroutines.delay(200)
-                        }
-                    }
                 }
+            }
+        }
+        idle(100)
+        // The list is held mid-scroll until the picture is taken, which brings the handle out.
+        // Started from the test, and held rather than a short scroll: after a long run of render
+        // tests the handle's own watcher started late, after a 200 ms scroll had already ended,
+        // and the handle never came (CI, 2026-10-22).
+        val moving = activity.lifecycleScope.launch {
+            state.scroll {
+                scrollBy(1f)
+                kotlinx.coroutines.awaitCancellation()
             }
         }
         idle(800)
         val root = activity.window.decorView
         val rest = draw(activity, "fast-scroller-rest-$out")
+        moving.cancel()
         // The handle is what stands out from the page down the last pixels of the end edge (the
         // left one in Arabic).
         fun run(x: Int) = (0 until rest.height).filter { y -> rest.getPixel(x, y) != ground }

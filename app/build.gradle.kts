@@ -269,6 +269,12 @@ android {
                 // its pages, the player), more than the test worker's default heap holds: CI ran
                 // out of memory part way once they grew (2026-10-19).
                 it.maxHeapSize = "3g"
+                // A fresh process for each test class. After many render tests in one process,
+                // Compose's frame clock under Robolectric stopped delivering frames, so effects
+                // inside a screen never started: the fast scroller's handle never came out and a
+                // changed setting never reached the screen (CP101), and whole runs sat for close to
+                // an hour on CI. Each class starting clean costs a few seconds and removes all of it.
+                it.forkEvery = 1
             }
         }
     }
