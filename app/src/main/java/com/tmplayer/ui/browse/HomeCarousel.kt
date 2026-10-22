@@ -12,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -97,6 +98,13 @@ import kotlinx.coroutines.launch
  * logo where TMDB has one), a line of facts and two lines of the overview ([FeaturedInfo]); under
  * them the dots ([CarouselDots]) say which page is up.
  *
+ * On its side (a frame wider than [WIDE_RATIO] times its height: a phone held sideways, a tablet
+ * lying down) it takes the television's and the desktop's arrangement instead: the picture stands
+ * at the end and melts into the page towards the start ([EdgeBackdrop]), the words and the buttons
+ * sit at the start on about half the width (Play at its own width, Details round beside it), and
+ * the dots stand at the end, level with Play. Centred words over a stretched Play read as a phone
+ * screen blown up across a frame three times as wide as it is tall.
+ *
  * It is [height] tall from its first frame, whatever has arrived: while [picks] is null (the
  * starred chats are still being asked) the same frame holds a shimmering stand-in, so nothing on
  * Home moves when the pages land. The pictures run up under the status bar ([under]).
@@ -119,10 +127,15 @@ internal fun FeaturedCarousel(
     onDetails: (FeaturedPick) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier.fillMaxWidth().height(height)) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(height)) {
+        // The same test as the picture's own ([EdgeBackdrop]), so the words move to the start
+        // exactly when the picture moves to the end.
+        val wide = maxWidth > maxHeight * WIDE_RATIO
+        // A tablet lying down has room for a third line of the overview; a phone on its side not.
+        val overviewLines = if (wide && maxHeight >= TALL_WIDE) 3 else 2
         if (picks.isNullOrEmpty()) {
-            FeaturedSkeleton(start, end)
-            return@Box
+            FeaturedSkeleton(start, end, wide)
+            return@BoxWithConstraints
         }
         val s = LocalStrings.current
         val count = picks.size
@@ -189,9 +202,31 @@ internal fun FeaturedCarousel(
                 key = { latest.getOrNull(it)?.key ?: it },
             ) { page ->
                 val pick = latest.getOrNull(page) ?: return@HorizontalPager
-                FeaturedPage(pick, height, under, start, end, chatTitle, footRoom = CONTROLS_ROOM)
+                FeaturedPage(
+                    pick, height, under, start, end, chatTitle,
+                    footRoom = if (wide) WIDE_CONTROLS_ROOM else CONTROLS_ROOM,
+                    wide = wide,
+                    overviewLines = overviewLines,
+                )
             }
-            Box(
+            if (wide) {
+                // Play and Details at the start's foot, under the words; the dots at the end, level
+                // with Play, a mark only as upright.
+                latest.getOrNull(pager.currentPage)?.let { pick ->
+                    FeaturedControls(
+                        pick, watch, chatTitle, onPlay, onDetails,
+                        wide = true,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(start = start, bottom = WIDE_FOOT),
+                    )
+                }
+                CarouselDots(
+                    count = count,
+                    current = pager.currentPage,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = end, bottom = WIDE_FOOT + (HERO_PILL_HEIGHT - DOTS_ROOM) / 2),
+                )
+            } else Box(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
@@ -215,7 +250,16 @@ private val DOTS_ROOM: Dp = 22.dp
 /** What the controls at the carousel's foot take, which a page keeps its name clear of. */
 private val CONTROLS_ROOM: Dp = 4.dp + HERO_PILL_HEIGHT + DOTS_ROOM
 
-/** One page: the picture under its fades and the name, clear of the controls ([footRoom]). */
+/** Under Play on its side, where the dots stand beside it rather than under it. */
+private val WIDE_FOOT: Dp = 14.dp
+
+/** What Play and Details take at the foot on its side, which a page keeps its name clear of. */
+private val WIDE_CONTROLS_ROOM: Dp = WIDE_FOOT + HERO_PILL_HEIGHT
+
+/**
+ * One page: the picture under its fades and the name, clear of the controls ([footRoom]), centred
+ * upright and at the start on its side ([wide]).
+ */
 @Composable
 private fun FeaturedPage(
     pick: FeaturedPick,
@@ -225,6 +269,8 @@ private fun FeaturedPage(
     end: Dp,
     chatTitle: (Long) -> String,
     footRoom: Dp,
+    wide: Boolean,
+    overviewLines: Int,
 ) {
     val s = LocalStrings.current
     val item = pick.item
@@ -253,7 +299,29 @@ private fun FeaturedPage(
                 .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))),
         )
         // Close over the buttons: the title's logo where TMDB has one (the name in type until then
-        // and otherwise), the facts line and two lines of the overview, centred.
+        // and otherwise), the facts line and two lines of the overview, centred; on its side at
+        // the start, on the page's own ground where the picture has faded out.
+        if (wide) {
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth(WIDE_WORDS_SHARE)
+                    .padding(start = start, bottom = footRoom + TEXT_GAP),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                com.tmplayer.ui.online.TitleArt(meta, maxWidth = LOGO_MAX_WIDTH, maxHeight = WIDE_LOGO_MAX_HEIGHT) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = Tone.text,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                FeaturedInfo(pick, meta, Modifier.fillMaxWidth(), overviewLines = overviewLines)
+            }
+            return@Box
+        }
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -283,7 +351,10 @@ private fun FeaturedPage(
     }
 }
 
-/** Play and Details at the carousel's foot, for the page up; they stay put while the pages move. */
+/**
+ * Play and Details at the carousel's foot, for the page up; they stay put while the pages move.
+ * Upright Play stretches across the foot; on its side ([wide]) it keeps its own width at the start.
+ */
 @Composable
 private fun FeaturedControls(
     pick: FeaturedPick,
@@ -291,6 +362,8 @@ private fun FeaturedControls(
     chatTitle: (Long) -> String,
     onPlay: (MediaItem, String) -> Unit,
     onDetails: (FeaturedPick) -> Unit,
+    wide: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val s = LocalStrings.current
     val item = pick.item
@@ -310,15 +383,15 @@ private fun FeaturedControls(
     }
 
     Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+        if (wide) modifier else modifier.fillMaxWidth(),
+        horizontalArrangement = if (wide) Arrangement.spacedBy(12.dp) else Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HeroPill(
             label = playLabel,
             onClick = { onPlay(playItem, chatTitle(playItem.chatId)) },
-            stretch = true,
-            modifier = Modifier.weight(1f, fill = false).then(Modifier.warmUpOnIntent(playItem)),
+            stretch = !wide,
+            modifier = if (wide) Modifier.warmUpOnIntent(playItem) else Modifier.weight(1f, fill = false).then(Modifier.warmUpOnIntent(playItem)),
         )
         com.tmplayer.ui.components.IconTip(s.detailOpenDetails) {
             Box(
@@ -356,11 +429,26 @@ internal fun featuredFacts(pick: FeaturedPick, title: String, chat: String, s: c
 
 /** The carousel's frame while the starred chats are still being asked: the same size, shimmering. */
 @Composable
-private fun FeaturedSkeleton(start: Dp, end: Dp) {
+private fun FeaturedSkeleton(start: Dp, end: Dp, wide: Boolean) {
     val shimmer = rememberShimmer()
     Box(Modifier.fillMaxSize()) {
         SkeletonBox(shimmer, Modifier.fillMaxSize(), RectangleShape)
         Box(Modifier.fillMaxSize().background(Scrims.bottomLong(SKELETON_FADE)))
+        // On its side the stand-ins take the start, where the name and Play will be.
+        if (wide) {
+            Column(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth(WIDE_WORDS_SHARE)
+                    .padding(start = start, bottom = WIDE_FOOT),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SkeletonBox(shimmer, Modifier.fillMaxWidth(0.7f).height(30.dp), RoundedCornerShape(8.dp))
+                SkeletonBox(shimmer, Modifier.fillMaxWidth(0.5f).height(14.dp), RoundedCornerShape(7.dp))
+                SkeletonBox(shimmer, Modifier.padding(top = 4.dp).size(width = 160.dp, height = HERO_PILL_HEIGHT), CircleShape)
+            }
+            return@Box
+        }
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -379,9 +467,17 @@ private fun FeaturedSkeleton(start: Dp, end: Dp) {
  * How tall the carousel is in a window [width] wide and [height] tall (below the status bar):
  * width x 1.33, as a tall page's backdrop is, at most [VIEWPORT_SHARE] of the height so the first
  * row shows under it, and never so short that the name and Play have no room.
+ *
+ * On its side the words stand beside the picture rather than over it, so the carousel needs less
+ * of the height: [WIDE_VIEWPORT_SHARE] of it, never under [WIDE_MIN_HEIGHT], so Continue watching
+ * shows under it on a phone held sideways.
  */
 internal fun featuredHeight(width: Dp, height: Dp): Dp =
-    (width * 1.33f).coerceAtMost(height * VIEWPORT_SHARE).coerceAtLeast(min(MIN_HEIGHT, height * 0.9f))
+    if (width > height) {
+        (height * WIDE_VIEWPORT_SHARE).coerceAtLeast(min(WIDE_MIN_HEIGHT, height * 0.9f))
+    } else {
+        (width * 1.33f).coerceAtMost(height * VIEWPORT_SHARE).coerceAtLeast(min(MIN_HEIGHT, height * 0.9f))
+    }
 
 /** Whether [pick] has a sharp online picture already on this device: see [HomeFeatured.rank]. Reads the disk. */
 internal fun sharpOnline(pick: FeaturedPick, online: OnlineMetadata?): Boolean {
@@ -423,6 +519,21 @@ private const val VIEWPORT_SHARE = 0.7f
 
 private val MIN_HEIGHT = 320.dp
 
+/** The most of the window under the status bar the carousel takes on its side. */
+private const val WIDE_VIEWPORT_SHARE = 0.72f
+
+/** The least the carousel takes on its side: the name, the facts, the overview and Play. */
+private val WIDE_MIN_HEIGHT = 250.dp
+
+/** How much wider than tall the frame is before the words go to the start, as [EdgeBackdrop] decides. */
+private const val WIDE_RATIO = 1.4f
+
+/** The share of the width the words take on its side, over the start's fade. */
+private const val WIDE_WORDS_SHARE = 0.48f
+
+/** A frame on its side this tall (a tablet lying down) shows three lines of the overview. */
+private val TALL_WIDE = 400.dp
+
 private val SKELETON_FADE = 160.dp
 
 /** The dark fade under the status bar. */
@@ -436,3 +547,6 @@ private const val SEPARATOR = "  ·  "
 /** The most a title logo takes over the phone's carousel: about two lines of the name. */
 private val LOGO_MAX_WIDTH = 260.dp
 private val LOGO_MAX_HEIGHT = 84.dp
+
+/** A logo on its side, where the height is short: about one line and a half of the name. */
+private val WIDE_LOGO_MAX_HEIGHT = 64.dp

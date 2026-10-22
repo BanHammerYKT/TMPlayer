@@ -97,25 +97,31 @@ class FeaturedCarouselRenderTest {
         ),
     )
 
-    private fun render(out: String) {
+    private fun render(out: String, rtl: Boolean = false) {
         FormFactor.override(false)
         // Still: the stand-in's shimmer is an endless animation the paused looper would never get
         // past, and the pages then hold still with their segments drawn static, as with Reduce motion.
         Motion.reduced = true
-        val loading = compose(null)
+        val loading = compose(null, rtl)
         draw(loading.first, "featured-loading-$out")
-        val pages = compose(picks())
+        val pages = compose(picks(), rtl)
         draw(pages.first, "featured-$out")
         assertTrue(loading.second > 0f)
         assertEquals("the row under the carousel stays put as the pages arrive", loading.second, pages.second, 0.5f)
     }
 
     /** Home's top with the carousel showing [shown], and where the row under it starts. */
-    private fun compose(shown: List<FeaturedPick>?): Pair<ComponentActivity, Float> {
+    private fun compose(shown: List<FeaturedPick>?, rtl: Boolean = false): Pair<ComponentActivity, Float> {
         var rowTop = -1f
         val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
         activity.setContent {
             TMPlayerTheme {
+            // The theme takes the direction from the app's language, English here, so a right to
+            // left page is asked for inside it.
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalLayoutDirection provides
+                    if (rtl) androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr,
+            ) {
                 BoxWithConstraints(Modifier.fillMaxSize().background(Tone.background)) {
                     val under = 24.dp
                     val height = featuredHeight(maxWidth, maxHeight - under) + under
@@ -144,6 +150,7 @@ class FeaturedCarouselRenderTest {
                     }
                 }
             }
+        }
         }
         repeat(10) { shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(100)) }
         return activity to rowTop
@@ -178,4 +185,35 @@ class FeaturedCarouselRenderTest {
     @Test
     @Config(sdk = [35], qualifiers = "w891dp-h411dp-land-night-xhdpi")
     fun `phone on its side`() = render("phone-land")
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w914dp-h411dp-land-notnight-xhdpi")
+    fun `phone on its side, light`() = render("phone-land-light")
+
+    @Test
+    @Config(sdk = [35], qualifiers = "ldrtl-w914dp-h411dp-land-night-xhdpi")
+    fun `phone on its side, right to left`() = render("phone-land-rtl", rtl = true)
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w640dp-h360dp-land-night-xhdpi")
+    fun `small phone on its side`() = render("phone-land-small")
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w1280dp-h800dp-land-night-xhdpi")
+    fun `tablet lying down`() = render("tablet-land")
+
+    @Test
+    @Config(sdk = [35], qualifiers = "w800dp-h1280dp-port-notnight-xhdpi")
+    fun `tablet upright`() = render("tablet-port")
+
+    @Test
+    fun `on its side Continue watching shows under the carousel`() {
+        // A phone held sideways, about 914 by 411 dp, 24 dp of it the status bar.
+        val under = 24.dp
+        val window = 411.dp
+        val carousel = featuredHeight(914.dp, window - under) + under
+        assertTrue("a row's worth shows under it", window - carousel >= 100.dp)
+        // Upright stays as it was.
+        assertEquals(featuredHeight(411.dp, 867.dp), (867.dp * 0.7f).coerceAtMost(411.dp * 1.33f))
+    }
 }

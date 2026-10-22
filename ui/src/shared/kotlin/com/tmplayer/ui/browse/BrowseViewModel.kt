@@ -739,24 +739,6 @@ class MediaListViewModel(
      */
     val selfDestructing: StateFlow<Int> = _selfDestructing.asStateFlow()
 
-    private val _audioCount = MutableStateFlow(0)
-
-    /**
-     * How many audio files and voice messages the chat holds ([com.tmplayer.data.ChatAudio]), for
-     * the entry to its audio list over the listing; 0 until counted and for a chat with none.
-     */
-    val audioCount: StateFlow<Int> = _audioCount.asStateFlow()
-
-    private val _roundCount = MutableStateFlow(0)
-
-    /** How many round video messages the chat holds, for their entry over the listing; 0 for none. */
-    val roundCount: StateFlow<Int> = _roundCount.asStateFlow()
-
-    private val _pinned = MutableStateFlow<com.tmplayer.data.PinnedPost?>(null)
-
-    /** The chat's pinned post when it is or links to a video, for the card over the listing. */
-    val pinned: StateFlow<com.tmplayer.data.PinnedPost?> = _pinned.asStateFlow()
-
     /** The archives the pages read so far have met, since the listing last started over. */
     private var archives = emptyList<com.tmplayer.data.ArchiveFile>()
 
@@ -787,9 +769,8 @@ class MediaListViewModel(
 
     init {
         val memory = topicMemory
-        // Last visit's topics and extras first, so the row of chips and the entries over the
-        // listing are drawn with the first frame rather than arriving under the viewer's eyes.
-        val extrasFresh = restoreExtras()
+        // Last visit's topics first, so the row of chips is drawn with the first frame rather than
+        // arriving under the viewer's eyes.
         val known = PageQueries.lastTopic(chatId)
         if (memory == null || known != null) {
             // A topic picked earlier in this run is already in memory: the kept listing is drawn
@@ -807,23 +788,9 @@ class MediaListViewModel(
         }
         loadTopics()
         followChanges()
-        if (!extrasFresh) countAudio()
-    }
-
-    /** What sits over the listing besides the videos, as one answer for the [cache]. */
-    private data class Extras(val audio: Int = 0, val round: Int = 0, val pinned: com.tmplayer.data.PinnedPost? = null)
-
-    /** Draws the extras kept from the last visit; true when they are fresh enough not to count again. */
-    private fun restoreExtras(): Boolean {
-        val kept = cache.peek<Extras>(QueryKey.ChatExtras(chatId), PageQueries.CHAT_STALE_MS) ?: return false
-        _audioCount.value = 0
-        _roundCount.value = kept.data.round
-        _pinned.value = kept.data.pinned
-        return !kept.stale
-    }
-
-    private fun keepExtras(change: (Extras) -> Extras) {
-        cache.update<Extras>(QueryKey.ChatExtras(chatId)) { change(it ?: Extras()) }
+        // Nothing but the videos is listed over a chat's grid any more (user, 2026-10-22: TMPlayer
+        // plays videos): its audio, its round video messages and its pinned post (CP81) are not
+        // fetched, so no request is spent on them and every platform's grid starts with the videos.
     }
 
     /**
@@ -840,45 +807,6 @@ class MediaListViewModel(
             else grid.copy(scrollIndex = index, scrollOffset = offset)
         }
     }
-
-    /**
-     * Reads what sits over the listing besides the videos, once, beside the first page: the round
-     * videos and the pinned post.
-     */
-    private fun countAudio() {
-        // A chat's audio is no longer offered (user, 2026-10-22: TMPlayer plays videos), so it is
-        // not counted either: the count stays 0, which leaves the entry out on every platform.
-        // The chat's round videos and its pinned post (CP81), beside the first page the same way.
-        viewModelScope.launch {
-            val session = Td.awaitAuthorizedSession()
-            val count = runCatching { com.tmplayer.data.ChatVideoNotes.count(session.client, chatId) }.getOrDefault(0)
-            if (!session.isCurrent()) return@launch
-            keepExtras { it.copy(round = count) }
-            _roundCount.value = count
-            if (count <= 0) return@launch
-            showExtrasInsteadOfEmpty()
-        }
-        viewModelScope.launch {
-            val session = Td.awaitAuthorizedSession()
-            val pinned = runCatching { com.tmplayer.data.PinnedPosts.of(session.client, chatId) }.getOrNull()
-            if (!session.isCurrent()) return@launch
-            keepExtras { it.copy(pinned = pinned) }
-            _pinned.value = pinned
-            if (pinned == null) return@launch
-            showExtrasInsteadOfEmpty()
-        }
-    }
-
-    /** An empty listing turned into the entries alone, once one of them is known to be there. */
-    private fun showExtrasInsteadOfEmpty() {
-        val shown = _state.value
-        if (shown is UiState.Empty && query.isBlank() && pageJob?.isActive != true) {
-            _state.value = UiState.Content(MediaListState(sponsored = sponsored, endReached = true, archives = archives))
-        }
-    }
-
-    /** Whether anything besides the videos is listed: audio, round videos, a pinned video. */
-    private fun hasExtras(): Boolean = _audioCount.value > 0 || _roundCount.value > 0 || _pinned.value != null
 
     /**
      * Finds out whether this chat has topics and which of them hold videos.
@@ -1370,13 +1298,8 @@ class MediaListViewModel(
      * honest answer is "nothing yet" with a way to keep going, unless the size limits are what
      * emptied it, in which case showing what they hid is the better button.
      */
-    /** [emptyState], or the audio entry alone where the chat has audio and no videos. */
-    private fun nothingFound(reachedEnd: Boolean = true): UiState<MediaListState> =
-        if (hasExtras() && query.isBlank() && reachedEnd) {
-            UiState.Content(MediaListState(sponsored = sponsored, endReached = true, archives = archives))
-        } else {
-            emptyState(reachedEnd)
-        }
+    /** [emptyState]: with nothing listed over the videos, an empty chat always says why. */
+    private fun nothingFound(reachedEnd: Boolean = true): UiState<MediaListState> = emptyState(reachedEnd)
 
     private fun emptyState(reachedEnd: Boolean = true): UiState.Empty {
         // Say which knob is hiding things, rather than claiming the chat is empty when it is the

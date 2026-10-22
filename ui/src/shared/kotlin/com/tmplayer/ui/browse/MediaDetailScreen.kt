@@ -590,8 +590,16 @@ private fun Actions(
                 hero(Modifier)
                 others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
             }
+        } else if (!primaryFullWidth) {
+            // A phone on its side: the round buttons in Play's row, after it, wrapping only when
+            // they do not fit, rather than a row of their own under a short Play. Play comes
+            // first at the start, so a trailer arriving later never moves it.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                hero(Modifier)
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+            }
         } else {
-            hero(if (primaryFullWidth) Modifier.fillMaxWidth() else Modifier)
+            hero(Modifier.fillMaxWidth())
             FlowRow(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp, if (headlineOnly) Alignment.CenterHorizontally else Alignment.Start),
