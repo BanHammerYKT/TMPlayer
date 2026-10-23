@@ -17,7 +17,7 @@ export const faqLd = {
       "name": "Can I watch Telegram videos on Android TV?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Telegram has no app for televisions, but TMPlayer runs on Android TV and Google TV with Android 8.0 or above: a Chromecast with Google TV, a Mi TV Stick, an NVIDIA Shield or a television with Android TV built in. Install it with the free Downloader app by typing tmplayer.org/apk, open it and scan the QR code with Telegram on your phone. Your chats and channels appear with their videos as tiles, and a video starts within seconds while it keeps downloading. It is a player for the videos in your chats, so messages stay on your phone."
+        "text": "Yes. Telegram has no app for televisions, but TMPlayer runs on Android TV and Google TV with Android 6.0 or above: a Chromecast with Google TV, a Mi TV Stick, an NVIDIA Shield or a television with Android TV built in. Install it with the free Downloader app by typing tmplayer.org/apk, open it and scan the QR code with Telegram on your phone. Your chats and channels appear with their videos as tiles, and a video starts within seconds while it keeps downloading. It is a player for the videos in your chats, so messages stay on your phone."
       }
     },
     {
@@ -25,7 +25,7 @@ export const faqLd = {
       "name": "Is there a Telegram app for Fire TV Stick?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Not from Telegram: Amazon's store has no Telegram app for Fire TV. TMPlayer plays the videos in your Telegram chats on a Fire TV Stick, Fire TV Cube or Fire TV Edition television with Fire OS 7 or newer. It is installed with the free Downloader app and the remote: turn on Developer options, let Downloader install apps, type tmplayer.org/apk into it and install. Then open TMPlayer and scan its QR code with Telegram on your phone. It is tested on a stick with 1 GB of RAM, and it offers its own updates, so Downloader is only needed once."
+        "text": "Not from Telegram: Amazon's store has no Telegram app for Fire TV. TMPlayer plays the videos in your Telegram chats on a Fire TV Stick, Fire TV Cube or Fire TV Edition television with Fire OS 6 or newer. It is installed with the free Downloader app and the remote: turn on Developer options, let Downloader install apps, type tmplayer.org/apk into it and install. Then open TMPlayer and scan its QR code with Telegram on your phone. It is tested on a stick with 1 GB of RAM, and it offers its own updates, so Downloader is only needed once."
       }
     },
     {

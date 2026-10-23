@@ -10,7 +10,7 @@
 
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" />
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Android%208.0%2B%20(TV%20and%20phone)-3ddc84" />
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Android%206.0%2B%20(TV%20and%20phone)-3ddc84" />
   <img alt="Desktop" src="https://img.shields.io/badge/desktop-Windows%20%7C%20macOS%20%7C%20Linux-0078d4" />
   <img alt="Tests" src="https://img.shields.io/badge/tests-209%20passing-brightgreen" />
 </p>
@@ -46,7 +46,7 @@ No messages, no server, no account except yours.
 
 ## Runs on
 
-- **Android 8.0 and up**, TV and phone from the same APK. It was built and tested on an 8 GB TV
+- **Android 6.0 and up**, TV and phone from the same APK. It was built and tested on an 8 GB TV
   stick with a gigabyte of RAM, so a cheap device is the target.
 - **Windows 10 and 11**, 64-bit, as an MSI installer.
 - **Linux**, 64-bit x86 with glibc 2.38 or newer, as an AppImage, with an Arch PKGBUILD in

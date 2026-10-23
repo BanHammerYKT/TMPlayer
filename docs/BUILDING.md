@@ -7,7 +7,7 @@ fetches missing SDK packages itself when the licences are accepted). JDK 17 is t
 and AGP 9 will run on and still builds the Android app, but the desktop app needs 21, so 21 is the
 one to install. Newer JDKs are not supported by the build yet: JDK 25 fails, so point
 `JAVA_HOME` (or Android Studio's Gradle JDK) at a 21. Any recent Android Studio works, but the project builds
-fine from the command line. The Android app runs on API 26 and up; the desktop app on Windows 10
+fine from the command line. The Android app runs on API 23 and up; the desktop app on Windows 10
 and 11 and on 64-bit Linux.
 
 ## Telegram credentials
