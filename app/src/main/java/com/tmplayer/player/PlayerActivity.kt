@@ -535,7 +535,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val format = video.first().getTrackFormat(0)
         Log.w("TMPlayer", "No decoder for the picture: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
         player?.pause()
-        showError(if (format.height >= UHD_HEIGHT) L.playerErrorUhd(format.height.toString()) else L.playerErrorFormat, retryable = false)
+        val lines = nominalLines(format.width, format.height)
+        showError(if (lines >= UHD_HEIGHT) L.playerErrorUhd(lines.toString()) else L.playerErrorFormat, retryable = false)
         return true
     }
 
@@ -2664,6 +2665,30 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 )
             }
 
+            /**
+             * The video renderers as built, with the device's decoder judged by the picture's size
+             * rather than the level its file claims. See [LevelLenientVideoRenderer].
+             */
+            override fun buildVideoRenderers(
+                context: Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                eventHandler: android.os.Handler,
+                eventListener: androidx.media3.exoplayer.video.VideoRendererEventListener,
+                allowedVideoJoiningTimeMs: Long,
+                out: ArrayList<Renderer>,
+            ) {
+                val built = ArrayList<Renderer>()
+                super.buildVideoRenderers(
+                    context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback,
+                    eventHandler, eventListener, allowedVideoJoiningTimeMs, built,
+                )
+                built.mapTo(out) {
+                    if (it is androidx.media3.exoplayer.video.MediaCodecVideoRenderer) LevelLenientVideoRenderer(it) else it
+                }
+            }
+
             /** Media3's own text renderers, each behind the subtitle delay. See [DelayedTextRenderer]. */
             override fun buildTextRenderers(
                 context: Context,
@@ -3615,11 +3640,16 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * put "Something went wrong" on the screen. No retry helps, and the sentence should say why.
      */
     private fun tooLargeForDecoder(error: PlaybackException): Boolean =
-        error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && failedHeight(error) >= UHD_HEIGHT
+        error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && failedLines(error) >= UHD_HEIGHT
 
-    /** The video's height: what played, or what the failing renderer was handed when nothing did. */
-    private fun failedHeight(error: PlaybackException): Int =
-        maxOf(videoHeight, (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat?.height ?: 0)
+    /**
+     * The video's size as people name it (1080, 2160): what played, or what the failing renderer
+     * was handed when nothing did. See [nominalLines].
+     */
+    private fun failedLines(error: PlaybackException): Int {
+        val format = (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+        return maxOf(nominalLines(videoWidth, videoHeight), nominalLines(format?.width ?: 0, format?.height ?: 0))
+    }
 
     /**
      * Whether retrying is worth anything.
@@ -3690,8 +3720,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // A remux with a single video track bypasses the selector's viewport constraints, so a
             // 4K stream reaches a decoder built for 1080p. Naming the resolution matters: "a
             // different copy may work" sends somebody looking for a bad file, not a smaller one.
-            if (failedHeight(error) >= UHD_HEIGHT) {
-                L.playerErrorUhd(failedHeight(error).toString())
+            if (failedLines(error) >= UHD_HEIGHT) {
+                L.playerErrorUhd(failedLines(error).toString())
             } else {
                 L.playerErrorFormat
             }
@@ -7752,6 +7782,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** Anything at or above this is 4K territory, where a stick's decoder gives up. */
         private const val UHD_HEIGHT = 1600
+
+        /**
+         * The height a picture would have at 16:9, so a 4K film cropped to 3840x1606 counts (and
+         * is named) as 2160 rather than slipping under [UHD_HEIGHT] or reading as "1606p".
+         */
+        internal fun nominalLines(width: Int, height: Int): Int =
+            if (width <= 0 || height <= 0) maxOf(height, 0) else maxOf(height, width * 9 / 16)
 
         /** Android's own limits on a picture-in-picture window's shape. */
         private const val PIP_MIN_RATIO = 1f / 2.39f
