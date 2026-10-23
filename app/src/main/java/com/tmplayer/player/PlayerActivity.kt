@@ -3599,13 +3599,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun isHopeless(error: PlaybackException): Boolean = when (error.errorCode) {
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
         PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
         -> true
 
-        else -> false
+        else -> tooLargeForDecoder(error)
     }
+
+    /**
+     * A 4K video the device's decoder gave up on part way. A 1080p television's decoder (the Mi
+     * TV's Amlogic among them) says it cannot do 3840x2160, is used anyway because it is the only
+     * one that knows the codec, and fails at its first frame with a bare decoding error, which
+     * put "Something went wrong" on the screen. No retry helps, and the sentence should say why.
+     */
+    private fun tooLargeForDecoder(error: PlaybackException): Boolean =
+        error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && failedHeight(error) >= UHD_HEIGHT
+
+    /** The video's height: what played, or what the failing renderer was handed when nothing did. */
+    private fun failedHeight(error: PlaybackException): Int =
+        maxOf(videoHeight, (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat?.height ?: 0)
 
     /**
      * Whether retrying is worth anything.
@@ -3669,13 +3683,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             L.playerErrorConnection
 
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED.takeIf { tooLargeForDecoder(error) },
         ->
             // A remux with a single video track bypasses the selector's viewport constraints, so a
             // 4K stream reaches a decoder built for 1080p. Naming the resolution matters: "a
             // different copy may work" sends somebody looking for a bad file, not a smaller one.
-            if (videoHeight >= UHD_HEIGHT) {
-                L.playerErrorUhd(videoHeight.toString())
+            if (failedHeight(error) >= UHD_HEIGHT) {
+                L.playerErrorUhd(failedHeight(error).toString())
             } else {
                 L.playerErrorFormat
             }

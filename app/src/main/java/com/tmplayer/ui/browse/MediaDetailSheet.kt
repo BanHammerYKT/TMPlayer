@@ -249,13 +249,16 @@ internal fun MediaDetailOpened(
     val free = DiskInfo.freeLabel(freeBytes)
     val rows = actions.map { action ->
         val run: () -> Unit = when (action) {
-            DetailAction.Resume, DetailAction.Play -> { { onDismiss(); onPlay() } }
+            // The page stays under the player, so Back from the video (or from a video that would
+            // not play) comes back to it, as a streaming app's title page does; it closed before,
+            // and the viewer landed on the list they had opened it from. The hold menu still goes.
+            DetailAction.Resume, DetailAction.Play -> { { if (asMenu) onDismiss(); onPlay() } }
             // The saved position goes first, so the player opening a moment later finds nothing
             // to resume from.
             DetailAction.StartOver -> { {
                 scope.launch {
                     runCatching { settings.clearResumePosition(item.chatId, item.messageId, item) }
-                    onDismiss()
+                    if (asMenu) onDismiss()
                     onPlay()
                 }
             } }
