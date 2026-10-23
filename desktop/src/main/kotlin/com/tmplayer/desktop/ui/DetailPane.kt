@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.unit.Dp
 import com.tmplayer.ui.theme.Tone
+import com.tmplayer.ui.browse.tookFocus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -114,7 +115,7 @@ fun BoxScope.DetailPaneHost(state: ShellState) {
             Modifier
                 .fillMaxSize()
                 .background(FloatingTone.scrim)
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.closeDetail() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.closeAllDetails() },
         )
     }
     BoxWithConstraints(Modifier.matchParentSize()) {
@@ -196,13 +197,20 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
     val point = progress[key]
     val finished = key in watchedList
     val record = history.firstOrNull { it.chatId == item.chatId && it.messageId == item.messageId }
-    val queued = downloads[item.fileId]?.busy == true
+    // Another copy of the same film kept, or coming down, counts as well: the film is here (or
+    // on its way), and a second size of it is not what anybody asked for.
+    val otherCopies = item.versions.filter { it.id != item.id }
+    val copyKept = record == null && otherCopies.any { copy -> history.any { it.chatId == copy.chatId && it.messageId == copy.messageId } }
+    val coming = downloads[item.fileId]?.takeIf { it.busy }
+        ?: otherCopies.firstNotNullOfOrNull { copy -> downloads[copy.fileId]?.takeIf { it.busy } }
+    val queued = coming != null
     val title = request.chatTitle.ifBlank { state.chatTitleOf(item.chatId) }
     val chat = state.chatOf(item.chatId)
     val free by produceState(0L, item.id) {
         value = withContext(Dispatchers.IO) { DiskInfo.of(DesktopPaths.downloadsDir).freeBytes }
     }
     val first = remember(item.id) { FocusRequester() }
+    val back = state.detailReturn
     val bookmarks by remember(item.chatId, item.messageId) {
         state.bookmarks?.bookmarks(item.chatId, item.messageId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
     }.collectAsState(initial = emptyList())
@@ -220,6 +228,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             finished = finished,
             watchLater = key in laterKeys,
             inDownloads = record != null,
+            copyInDownloads = copyKept,
             cached = item.onDevice,
             downloading = queued,
             canSelect = request.selectThis != null,
@@ -262,14 +271,32 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             commentsOpen = true
             return
         }
-        close()
+        // The pane stays open for these: the button turns into the download's state (the ring,
+        // then Downloaded) where the viewer is looking, and the keyboard's focus stays on it.
+        // Closing it here sent the viewer back to the page behind for no reason.
         when (action) {
-            DetailAction.Resume, DetailAction.Play -> state.openPlayer(item, startFromBeginning = false)
-            DetailAction.StartOver -> state.openPlayer(item, startFromBeginning = true)
+            DetailAction.Download, DetailAction.SaveToDownloads -> {
+                // The queue ignores a second press on a file already coming down.
+                OfflineDownloads.start(state.downloads, item, title)
+                return
+            }
+            DetailAction.CancelDownload -> {
+                OfflineDownloads.cancel(state.downloads, coming?.fileId ?: item.fileId)
+                return
+            }
+            // The player puts the pane away and brings it back when it closes (see
+            // ShellState.openPlayer), so leaving the video lands here, not on the page behind.
+            DetailAction.Resume, DetailAction.Play, DetailAction.StartOver -> {
+                state.openPlayer(item, startFromBeginning = action == DetailAction.StartOver)
+                return
+            }
+            // These turn over in place: closing the pane for them sent the viewer back to the page
+            // for a change they could have seen right here.
             DetailAction.MarkWatched, DetailAction.MarkUnwatched -> {
                 val mark = action == DetailAction.MarkWatched
-                // Not said: the tick on the card shows it.
+                // Not said: the button and the tick on the card show it.
                 outlives.launch { runCatching { setWatched(state.watched, state.settings, item, title, mark) } }
+                return
             }
             DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> {
                 val add = action == DetailAction.AddWatchLater
@@ -277,12 +304,22 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                     runCatching { setWatchLater(state.watched, item, title, add) }
                     toast(if (add) s.detailWatchLaterAdded(item.title) else s.detailWatchLaterRemoved(item.title))
                 }
+                return
             }
-            // Not said: the card shows the queue's state, and the Downloads button its count.
-            DetailAction.Download, DetailAction.SaveToDownloads -> OfflineDownloads.start(state.downloads, item, title)
+            else -> Unit
+        }
+        // The link, the hand off and the copy say how they went in a toast over the pane, which
+        // stays; the rest are done with it, or take the viewer somewhere else.
+        val staysOpen = action == DetailAction.OpenElsewhere || action == DetailAction.CopyLink || action == DetailAction.ExportCopy
+        if (!staysOpen) close()
+        when (action) {
+            // Handled above, with the pane left open.
+            DetailAction.Resume, DetailAction.Play, DetailAction.StartOver -> Unit
+            DetailAction.MarkWatched, DetailAction.MarkUnwatched -> Unit
+            DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> Unit
+            DetailAction.Download, DetailAction.SaveToDownloads, DetailAction.CancelDownload -> Unit
             DetailAction.InDownloads -> state.go(Destination.Downloads)
             DetailAction.RemoveDownload -> Unit
-            DetailAction.CancelDownload -> OfflineDownloads.cancel(state.downloads, item.fileId)
             DetailAction.SelectVideos -> request.selectThis?.invoke()
             DetailAction.Share -> Unit
             DetailAction.OpenElsewhere -> outlives.launch {
@@ -349,13 +386,14 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             // The desktop's own copy goes to a folder, not a gallery.
             .let { if (it.action == DetailAction.ExportCopy) it.copy(label = s.keepExportFolder, detail = s.keepExportFolderDetail, icon = TmIcons.Folder) else it }
         // The desktop's own words where it has them: the queue lives on the Downloads page.
-        if (action == DetailAction.CancelDownload) row.copy(label = s.downloadsCancel) else row
+        // and the ring round the button fills as the download comes down.
+        if (action == DetailAction.CancelDownload) row.copy(label = s.downloadsCancel, progress = coming?.fraction ?: 0f) else row
     }
 
     Box(Modifier.fillMaxSize()) {
         // A film posted more than once opens on the copy that would play, and a copy chosen from
         // its list is remembered for the video before the pane turns to it.
-        fun turnTo(copy: MediaItem) = state.openDetail(
+        fun turnTo(copy: MediaItem) = state.turnDetail(
             DetailRequest(copy, state.chatTitleOf(copy.chatId).ifBlank { request.chatTitle }, request.outsideChat, request.selectThis, request.onClosed),
         )
         LaunchedEffect(item.id) {
@@ -363,8 +401,10 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             val pick = runCatching { state.settings.copyToPlay(item) }.getOrNull() ?: return@LaunchedEffect
             if (pick.id != item.id) turnTo(pick)
         }
-        // Keyed by the video, so "More like this" opening another starts it at the top.
+        // Keyed by the video, so "More like this" opening another starts it at the top, and the
+        // one Back comes down to starts afresh, its focus on the poster it was left by.
         androidx.compose.runtime.key(item.id) {
+            androidx.compose.runtime.CompositionLocalProvider(com.tmplayer.ui.browse.LocalDetailReturn provides back) {
             WideDetailPanel(
                 item = item,
                 chatTitle = title,
@@ -373,13 +413,14 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                 rows = rows,
                 onClose = { close() },
                 firstAction = first,
+                // Over this pane, so Esc or Back comes back to it.
                 onOpenItem = { other ->
-                    state.openDetail(DetailRequest(other, state.chatTitleOf(other.chatId), outsideChat = true, onClosed = request.onClosed))
+                    state.pushDetail(DetailRequest(other, state.chatTitleOf(other.chatId), outsideChat = true, onClosed = request.onClosed))
                 },
                 bookmarks = bookmarks,
                 // The player takes the position on opening this video, in place of its resume point.
                 onOpenBookmark = { mark ->
-                    close()
+                    // The pane comes back when the player closes, as it does for Play.
                     BookmarkJump.request(item.chatId, item.messageId, mark.positionMs)
                     state.openPlayer(item, startFromBeginning = false)
                 },
@@ -391,11 +432,14 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                 },
                 copyStarted = { SettingsStore.progressKey(it.chatId, it.messageId) in progress },
             )
+            }
         }
     }
     // Play takes focus once it is placed: the sheet lays its page out to its own size, so Play
-    // is composed a frame after this effect starts, and a request before then is lost.
+    // is composed a frame after this effect starts, and a request before then is lost. Back from
+    // a video opened by "More like this" leaves it to the poster that opened it.
     LaunchedEffect(item.id) {
+        if (back.tookFocus()) return@LaunchedEffect
         repeat(FOCUS_TRIES) {
             androidx.compose.runtime.withFrameNanos { }
             if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect
@@ -411,7 +455,9 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             list = list,
             empty = s.detailCommentsNone,
             round = false,
-            onPlay = { video -> close(); com.tmplayer.ui.browse.LinkRequests.play(video) },
+            // The pane stays open until the player takes it away, so it comes back when the video
+            // closes (or stays, should the video be refused).
+            onPlay = { video -> com.tmplayer.ui.browse.LinkRequests.play(video) },
             onDismiss = { commentsOpen = false },
         )
     }

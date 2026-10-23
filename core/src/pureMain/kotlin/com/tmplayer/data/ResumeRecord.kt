@@ -1,5 +1,7 @@
 package com.tmplayer.data
 
+import kotlin.concurrent.Volatile
+
 /**
  * A video the viewer stopped part way through, with enough detail to start it again.
  *
@@ -42,7 +44,15 @@ data class ResumeRecord(
     val remainingMs: Long
         get() = if (durationMs <= 0) 0L else (durationMs - positionMs).coerceAtLeast(0L)
 
-    fun toMediaItem(): MediaItem = MediaItem(
+    /**
+     * The video this record stands for, made once and kept: what is read off its name (the copy
+     * and film keys Continue watching folds by) is kept on that item, so it is read once too.
+     */
+    fun toMediaItem(): MediaItem = item ?: makeItem().also { item = it }
+
+    @Volatile private var item: MediaItem? = null
+
+    private fun makeItem(): MediaItem = MediaItem(
         chatId = chatId,
         messageId = messageId,
         fileId = fileId,

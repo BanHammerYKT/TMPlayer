@@ -7,12 +7,16 @@ exist at all). Every build is on the [Releases](../../releases) page, and the
 - [Android TV and Google TV](#on-android-tv-or-google-tv): the free Downloader app and the remote
 - [Android phones](#on-an-android-phone): download the APK and open it
 - [Windows](#windows): one line in PowerShell, or the MSI installer
+- [macOS](#macos): the DMG, on Apple Silicon
 - [Linux](#linux): the AppImage, or the PKGBUILD on Arch
 - [Moving from the deb, rpm, Flatpak or Windows zip](#moving-from-a-format-that-is-no-longer-published)
 - [Desktop, menu and taskbar shortcuts](#putting-it-on-the-desktop-in-the-menu-and-on-the-taskbar)
 - [The desktop keyboard](#using-the-keyboard-and-mouse)
 
 # Installing TMPlayer on Android
+
+One APK runs on phones, tablets and TVs with **Android 6.0 or newer**, and on a Fire TV from
+**Fire OS 6**.
 
 ## On Android TV or Google TV
 
@@ -163,8 +167,8 @@ the bottom, or under **Settings → Apps → See all apps**.
 
 # Installing TMPlayer on a computer
 
-The desktop app runs on **Windows 10 and 11 (64-bit)**, on **64-bit x86 Linux**, and, as a preview
-from 1.26.0, on **Apple Silicon Macs with macOS 26 or newer**. It signs in
+The desktop app runs on **Windows 10 and 11 (64-bit)**, on **64-bit x86 Linux**, and on
+**Apple Silicon Macs with macOS 26 or newer**. It signs in
 to the same Telegram account, shows the same library and streams the same way as the Android app,
 played through mpv, which is bundled: there is nothing to install beside it.
 
@@ -173,7 +177,7 @@ Every file is on the same GitHub release as the APK:
 | File | For |
 | --- | --- |
 | `TMPlayer-<version>-windows-x64.msi` | Windows installer, per user, no administrator needed |
-| `TMPlayer-<version>-macos-arm64.dmg` | macOS 26 or newer on Apple Silicon (M1 and later), a preview |
+| `TMPlayer-<version>-macos-arm64.dmg` | macOS 26 or newer on Apple Silicon (M1 and later) |
 | `TMPlayer-<version>-x86_64.AppImage` | Linux, any distribution, one file |
 | `TMPlayer-<version>-x86_64.AppImage.zsync` | Not a download: lets AppImage updaters fetch only what changed |
 | `TMPlayer-<version>-linux-x64.tar.xz` | The plain app folder, which the Arch PKGBUILD builds from |
@@ -212,7 +216,7 @@ apps**.
 
 ## macOS
 
-A preview, from 1.26.0: **Apple Silicon only** (M1 and later), and **macOS 26 Tahoe or newer**,
+**Apple Silicon only** (M1 and later), and **macOS 26 Tahoe or newer**,
 because the Telegram library TMPlayer is built on needs it. Intel Macs are not supported. An older
 macOS says the app needs a newer version and does not open.
 
@@ -231,10 +235,6 @@ A newer version is announced inside the app, which opens the release page: downl
 and drag it over the old copy in Applications. Your sign in, history and downloads live in your
 user Library and are kept. To remove TMPlayer, drag it from Applications to the Bin; its data is in
 `~/Library/Application Support/TMPlayer` and `~/Library/Caches/TMPlayer`.
-
-This is the least tested build: the release job builds it on a macOS 26 runner and proves Telegram
-and mpv load, but playback, fullscreen and the keyboard have not been tried on a real Mac yet.
-Reports are welcome on the [issues page](https://github.com/dracu-lah/TMPlayer/issues).
 
 ## Linux
 
@@ -361,7 +361,7 @@ for a newer release (Settings, Updates turns that off or checks now). It reads
 `tmplayer.org/latest.json` and asks GitHub only when the site cannot be reached. When a newer
 version is out, an amber **Update** item with the version beside it appears at the bottom of the
 side bar (on the narrow rail, the version sits on the icon). It stays until the new version is
-installed or you skip it, and clicking it opens a popup: **TMPlayer 1.20.0 is out**, with what is
+installed or you skip it, and clicking it opens a popup: **TMPlayer `<version>` is out**, with what is
 new and three buttons, **Update now**, **Remind me later** and **Skip this version**. The popup
 also opens by itself once per version, never while a video plays. **Remind me later** keeps the
 item and brings the popup back a day later; **Skip this version** hides both until a newer one.
@@ -529,18 +529,3 @@ Start it with `_JAVA_AWT_WM_NONREPARENTING=1` set in the environment.
 
 **A build you made yourself never shows a QR code.** It was built without `TG_API_ID` /
 `TG_API_HASH` in `local.properties`. See [docs/BUILDING.md](docs/BUILDING.md).
-
-## Known gaps
-
-**Fullscreen on Windows 11 has not been checked by hand yet.** Going fullscreen from a maximized
-window used to leave the window under the taskbar on the way back. The fix is checked on every
-push on a Windows Server runner (one monitor, no Windows 11 taskbar), so the cases below still
-want someone with Windows 11 to try them and tick them off:
-
-- [ ] Maximized, **F**, **F**: the window comes back maximized, with the taskbar visible below it.
-- [ ] Not maximized, **F**, **F**: the window comes back to the same size and place.
-- [ ] The same two with the taskbar at the top, and on the left.
-- [ ] With the taskbar set to hide automatically, it still pops up over the restored window.
-- [ ] A second monitor at a different scale: fullscreen fills that monitor, and back lands there.
-- [ ] **Win+Up** while fullscreen does not leave fullscreen half way; **F** then comes back maximized.
-- [ ] Minimize from the taskbar while fullscreen, then restore: still fullscreen, and **F** comes back as before.

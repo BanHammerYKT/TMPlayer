@@ -6,7 +6,7 @@ later version (GPL-3.0-or-later), with the additional permission for OpenSSL in
 components below. Their copyrights remain with their respective authors, and their licence terms
 continue to apply.
 
-The Android app (phone and TV) and the desktop app (Windows and Linux) ship different components,
+The Android app (phone and TV) and the desktop app (Windows, Linux and macOS) ship different components,
 so each has its own section. Libraries both use are listed once, under "Shared".
 
 ## Android
@@ -72,8 +72,14 @@ additional permission to be combined with it; see
   published on GitHub only: the F-Droid build is made without it and has no Cast button. Google's
   own terms: <https://developers.google.com/terms>, with the Android Software Development Kit
   License for the Play services libraries: <https://developer.android.com/studio/terms>
+- Google Play services Auth API Phone 18.1.0 (SMS User Consent, which offers the sign in code from
+  an SMS after the viewer allows it), in the APKs published on GitHub only, like the Cast
+  framework above, and under the same Google terms
+- Android desugared library (`desugar_jdk_libs_nio`) 2.1.5, which brings newer Java APIs to
+  Android 6 and 7: GNU General Public License version 2 with the Classpath Exception:
+  <https://github.com/google/desugar_jdk_libs>
 
-## Desktop (Windows and Linux)
+## Desktop (Windows, Linux and macOS)
 
 ### mediamp 0.5.2 and its mpv runtime
 
@@ -180,7 +186,7 @@ source at <https://github.com/adoptium/jdk21u>.
   <https://github.com/hypfvieh/dbus-java>
 - FileKit 0.16.0: MIT: <https://github.com/vinceglb/FileKit>
 - AppDirs 1.4.0: Apache License 2.0: <https://github.com/harawata/appdirs>
-- SLF4J 2.0.17 (no-operation binding): MIT: <https://github.com/qos-ch/slf4j>
+- SLF4J 2.0.20 (no-operation binding): MIT: <https://github.com/qos-ch/slf4j>
 - Sentry Java SDK 8.61.0 (crash reports, off until turned on, see the privacy page): MIT:
   <https://github.com/getsentry/sentry-java>
 
@@ -266,7 +272,7 @@ under permissive licences. The OpenSSL each platform links is listed in its own 
 
 - Kotlin standard library, kotlinx.coroutines and kotlinx.serialization: Apache License 2.0:
   <https://github.com/JetBrains/kotlin> and <https://github.com/Kotlin/kotlinx.coroutines>
-- ZXing Core 3.5.3: Apache License 2.0: <https://github.com/zxing/zxing/tree/zxing-3.5.3>
+- ZXing Core 3.5.4: Apache License 2.0: <https://github.com/zxing/zxing/tree/zxing-3.5.4>
 - JetBrains annotations: Apache License 2.0: <https://github.com/JetBrains/java-annotations>
 
 The Gradle wrapper scripts are provided under Apache License 2.0. Test-only dependencies are not

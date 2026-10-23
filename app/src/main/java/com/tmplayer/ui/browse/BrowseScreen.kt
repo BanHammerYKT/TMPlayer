@@ -284,6 +284,9 @@ internal fun BrowseScreen(
     onUpdate: () -> Unit = {},
     /** Home's rows, built by [com.tmplayer.data.HomeRows] from what has loaded so far. */
     homeRows: List<HomeRow> = emptyList(),
+    homeRowsReady: Boolean = true,
+    /** The carousel at the top of Home, which Settings can turn off. */
+    homeCarousel: Boolean = true,
     /** Continue watching videos as Telegram describes them, by progress key, for their pictures. */
     homeArt: Map<String, MediaItem> = emptyMap(),
     homeWatch: SeriesWatch = SeriesWatch.None,
@@ -294,7 +297,7 @@ internal fun BrowseScreen(
     /** A row came on screen without its videos: fetch them. */
     onHomeRowShown: (HomeRow) -> Unit = {},
     onHomeArtWanted: (ResumeRecord) -> Unit = {},
-    /** Movies and Shows read on through Home's chats as they are scrolled to their end. */
+    /** Recently added reads on through Home's chats as it is scrolled to its end. */
     homeFeedOf: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
     onHomeLaterArtWanted: (WatchLaterRecord) -> Unit = {},
     /** Plays a video from one of Home's rows; the second argument is its chat's name. */
@@ -357,8 +360,9 @@ internal fun BrowseScreen(
     var confirmClearHistory by remember { mutableStateOf(false) }
     var confirmClearWatched by remember { mutableStateOf(false) }
     var confirmClearFavorites by remember { mutableStateOf(false) }
-    // The video whose detail panel is open, with its chat's name, from Home or the search.
-    var detail by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }
+    // The video whose detail panel is open, with its chat's name, from Home or the search, over
+    // the pages "More like this" was taken from, so Back walks back through them.
+    val details = rememberDetailBackStack<Pair<MediaItem, String>>(itemOf = { it.first }, labelOf = { it.second }, rebuild = { item, chat -> item to chat })
     // The search across every chat (CP73): the phone's search page and the television's.
     val search: GlobalSearchViewModel = viewModel(
         key = "global-search",
@@ -385,7 +389,7 @@ internal fun BrowseScreen(
     // A hold, the info key or a right click: the quick menu, which leads to the page by Details.
     var held by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }
     val holdMedia: (MediaItem, String) -> Unit = { item, title -> held = item to title }
-    val showDetail: (MediaItem, String) -> Unit = { item, title -> detail = item to title }
+    val showDetail: (MediaItem, String) -> Unit = { item, title -> details.open(item to title) }
     // A tap or OK on a video opens its page first, as a streaming app's title does, unless
     // Settings says to play at once; the page is then still a hold and Details away.
     val detailFirst by remember(panelContext) { SettingsStore(panelContext).detailFirst }.collectAsState(initial = true)
@@ -394,6 +398,11 @@ internal fun BrowseScreen(
         if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onResumeMedia
     val openLater: (WatchLaterRecord) -> Unit =
         if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onOpenWatchLater
+    // The Watched list follows the same rule as Continue watching: OK on a row opened the
+    // player at once while a Continue row opened the page, so the two lists of History answered
+    // the same press differently (user, 2026-10-23). Play again stays in the hold menu.
+    val openWatched: (WatchedRecord) -> Unit =
+        if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onOpenWatched
 
     // The chips over Chats and History, remembered across launches like the card layout.
     val browseSettings = remember(panelContext) { SettingsStore(panelContext) }
@@ -543,6 +552,8 @@ internal fun BrowseScreen(
                         Box(Modifier.fillMaxSize()) {
                             HomePane(
                                 rows = homeRows,
+                                rowsReady = homeRowsReady,
+                                carouselOn = homeCarousel,
                                 watch = homeWatch,
                                 art = homeArt,
                                 chatTitle = { titles[it].orEmpty() },
@@ -564,8 +575,10 @@ internal fun BrowseScreen(
                                     query = ""
                                 },
                                 onOpenChat = { id -> data.chats.firstOrNull { it.id == id }?.let(onOpenChat) },
-                                // Only while Home found no chat with videos of its own to fill itself from.
-                                noFavourites = favorites.isEmpty() && homeRows.none { it is HomeRow.Chat || it is HomeRow.Across },
+                                // Starred chats get a row each under Recently added (2026-10-23), so
+                                // with none the hint says how to add them; only once the rows are
+                                // built, since it flashed up while they were still coming in.
+                                noFavourites = favorites.isEmpty() && homeRowsReady,
                                 onOpenSection = { onPickTab(it); query = "" },
                                 onOpenWatchLater = openLater,
                                 onLaterArtWanted = onHomeLaterArtWanted,
@@ -637,6 +650,7 @@ internal fun BrowseScreen(
                                     tiles = tiles,
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
+                                    pageOpen = details.top != null,
                                     text = { it.cardText() },
                                     onResume = openResume,
                                     onHold = { mediaMenu = it },
@@ -656,6 +670,7 @@ internal fun BrowseScreen(
                                     tiles = tiles,
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
+                                    pageOpen = details.top != null,
                                     onResume = openLater,
                                     onHold = { laterMenu = it },
                                 )
@@ -677,7 +692,8 @@ internal fun BrowseScreen(
                                     tiles = tiles,
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
-                                    onResume = onOpenWatched,
+                                    pageOpen = details.top != null,
+                                    onResume = openWatched,
                                     onHold = { watchedMenu = it },
                                     dayOf = { it.watchedAt },
                                     dayText = { record, day -> record.cardText(now, day) },
@@ -773,10 +789,12 @@ internal fun BrowseScreen(
                 onOpenChat = chatsNow.firstOrNull { it.id == item.chatId }?.let { chat -> { onOpenChat(chat) } },
                 onDismiss = { held = null },
                 asMenu = true,
-                onOpenDetails = { detail = item to title },
+                onOpenDetails = { details.open(item to title) },
             )
         }
-        detail?.let { (item, title) ->
+        details.top?.let { entry ->
+            val (item, title) = entry.page
+            fun titled(other: MediaItem) = other to (chatsNow.firstOrNull { it.id == other.chatId }?.title ?: "")
             MediaDetailOpened(
                 item = item,
                 chatTitle = title,
@@ -790,8 +808,11 @@ internal fun BrowseScreen(
                     }
                 },
                 onOpenChat = chatsNow.firstOrNull { it.id == item.chatId }?.let { chat -> { onOpenChat(chat) } },
-                onDismiss = { detail = null },
-                onOpenItem = { other -> detail = other to (chatsNow.firstOrNull { it.id == other.chatId }?.title ?: "") },
+                onDismiss = { details.clear() },
+                onOpenItem = { other -> details.push(titled(other)) },
+                onTurnTo = { other -> details.turn(titled(other)) },
+                onBack = if (details.canGoBack) ({ details.back() }) else null,
+                returnTo = entry.returnTo,
             )
         }
     }
@@ -875,7 +896,6 @@ internal fun BrowseScreen(
             onOpenSettings = onOpenSettings,
             onUpdate = onUpdate,
             search = search,
-            searchState = searchState,
             chats = (state as? UiState.Content)?.value?.chats.orEmpty(),
             continueWatching = continuing,
             watchLater = watchLater,
@@ -1396,8 +1416,12 @@ private fun <T : Any> ContinueSection(
     dayText: ((T, DayGroup) -> VideoCardText)? = null,
     /** Listed A to Z: the fast scroller's bubble gives the letter rather than the day. */
     byName: Boolean = false,
+    /** A video's page is up over the list: once it closes, the remote goes back to its card. */
+    pageOpen: Boolean = false,
 ) {
     val first = remember { FocusRequester() }
+    // The card a page was opened from, which the remote goes back to when the page closes.
+    val tileReturn = rememberTileReturn()
     val now = remember(records) { System.currentTimeMillis() }
     val days = remember(records, dayOf != null) { dayOf?.let { DayGroup.headings(records, it, now) } }
     val sections: List<Pair<DayGroup?, List<T>>> = days ?: listOf(null to records)
@@ -1412,7 +1436,12 @@ private fun <T : Any> ContinueSection(
     val standIn: T? = if (heldGone) records.getOrNull(minOf(held!!.second, records.lastIndex)) else null
     val holdThis: (T) -> Unit = { record ->
         held = text(record).key to records.indexOf(record)
+        tileReturn.open(text(record).key)
         onHold(record)
+    }
+    val resumeThis: (T) -> Unit = { record ->
+        tileReturn.open(text(record).key)
+        onResume(record)
     }
     // Only the first card asks for focus, and which card that is does not change with the
     // arrangement, so the two branches can share one modifier.
@@ -1431,7 +1460,7 @@ private fun <T : Any> ContinueSection(
         bottom = insets.bottom,
     )
 
-    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState(column = true)
     val gridState = com.tmplayer.ui.components.rememberAheadGridState()
     Box(Modifier.fillMaxSize()) {
         when (layout) {
@@ -1454,9 +1483,9 @@ private fun <T : Any> ContinueSection(
                         chatTitle = card.chatTitle,
                         fraction = card.fraction,
                         finished = card.fraction >= 1f,
-                        onClick = { onResume(record) },
+                        onClick = { resumeThis(record) },
                         onHold = { holdThis(record) },
-                        modifier = focusOf(record),
+                        modifier = focusOf(record).returnTile(tileReturn, text(record).key),
                     )
                 }
                 }
@@ -1475,9 +1504,9 @@ private fun <T : Any> ContinueSection(
                 gridItems(members, key = { text(it).key }) { record ->
                     ContinueTile(
                         text = cardOf(record, day),
-                        onResume = { onResume(record) },
+                        onResume = { resumeThis(record) },
                         onHold = { holdThis(record) },
-                        modifier = focusOf(record),
+                        modifier = focusOf(record).returnTile(tileReturn, text(record).key),
                     )
                 }
                 }
@@ -1511,6 +1540,27 @@ private fun <T : Any> ContinueSection(
     // list from scratch, and the card that was holding focus leaves the composition with it.
     LaunchedEffect(records.firstOrNull()?.let { text(it).key }, layout, autoFocus) {
         if (autoFocus && mayTakeFocus()) runCatching { first.requestFocus() }
+    }
+    // Back from a video's page, the remote lands on the card it was opened from, scrolled back
+    // to where the list went while the page was up. Its lazy index counts the day headings.
+    ReturnToTile(tileReturn, pageOpen) { key ->
+        var index = 0
+        var found = -1
+        for ((day, members) in sections) {
+            if (day != null) index++
+            val at = members.indexOfFirst { text(it).key == key }
+            if (at >= 0) {
+                found = index + at
+                break
+            }
+            index += members.size
+        }
+        if (found < 0) return@ReturnToTile false
+        when (layout) {
+            CardLayout.List -> listState.scrollToItem(found)
+            CardLayout.Grid -> gridState.scrollToItem(found)
+        }
+        true
     }
     LaunchedEffect(standIn?.let { text(it).key }, heldGone) {
         if (!heldGone) return@LaunchedEffect
@@ -2220,7 +2270,7 @@ private fun ChatSection(
         else -> Modifier
     }
 
-    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState(column = true)
     val gridState = com.tmplayer.ui.components.rememberAheadGridState()
     // Telegram's older chats read as the end of the list comes near, a screen ahead.
     val readMore = paging.more && !paging.loading && paging.failure == null

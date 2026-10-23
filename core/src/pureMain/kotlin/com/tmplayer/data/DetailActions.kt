@@ -77,6 +77,11 @@ data class DetailContext(
     val watchLater: Boolean? = null,
     /** In the Downloads folder. */
     val inDownloads: Boolean = false,
+    /**
+     * Not this file but another copy of the same video is in the Downloads folder, so the video is
+     * kept already and a second size of it is not what anybody asked for.
+     */
+    val copyInDownloads: Boolean = false,
     /** Whole in the watch cache. */
     val cached: Boolean = false,
     /** On the download queue, at any stage. */
@@ -127,6 +132,8 @@ object DetailActions {
                 add(DetailAction.InDownloads)
                 add(DetailAction.RemoveDownload)
             }
+            // Said, not offered again. No Remove here: that copy's own page is where it goes.
+            context.copyInDownloads -> add(DetailAction.InDownloads)
             // Restricted: streaming only, no copy of its own for the viewer.
             !context.canBeSaved -> Unit
             context.cached -> add(DetailAction.SaveToDownloads)

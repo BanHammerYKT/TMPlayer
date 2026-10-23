@@ -43,7 +43,8 @@ class HomeViewModelCacheTest {
 
     @Test
     fun `playing another video moves the Cached badge to it`() = runTest(dispatcher) {
-        val model = HomeViewModel(source)
+        // The disk is read on the test's dispatcher, so advancing it runs the recheck too.
+        val model = HomeViewModel(source, disk = dispatcher)
         model.request(7)
         model.requestRecent()
         model.requestArt(

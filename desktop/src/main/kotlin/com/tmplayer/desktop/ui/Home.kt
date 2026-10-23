@@ -150,6 +150,7 @@ fun HomePage(state: ShellState, chats: ChatListViewModel) {
         return
     }
     HomeRowsView(
+        rowsReady = model.rowsSettled,
         state = state,
         rows = rows,
         chats = list,
@@ -158,7 +159,7 @@ fun HomePage(state: ShellState, chats: ChatListViewModel) {
             when (row) {
                 is HomeRow.Chat -> model.request(row.chatId)
                 is HomeRow.Recent -> model.requestRecent()
-                is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
+                is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
             }
         },
         onArtWanted = model::requestArt,
@@ -194,6 +195,8 @@ internal fun HomeRowsView(
     onLaterArtWanted: (WatchLaterRecord) -> Unit = {},
     /** A row's See all page read on through its chats ([HomeViewModel.seeAll]); null keeps it to what Home holds. */
     seeAll: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
+    /** False while the rows have not been built from an answer yet ([HomeViewModel.rowsSettled]). */
+    rowsReady: Boolean = true,
 ) {
     val s = LocalStrings.current
     var openSeries by remember { mutableStateOf<Series?>(null) }
@@ -239,14 +242,12 @@ internal fun HomeRowsView(
         rows.filterIsInstance<HomeRow.Chat>().filterNot { it.loaded }.forEach(onRowShown)
     }
     LaunchedEffect(continueRow?.records) { continueRow?.records?.forEach(onArtWanted) }
-    val featured = rememberFeatured(recentRow, continueRow, art)
-    // Every tile on Home has a picture of its own; "See all" still lists the whole row.
-    // Recently added stands as a row of its own only beside two starred chats or more: with one it
-    // would repeat that chat's row, and the carousel already shows it.
-    val shownRows = remember(rows, art) {
-        val recentAsRow = rows.count { it is HomeRow.Chat } >= HomeRows.RECENT_MIN_STARRED
-        rows.filter { recentAsRow || it !is HomeRow.Recent }.mapNotNull { HomeRows.withArt(it, art) }
-    }
+    // Settings can turn the carousel off: then nothing is picked or turned over for it either.
+    val carouselOn by state.settings.homeCarousel.collectAsState(initial = true)
+    val featured = rememberFeatured(recentRow.takeIf { carouselOn }, continueRow.takeIf { carouselOn }, art)
+    // Every tile on Home has a picture of its own; "See all" still lists the whole row. Recently
+    // added is a row too, under Continue watching, as well as the carousel (user, 2026-10-23).
+    val shownRows = remember(rows, art) { rows.mapNotNull { HomeRows.withArt(it, art) } }
     val watch = rememberSeriesWatch(state)
     // In line with the page header's title, whatever the window's width.
     val side = pageMargin()
@@ -257,6 +258,15 @@ internal fun HomeRowsView(
                 Box(Modifier.fillMaxWidth().height(TOP_DRAG).windowDrag()) {
                     HomeBrand(Modifier.align(Alignment.TopStart).padding(start = side, top = BRAND_TOP))
                 }
+                // Rows still being built off the main thread: the brand over a blank page, not the
+                // first run's card, which flashed up at every start for accounts full of videos.
+                // Given up after a while, so a first run without a connection still says what to do.
+                var waitedOut by remember { mutableStateOf(false) }
+                if (!rowsReady) LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(10_000)
+                    waitedOut = true
+                }
+                if (!rowsReady && !waitedOut) return@Column
                 // Nothing played and nothing starred: a first run, so say how to get a first video in:
                 // forward it to Saved Messages, which the button opens.
                 Box(
@@ -283,7 +293,7 @@ internal fun HomeRowsView(
                 ) {
                     // With nothing to feature, a strip the window can be dragged by stands in for it.
                     item(key = "featured", contentType = "featured") {
-                        if ((recentRow == null && continueRow == null) || featured?.isEmpty() == true) {
+                        if (!carouselOn || (recentRow == null && continueRow == null) || featured?.isEmpty() == true) {
                             // No carousel: the rows are the first screen, once one has had a moment to turn up.
                             LaunchedEffect(Unit) {
                                 kotlinx.coroutines.delay(1_500L)
@@ -353,7 +363,6 @@ internal fun HomeRowsView(
                                 }
                                 is HomeRow.Chat -> ShelfStrips(state, side, sizes, row.entries, { row.title }) { openSeries = it }
                                 is HomeRow.Recent -> ShelfStrips(state, side, sizes, row.entries, { titles[it].orEmpty() }) { openSeries = it }
-                                is HomeRow.Across -> ShelfStrips(state, side, sizes, row.entries, { titles[it].orEmpty() }) { openSeries = it }
                             }
                         }
                     }
@@ -435,7 +444,6 @@ private fun RowPage(
                     )
                     is HomeRow.Chat -> shelfSections(state, sizes, fedEntries ?: (row.entries + SeriesShelf.arrange(row.more)), { row.title }, onOpenSeries)
                     is HomeRow.Recent -> shelfSections(state, sizes, fedEntries ?: row.entries, { titles[it].orEmpty() }, onOpenSeries)
-                    is HomeRow.Across -> shelfSections(state, sizes, fedEntries ?: row.entries, { titles[it].orEmpty() }, onOpenSeries)
                 }
             }
             val list = com.tmplayer.ui.components.rememberAheadListState()
@@ -514,7 +522,8 @@ private fun RowHeading(title: String, count: String?, side: Dp, onSeeAll: (() ->
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (onSeeAll != null) SeeAllLink(if (count != null) "${s.homeSeeAll}  ·  $count" else s.homeSeeAll, onSeeAll)
+        // The words alone, no count (user, 2026-10-22: "just a see all button").
+        if (onSeeAll != null) SeeAllLink(s.homeSeeAll, onSeeAll)
     }
 }
 
@@ -643,7 +652,6 @@ private fun HomeRow.countLabel(s: com.tmplayer.i18n.Messages): String? {
         is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.Chat -> total
         is HomeRow.NewEpisodes -> episodes.size
         is HomeRow.Recent -> entries.size
-        is HomeRow.Across -> entries.size
     }
     if (count <= 0) return null
     return if (totalAtLeast) s.homeSeeAllCountAtLeast(count) else s.homeSeeAllCount(count)

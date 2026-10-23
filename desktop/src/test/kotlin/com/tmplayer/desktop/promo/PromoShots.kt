@@ -110,7 +110,7 @@ import java.nio.file.Files
  *
  * They become the README and site screenshots (`desktop-<shot>[-light].webp`) and the desktop
  * setup's pictures (`ui/src/jvmMain/resources/onboarding/`, cropped and marked from the `setup-*`
- * shots by `scripts/annotate-shot.py`), each converted to WebP at quality 88 as CLAUDE.md says. The sign in QR code encodes a made-up token that signs nobody in.
+ * shots by `scripts/annotate-shot.py`), each converted to WebP at quality 88 as AGENTS.md says. The sign in QR code encodes a made-up token that signs nobody in.
  */
 class PromoShots {
 

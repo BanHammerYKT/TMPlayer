@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.Role
@@ -240,7 +241,8 @@ fun WideDetailPanel(
                             listOfNotNull(
                                 (parsed.year ?: matchYear.takeIf { yearInFacts })?.let { Fact(it.toString()) },
                                 item.durationSec.takeIf { it > 0 }?.let { Fact(s.formatter.duration(it.toLong())) },
-                                facts.resolution?.let { Fact(it, chip = true) },
+                                // As the copy under Play names it ([VideoCopies.qualityLabel]).
+                                (com.tmplayer.data.VideoCopies.qualityLabel(item) ?: facts.resolution)?.let { Fact(it, chip = true) },
                                 item.sizeBytes.takeIf { it > 0 }?.let { Fact(com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(it))) },
                                 chatTitle.takeIf { it.isNotBlank() }?.let { Fact(it) },
                                 Fact(s.detailWatchedLine, accent = true).takeIf { finished },
@@ -279,7 +281,7 @@ fun WideDetailPanel(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            quick.forEach { WideIconAction(it.label, it.icon, it.onSelect, destructive = it.destructive, ghost = it.placeholder, waiting = it.placeholder && extrasComing) }
+                            quick.forEach { WideIconAction(it.label, it.icon, it.onSelect, destructive = it.destructive, progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && extrasComing) }
                         }
                     }
                     trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 4.dp)) }
@@ -348,8 +350,11 @@ fun WideDetailPanel(
     }
     // Play is composed once the first frame is drawn, which the caches may hold back a moment:
     // focus is asked for again then, so a held page still opens on Play.
+    // Back from a video opened from this page leaves the focus to the tile it was opened by.
+    val back = LocalDetailReturn.current
     androidx.compose.runtime.LaunchedEffect(item.id, firstPaint) {
         if (!firstPaint || firstAction == null) return@LaunchedEffect
+        if (back.tookFocus()) return@LaunchedEffect
         repeat(FOCUS_AFTER_HOLD_TRIES) {
             androidx.compose.runtime.withFrameNanos { }
             if (runCatching { firstAction.requestFocus() }.isSuccess) return@LaunchedEffect
@@ -375,6 +380,10 @@ internal fun WideIconAction(
     ghost: Boolean = false,
     /** With [ghost]: still on its way, so a soft placeholder of the button stands in its place. */
     waiting: Boolean = false,
+    /** A download under way, 0 to 1, for the ring round the button; see [RoundAction]. */
+    progress: Float? = null,
+    /** False for a button that only says how things stand (Downloaded): dimmed, a press does nothing. */
+    enabled: Boolean = true,
 ) {
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusVisibleAsState()
@@ -387,6 +396,7 @@ internal fun WideIconAction(
     }
     val ink = when {
         focused -> Tone.onFocusFill
+        !enabled -> Tone.muted
         destructive -> Tone.danger
         else -> Tone.text
     }
@@ -396,14 +406,16 @@ internal fun WideIconAction(
                 .graphicsLayer { alpha = shown }
                 .pressScale(interactions)
                 .size(WIDE_ACTION)
+                .downloadRing(progress)
                 .clip(CircleShape)
                 .background(if (focused) (if (destructive) Danger else Tone.focusFill) else Tone.surfaceHigh)
                 .border(1.dp, if (focused) Color.Transparent else Tone.outline, CircleShape)
                 .focusRing(focused, CircleShape)
-                .clickable(interactionSource = interactions, indication = LocalIndication.current, onClick = onClick)
+                .clickable(interactionSource = interactions, indication = if (enabled) LocalIndication.current else null, onClick = if (enabled) onClick else ({}))
                 .semantics {
                     contentDescription = label
                     role = Role.Button
+                    if (!enabled) disabled()
                 },
             contentAlignment = Alignment.Center,
         ) {

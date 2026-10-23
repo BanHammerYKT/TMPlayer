@@ -106,7 +106,6 @@ internal fun PhoneBrowse(
     onOpenSettings: () -> Unit,
     onUpdate: () -> Unit,
     search: GlobalSearchViewModel,
-    searchState: GlobalSearchState,
     chats: List<ChatSummary>,
     continueWatching: List<ResumeRecord>,
     watchLater: List<WatchLaterRecord>,
@@ -124,6 +123,9 @@ internal fun PhoneBrowse(
     val scope = rememberCoroutineScope()
     val reduced = rememberReducedMotion() || Motion.reduced
 
+    // Read only inside the search page's own lambda and in effects, so a letter typed or a page of
+    // results redraws the search page, not the whole browser behind it.
+    val searchState by search.state.collectAsState()
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var searchText by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue()) }
     var savedFilters by rememberSaveable { mutableStateOf("") }
@@ -139,8 +141,10 @@ internal fun PhoneBrowse(
             if (searchState.sort == SearchSort.BestMatch) search.setSort(sort)
         }
     }
-    LaunchedEffect(searchState.filters, searchState.sort) { savedFilters = encodeFilters(searchState.filters, searchState.sort) }
-    LaunchedEffect(searchText.text) { search.type(searchText.text) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { searchState.filters to searchState.sort }.collect { (filters, sort) -> savedFilters = encodeFilters(filters, sort) }
+    }
+    LaunchedEffect(Unit) { snapshotFlow { searchText.text }.collect { search.type(it) } }
     // "Search all chats" from a chat whose listing matched nothing: the search page, on those words.
     val asked by SearchRequest.pending.collectAsState()
     LaunchedEffect(asked) {

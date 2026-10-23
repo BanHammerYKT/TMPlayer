@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon on Android 6 and 7, which have no adaptive icons and so never read
+  mipmap-anydpi-v26: without this the icon does not resolve and the launcher shows nothing. The
+  same two layers as the adaptive icon, stacked, so it is the same tile, square where the newer
+  launchers crop it to their shape.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/ic_launcher_background" />
+    <item android:drawable="@drawable/ic_launcher_foreground" />
+</layer-list>

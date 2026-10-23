@@ -286,7 +286,9 @@ private fun ownLogcat(): List<String> {
     return try {
         process.inputStream.bufferedReader().useLines { it.toList() }.takeLast(LogExport.MAX_LINES)
     } finally {
-        process.waitFor(2, TimeUnit.SECONDS)
+        // The timed wait is Android 8's. Earlier the output has already been read to its end,
+        // which logcat -d reaches only as it exits, so destroying it straight away loses nothing.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) process.waitFor(2, TimeUnit.SECONDS)
         process.destroy()
     }
 }

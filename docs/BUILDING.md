@@ -7,8 +7,8 @@ fetches missing SDK packages itself when the licences are accepted). JDK 17 is t
 and AGP 9 will run on and still builds the Android app, but the desktop app needs 21, so 21 is the
 one to install. Newer JDKs are not supported by the build yet: JDK 25 fails, so point
 `JAVA_HOME` (or Android Studio's Gradle JDK) at a 21. Any recent Android Studio works, but the project builds
-fine from the command line. The Android app runs on API 26 and up; the desktop app on Windows 10
-and 11 and on 64-bit Linux.
+fine from the command line. The Android app runs on API 23 and up; the desktop app on Windows 10
+and 11, on 64-bit Linux and on macOS 26 or newer on Apple Silicon.
 
 ## Telegram credentials
 
@@ -145,16 +145,18 @@ toolchain was moved forward on 2026-10-18 (Gradle 9.8.1, AGP 9.4.1, Kotlin 2.4.2
   FFmpeg decoded tracks on the stick); a future media3 that renames that again has to keep it.
 - **AGP 9 shrinks resources inside R8** (`android.r8.optimizedResourceShrinking`). Compared with
   AGP 8 the release APK carries about 360 fewer resource entries: library layouts, strings and
-  PNG fallbacks that no surviving code reaches (pre-Android 7 notification templates, unused
-  leanback widgets, density PNGs behind vectors that minSdk 26 always uses). A resource looked
-  up by name with `getIdentifier` in a release build would need a keep rule.
+  PNG fallbacks that R8 finds no reference to (unused leanback widgets, density PNGs behind
+  vectors, which minSdk 23 always uses). A resource looked up by name with `getIdentifier` in a
+  release build would need a keep rule.
 - **`org.json` belongs to `:core`'s jvm target only and must stay that way.** Android already
   ships `org.json` at runtime, and the Android side of `:core` compiles against that copy. Adding
   it to `commonMain` or to `:app` would ship a second copy of a library the platform already
   provides.
-- **`:core` is Kotlin Multiplatform with two targets, android and jvm,** and nothing else. A
-  source set shared only by JVM targets may use the JDK, so its `commonMain` is ordinary JVM
-  Kotlin. It applies the Compose compiler plugin without drawing anything: that is what records
-  its models as stable for the app's screens, as they were before they moved.
+- **`:core` is Kotlin Multiplatform with three targets: android, jvm and wasmJs.** Its
+  `commonMain` is read from `src/pureMain/kotlin` and must stay pure Kotlin, with no JDK and no
+  TDLib, because the browser build compiles it too. What needs TDLib or the JDK goes in
+  `jvmSharedMain` (`src/commonMain/kotlin`), shared by android and jvm only. It applies the Compose
+  compiler plugin without drawing anything: that is what records its models as stable for the
+  app's screens, as they were before they moved.
 
 Cutting a release is a separate topic: see [RELEASING.md](RELEASING.md).

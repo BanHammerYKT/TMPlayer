@@ -47,7 +47,6 @@ class HomeRowsTest {
         is HomeRow.Chat -> row.entries.flatMap(::idsOf)
         is HomeRow.NewEpisodes -> row.episodes.map { it.item.messageId }
         is HomeRow.Recent -> row.entries.flatMap(::idsOf)
-        is HomeRow.Across -> row.entries.flatMap(::idsOf)
     }
 
     private fun idsOf(entry: ShelfEntry): List<Long> = when (entry) {
@@ -79,6 +78,17 @@ class HomeRowsTest {
     }
 
     @Test
+    fun `the recent row holds its place while the chat list is still coming in after a cold start`() {
+        val kept = listOf(video(1), video(2))
+        val pending = HomeRows.build(listOf(resume(video(9))), emptyList(), emptyMap(), recent = kept, recentMinStarred = 1, autoFill = true, chatsPending = true)
+        assertEquals(listOf("continue", "recent"), pending.map { it.key })
+        assertEquals(false, pending.filterIsInstance<HomeRow.Recent>().single().loaded)
+        // Once the chats are known the row is the real one, and with no chats at all it goes.
+        val none = HomeRows.build(listOf(resume(video(9))), emptyList(), emptyMap(), recent = kept, recentMinStarred = 1, autoFill = true)
+        assertEquals(listOf("continue"), none.map { it.key })
+    }
+
+    @Test
     fun `starred chats follow the chat list order, not the order they were starred`() {
         val chats = listOf(chat(5), chat(3), chat(8), chat(1))
         val starred = HomeRows.favouriteChats(chats, linkedSetOf(1L, 8L, 5L))
@@ -106,7 +116,6 @@ class HomeRowsTest {
                 is HomeRow.Chat -> row.entries.size
                 is HomeRow.NewEpisodes -> row.episodes.size
                 is HomeRow.Recent -> row.entries.size
-                is HomeRow.Across -> row.entries.size
             }
             assertEquals(row.key, HomeRows.LIMIT, size)
         }

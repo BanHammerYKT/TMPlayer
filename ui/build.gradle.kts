@@ -80,7 +80,8 @@ kotlin {
     android {
         namespace = "com.tmplayer.ui"
         compileSdk = 37
-        minSdk = 26
+        // As low as :app, which says why; :app desugars java.time and java.nio.file for this code.
+        minSdk = 23
     }
     jvm()
     // The browser (web/, CP92): the same shared screens, compiled against Compose Multiplatform
@@ -147,4 +148,10 @@ tasks.withType<KotlinJvmCompile>().configureEach {
 tasks.withType<JavaCompile>().configureEach {
     sourceCompatibility = "17"
     targetCompatibility = "17"
+}
+
+// The :core models that are immutable in fact though the compiler cannot see it (the file says
+// which), so a shared screen skips over an equal copy as :app's do.
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose-stability.conf"))
 }

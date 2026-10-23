@@ -18,13 +18,26 @@ import com.tmplayer.data.Thumbnails
  * rather than blank. Under Lighter pictures (low memory) the window is halved.
  */
 
-/** How far ahead and behind, in screens: one ahead, half behind; half of that under Lighter pictures. */
+/**
+ * How far ahead and behind, in screens: one ahead, half behind; half of that under Lighter
+ * pictures. [column] is a list the remote moves down through a row at a time (Home's rows, a
+ * grid of tiles).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun rememberAheadWindow(): LazyLayoutCacheWindow {
+private fun rememberAheadWindow(column: Boolean = false): LazyLayoutCacheWindow {
     val light = Thumbnails.light
-    return remember(light) {
-        if (light) LazyLayoutCacheWindow(aheadFraction = 0.5f, behindFraction = 0.25f)
+    val tv = com.tmplayer.ui.theme.Motion.television
+    return remember(light, tv, column) {
+        // A television composes a quarter of a screen ahead along a row and nothing behind: a
+        // screen ahead composed three more rows of sixteen tiles each as Home opened, and their
+        // pictures and lookups queued in front of the ones on screen. Down a column it keeps the
+        // next row (a little over half a screen) composed while the remote rests, and the one
+        // just left: composing a row of seven tiles in the frame the remote moved cost the 1 GB
+        // stick 80 to 130 ms, the one hitch left on Home (2026-10-23).
+        if (tv && column) LazyLayoutCacheWindow(aheadFraction = 0.6f, behindFraction = 0.3f)
+        else if (tv) LazyLayoutCacheWindow(aheadFraction = 0.25f, behindFraction = 0f)
+        else if (light) LazyLayoutCacheWindow(aheadFraction = 0.5f, behindFraction = 0.25f)
         else LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 0.5f)
     }
 }
@@ -32,14 +45,18 @@ private fun rememberAheadWindow(): LazyLayoutCacheWindow {
 /** [rememberLazyListState] that composes a screen ahead: for Home's rows and strips and long lists of tiles. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun rememberAheadListState(initialFirstVisibleItemIndex: Int = 0, initialFirstVisibleItemScrollOffset: Int = 0): LazyListState =
-    rememberLazyListState(rememberAheadWindow(), initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
+fun rememberAheadListState(
+    initialFirstVisibleItemIndex: Int = 0,
+    initialFirstVisibleItemScrollOffset: Int = 0,
+    column: Boolean = false,
+): LazyListState =
+    rememberLazyListState(rememberAheadWindow(column), initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
 
 /** [rememberLazyGridState] that composes a screen ahead: for a chat's grid of videos. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun rememberAheadGridState(initialFirstVisibleItemIndex: Int = 0, initialFirstVisibleItemScrollOffset: Int = 0): LazyGridState =
-    rememberLazyGridState(rememberAheadWindow(), initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
+    rememberLazyGridState(rememberAheadWindow(column = true), initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
 
 /**
  * Keeps a row that rests at its start there when cards arrive in front of the first one (a newer
@@ -48,14 +65,17 @@ fun rememberAheadGridState(initialFirstVisibleItemIndex: Int = 0, initialFirstVi
  * the newest one hidden off its start. A row the viewer has scrolled is left where they put it.
  */
 @Composable
-fun KeepAtStart(state: LazyListState) {
+fun KeepAtStart(state: LazyListState, moved: () -> Boolean = { false }) {
+    val movedNow = androidx.compose.runtime.rememberUpdatedState(moved)
     androidx.compose.runtime.LaunchedEffect(state) {
         var atStart = state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0
         androidx.compose.runtime.snapshotFlow {
             Triple(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset, state.isScrollInProgress)
         }.collect { (index, offset, scrolling) ->
             when {
-                scrolling -> atStart = false
+                // [moved]: a row that jumps to the remote's tile at once (a television's) scrolls
+                // within one frame, which this never sees as scrolling, and would send it back.
+                scrolling || movedNow.value() -> atStart = false
                 index == 0 && offset == 0 -> atStart = true
                 atStart -> state.scrollToItem(0)
             }

@@ -26,18 +26,32 @@ object SameTitle {
 
     /** The film's normalised name and year, "film:khalifa|2026"; null for anything else. */
     fun filmKey(item: MediaItem): String? {
+        // Home keys every tile by this on every build, so the answer for a video the viewer has
+        // not corrected is worked out once and kept on the item.
+        val corrections = VideoCorrections.current
+        val correction = if (corrections.isEmpty()) null else corrections[item.id]
+        return if (correction == null) item.uncorrectedFilmKey else filmKeyOf(item, correction)
+    }
+
+    /** [filmKey] for [item] under [correction], the viewer's own for it or null for none. */
+    internal fun filmKeyOf(item: MediaItem, correction: VideoCorrection?): String? {
         if (item.extra != null) return null
-        val correction = VideoCorrections.current[item.id]
         if (correction?.separate == true) return null
         val renamed = correction?.title
         if (renamed == null && item.fileName.isBlank() && item.caption.isBlank()) return null
-        if (renamed == null && item.caption.isBlank() && MediaText.isGenericName(item.fileName)) return null
-        val name = if (renamed != null) MediaName.parse(renamed) else MediaName.parse(item.fileName, item.caption)
+        if (renamed == null && item.caption.isBlank() && item.genericFileName) return null
+        val name = when {
+            renamed != null -> MediaName.parse(renamed)
+            // Read once per item where it reads the same name ([MediaItem.parsedName]).
+            item.nameForParsing == item.fileName -> item.parsedName
+            else -> MediaName.parse(item.fileName, item.caption)
+        }
         if (name.isSeries || name.extra != null) return null
-        val title = SeriesShelf.keyOf(name.title).ifEmpty { return null }
+        val title = name.titleKey.ifEmpty { return null }
         val year = name.year ?: if (renamed == null) captionYear(item.caption, title) else null
         if (year == null) return null
-        val part = SeriesShelf.episodeOf(item).part
+        // As [SeriesShelf.episodeOf] reads it: the viewer's title where they gave one.
+        val part = if (correction == null) item.parsedName.part else SeriesShelf.episodeOf(item).part
         return "film:$title|$year" + if (part != null) "|part$part" else ""
     }
 
@@ -69,7 +83,7 @@ object SameTitle {
      */
     fun onlineKey(item: MediaItem): String? {
         val online = OnlineMetadata.current ?: return null
-        val query = MetaQuery.of(item.nameForParsing, item.caption) ?: return null
+        val query = item.metaQuery ?: return null
         val found = runCatching { online.peek(query) }.getOrNull() as? MetaResult.Found ?: return null
         val info = found.info
         val kind = if (info.kind == MetaKind.Show) "show" else "film"
@@ -131,7 +145,7 @@ object SameTitle {
     fun fold(a: MediaItem, b: MediaItem): MediaItem {
         val copies = (copiesOf(a) + copiesOf(b)).distinctBy { it.id }
         val ordered = GlobalSearch.copyOrder(copies)
-        return ordered.first().copy(versions = ordered.map { it.copy(versions = emptyList()) })
+        return ordered.first().copy(versions = ordered.map { it.copy(versions = emptyList()).keptReads(it) }).keptReads(ordered.first())
     }
 
     private fun copiesOf(item: MediaItem): List<MediaItem> = item.versions.ifEmpty { listOf(item) }

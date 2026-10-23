@@ -394,6 +394,11 @@ class MainActivity : ComponentActivity() {
         com.tmplayer.ui.components.PlayPress.end()
     }
 
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInputAt = android.os.SystemClock.elapsedRealtime()
+    }
+
     override fun onResume() {
         super.onResume()
         // Back from the player (or never left): no press of Play is still on its way.
@@ -490,6 +495,11 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** When the last key or touch reached the app, for Home's auto-refresh to stop when idle. */
+        @Volatile
+        var lastInputAt = 0L
+            private set
+
         /** Which screen a launch is asking for, when it is asking for one. */
         const val EXTRA_OPEN = "com.tmplayer.extra.OPEN"
 
@@ -593,6 +603,13 @@ private fun Root() {
     // behind a screen's edge or during a transition is true black under Pure black too.
     val ground = Tone.background
     LaunchedEffect(ground, activity) {
+        // None on a television: the shell's root paints the same ground over the whole window on
+        // every frame (the box round the loader below), so the window's own was a second
+        // full-screen fill under it, which a TV stick's GPU paid for on each frame of every press.
+        if (activity != null && FormFactor.isTv(activity)) {
+            activity.window?.setBackgroundDrawable(null)
+            return@LaunchedEffect
+        }
         activity?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(ground.toArgb()))
     }
 
@@ -785,7 +802,12 @@ private fun Root() {
         factory = object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                HomeViewModel(sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() }, cached = true) as T
+                HomeViewModel(
+                    sizeLimits = { settings.minSizeBytes.first() to settings.maxSizeBytes.first() },
+                    cached = true,
+                    // Home's refetches wait while a video plays (see HomeViewModel's busy).
+                    busy = { com.tmplayer.data.WatchCache.anyPlaying() },
+                ) as T
         },
     )
     // Home keeps what it fetched, badges included, so its Cached badges are read off the disk again
@@ -798,12 +820,31 @@ private fun Root() {
     }
     // Home keeps itself up to date while the app is in front: on coming back, when its rows are
     // a minute old, and every few minutes after, in place (the tiles stay up and keep the focus).
+    val resumedBefore = remember { booleanArrayOf(false) }
     LaunchedEffect(shellInFront) {
         if (!shellInFront) return@LaunchedEffect
+        // Coming back (from the player, nearly always) the rows are older than a minute after any
+        // video, and a refresh rebuilds them all just as the viewer reaches for the remote: on a
+        // TV stick that made the first presses on Home lag. So it waits for the remote to rest a
+        // few seconds, or [RETURN_REFRESH_MAX_WAIT_MS] at most. The first start asks at once.
+        if (resumedBefore[0]) {
+            val back = android.os.SystemClock.elapsedRealtime()
+            while (true) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val quiet = now - maxOf(back, MainActivity.lastInputAt)
+                if (quiet >= RETURN_REFRESH_QUIET_MS || now - back >= RETURN_REFRESH_MAX_WAIT_MS) break
+                delay(RETURN_REFRESH_QUIET_MS - quiet)
+            }
+        }
+        resumedBefore[0] = true
         homeViewModel.refreshIfStale()
         while (true) {
             delay(HomeViewModel.AUTO_REFRESH_MS)
-            homeViewModel.refreshInPlace()
+            // Only while someone is using it: a TV left on Home refreshed every few minutes for
+            // hours, rebuilding every row each time. Untouched, Home waits for the next press or
+            // for coming back to the front ([refreshIfStale]).
+            val idle = android.os.SystemClock.elapsedRealtime() - MainActivity.lastInputAt
+            if (idle < HomeViewModel.AUTO_REFRESH_MS) homeViewModel.refreshInPlace()
         }
     }
     val accountHeader by chatsViewModel.accountHeader.collectAsStateWithLifecycle()
@@ -1120,7 +1161,11 @@ private fun Root() {
                 // a series honest. This only has to leave the record alone for a kept download.
                 if (!kept) scope.launch { settings.rememberCachedVideo(item, chatTitle) }
                 com.tmplayer.ui.components.PlayPress.open()
-                context.startActivity(PlayerActivity.intent(context, item, chatTitle))
+                // The room was decided just above, so the player need not measure it again.
+                context.startActivity(
+                    PlayerActivity.intent(context, item, chatTitle)
+                        .putExtra(PlayerActivity.EXTRA_ROOM_DECIDED, item.fileId),
+                )
             }
 
             when (plan) {
@@ -1162,8 +1207,11 @@ private fun Root() {
         // A press on a video is not instant: before the player can open, this asks TDLib whether
         // the file is on disk, measures the disk, and reads the download history back one record
         // at a time. On a stick that is long enough for the viewer to conclude the press missed
-        // and press again, so a second press while one is in flight is ignored.
-        if (preparing && !confirmed) return
+        // and press again, so a second press while one is in flight is ignored. So is one after the
+        // player was asked to open and before it covers the screen: a video's page stays open
+        // under the player now, and its Play pressed twice opened two (PlayPress.opened lasts
+        // until this activity stops or comes back).
+        if ((preparing || com.tmplayer.ui.components.PlayPress.opened) && !confirmed) return
         preparing = true
         // Answered at once: the page's Play pill spins and, past a beat, a "Starting" pill says
         // which video is on its way (PlayPress, StartingStatus). It stays until the shell leaves
@@ -1254,7 +1302,7 @@ private fun Root() {
         // The same guard [play] keeps, over the wait for Telegram in [openStoredNow]: [play] only starts
         // counting once that answer is back, so two quick presses on a Continue watching card
         // both got through and opened the player twice.
-        if (openingStored || preparing) return
+        if (openingStored || preparing || com.tmplayer.ui.components.PlayPress.opened) return
         openingStored = true
         // The wait for Telegram's fresh copy is part of the press too.
         val press = com.tmplayer.ui.components.PlayPress.begin(stored.title)
@@ -1309,8 +1357,6 @@ private fun Root() {
             label = com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
                 ?: if (holdForHome) LocalStrings.current.loginGettingReady else null,
             modifier = Modifier.zIndex(1f),
-            // The second line is the live step, drawn by ConnectingHelp under it.
-            lines = emptyList(),
         ) {
             // What it is doing now, and past the long wait, why it may be stuck with Retry, a
             // proxy and the logs: the desktop's help, on the phone and the TV too.
@@ -1600,7 +1646,6 @@ private fun Root() {
             model = homeViewModel,
             rows = homeRows,
             chats = chats,
-            favourites = favorites,
             watchProgress = watchProgress,
             signedIn = auth is AuthState.Ready,
             enabled = tvChannelsOn,
@@ -1783,13 +1828,15 @@ private fun Root() {
                     onToggleLayout = { scope.launch { settings.setChatLayout(chatLayout.toggled()) } },
                     layout = chatLayout,
                     homeRows = homeRows,
+                    homeRowsReady = homeViewModel.rowsSettled,
+                    homeCarousel = settings.homeCarousel.collectAsStateWithLifecycle(initialValue = true).value,
                     homeArt = homeViewModel.art.collectAsStateWithLifecycle().value,
                     homeWatch = homeWatch,
                     onHomeRowShown = { row ->
                         when (row) {
                             is HomeRow.Chat -> homeViewModel.request(row.chatId)
                             is HomeRow.Recent -> homeViewModel.requestRecent()
-                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
+                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
                         }
                     },
                     onHomeArtWanted = homeViewModel::requestArt,
@@ -2252,6 +2299,12 @@ private const val CONNECTING_SETTLE_MS = 2_500L
 
 /** How long the chat list is up before the support card may slide in. */
 private const val SUPPORT_CARD_DELAY_MS = 4_000L
+
+/** How long the remote rests after coming back to Home before its stale rows are refreshed. */
+private const val RETURN_REFRESH_QUIET_MS = 3_000L
+
+/** The longest that refresh waits for the remote to rest: a viewer browsing on gets it anyway. */
+private const val RETURN_REFRESH_MAX_WAIT_MS = 20_000L
 
 /**
  * The hint after the device struggled (CP68, [com.tmplayer.data.DeviceFitHint]): a bar at the foot

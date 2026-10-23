@@ -62,6 +62,16 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
     /** The leveller's lift as applied, walking towards what [loudness] asks for. */
     private var levelGain = 1f
 
+    /**
+     * What the leveller's lift is walking towards, worked out from [loudness] once every
+     * [LEVEL_BLOCK] frames rather than every frame: [levelFor] is a square root, and [loudness]
+     * moves on a two second time constant, so a few milliseconds' stale answer is inaudible.
+     */
+    private var levelWanted = 1f
+
+    /** Frames until [levelWanted] is worked out again; counted across buffers. */
+    private var levelCountdown = 0
+
     private var loudnessStep = 0f
     private var levelRise = 0f
     private var levelFall = 0f
@@ -77,6 +87,14 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
     private var rampStep = 0f
     private var frame = FloatArray(0)
 
+    /**
+     * A whole buffer's samples, read and written in bulk: one call each way instead of a
+     * `getShort` and a `putShort` per sample, which for a 5.1 track is over a quarter of a million
+     * calls a second on the playback thread of a TV stick.
+     */
+    private var samples = FloatArray(0)
+    private var shorts = ShortArray(0)
+
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         val encoding = inputAudioFormat.encoding
         if (encoding != C.ENCODING_PCM_16BIT && encoding != C.ENCODING_PCM_FLOAT) {
@@ -90,6 +108,7 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         levelRise = coefficient(LEVEL_RISE_SECONDS, rate)
         levelFall = coefficient(LEVEL_FALL_SECONDS, rate)
         frame = FloatArray(inputAudioFormat.channelCount)
+        levelCountdown = 0
         return inputAudioFormat
     }
 
@@ -99,6 +118,10 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         val out = replaceOutputBuffer(remaining)
         val night = night
         val level = level
+        // The leveller's lift eases back to 1 when Even out volume is turned off, but in floats it
+        // stalls a hair above (about 1.001), and the copy below never ran again: every sample went
+        // through the full chain for the rest of the video for a lift nobody can hear.
+        if (!level && abs(levelGain - 1f) < LEVEL_SNAP) levelGain = 1f
         if (!enabled && !night && !level && gain == 1f && levelGain == 1f) {
             envelope = 0f
             out.put(inputBuffer).flip()
@@ -108,40 +131,71 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         val float = inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
         val channels = frame.size
         val frames = remaining / inputAudioFormat.bytesPerFrame
+        val count = frames * channels
+        if (samples.size < count) samples = FloatArray(count)
+        val buffer = samples
+        if (float) {
+            input.asFloatBuffer().get(buffer, 0, count)
+        } else {
+            if (shorts.size < count) shorts = ShortArray(count)
+            input.asShortBuffer().get(shorts, 0, count)
+            for (i in 0 until count) buffer[i] = shorts[i] / SHORT_SCALE
+        }
+        // The views above read without moving the buffer: it is consumed here, as before.
+        input.position(input.position() + frames * inputAudioFormat.bytesPerFrame)
         val target = targetGain(enabled, night)
         // Even out volume alone keeps the track's own dynamics: only the very top of the range,
         // which its lift or a surround fold may push past full scale, is held back.
         val levelOnly = !enabled && !night
         val threshold = if (night) NIGHT_THRESHOLD else if (levelOnly) LEVEL_THRESHOLD else THRESHOLD
         val ratio = if (night) NIGHT_RATIO else if (levelOnly) LEVEL_RATIO else RATIO
+        var at = 0
         repeat(frames) {
-            for (c in 0 until channels) {
-                frame[c] = if (float) input.getFloat() else input.getShort() / SHORT_SCALE
-            }
             gain = if (gain < target) minOf(target, gain + rampStep) else maxOf(target, gain - rampStep)
             var square = 0f
-            for (c in 0 until channels) square += frame[c] * frame[c]
+            var peak = 0f
+            for (c in 0 until channels) {
+                val sample = buffer[at + c]
+                square += sample * sample
+                peak = maxOf(peak, abs(sample))
+            }
             square /= channels
             // Silence and near silence say nothing about how loud the track is.
             if (square > LEVEL_GATE_SQUARE) loudness += loudnessStep * (square - loudness)
-            val wanted = if (level) levelFor(loudness) else 1f
+            if (levelCountdown <= 0) {
+                levelWanted = levelFor(loudness)
+                levelCountdown = LEVEL_BLOCK
+            }
+            levelCountdown--
+            val wanted = if (level) levelWanted else 1f
             levelGain += (if (wanted > levelGain) levelRise else levelFall) * (wanted - levelGain)
-            var peak = 0f
-            for (c in 0 until channels) peak = maxOf(peak, abs(frame[c]))
             val lift = gain * levelGain
             peak *= lift
             envelope += (if (peak > envelope) attack else release) * (peak - envelope)
             val squeeze = squeeze(envelope, threshold, ratio)
             val scale = lift * squeeze
-            for (c in 0 until channels) {
-                val sample = (frame[c] * scale).coerceIn(-1f, 1f)
-                if (float) {
-                    out.putFloat(sample)
-                } else {
-                    out.putShort((sample * SHORT_SCALE).toInt().coerceIn(-32768, 32767).toShort())
+            // The frame's loudest sample, scaled, is the most any of them reaches: a frame that
+            // stays clear of full scale (nearly all of them) needs no clamp per sample. The margin
+            // covers the rounding of multiplying in another order.
+            if (peak * squeeze < CLAMP_FREE) {
+                for (c in 0 until channels) buffer[at + c] *= scale
+            } else {
+                for (c in 0 until channels) {
+                    buffer[at + c] = (buffer[at + c] * scale).coerceIn(-1f, 1f)
                 }
             }
+            at += channels
         }
+        if (float) {
+            out.asFloatBuffer().put(buffer, 0, count)
+        } else {
+            val pcm = shorts
+            for (i in 0 until count) {
+                pcm[i] = (buffer[i] * SHORT_SCALE).toInt().coerceIn(-32768, 32767).toShort()
+            }
+            out.asShortBuffer().put(pcm, 0, count)
+        }
+        out.position(count * (if (float) 4 else 2))
         out.flip()
     }
 
@@ -155,6 +209,7 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         // A new track is measured afresh. A seek (onFlush) keeps what was learnt of this one.
         loudness = LEVEL_TARGET_SQUARE
         levelGain = 1f
+        levelCountdown = 0
     }
 
     companion object {
@@ -226,6 +281,15 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         private const val RELEASE_SECONDS = 0.25f
         private const val RAMP_SECONDS = 0.08f
         private const val SHORT_SCALE = 32768f
+
+        /** Frames between two answers of [levelFor]: about 5 ms at 48 kHz. */
+        private const val LEVEL_BLOCK = 256
+
+        /** Below this a frame's scaled peak cannot round past full scale, so it is not clamped. */
+        private const val CLAMP_FREE = 0.999f
+
+        /** How near 1 the leveller's lift has to come, with the leveller off, to count as 1. */
+        private const val LEVEL_SNAP = 0.01f
 
         /** A one pole follower's step for a time constant of [seconds]. */
         private fun coefficient(seconds: Float, rate: Float): Float =

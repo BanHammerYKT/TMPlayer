@@ -155,6 +155,9 @@ internal fun TvSearchScreen(
     val showFilters = text.isNotBlank() &&
         (state.groups.isNotEmpty() || !state.filters.isDefault || state.sort != SearchSort.BestMatch)
     val full: LazyGridItemSpanScope.() -> GridItemSpan = { GridItemSpan(maxLineSpan) }
+    // The states every result tile reads, collected once for the page rather than per tile.
+    val tileShared = com.tmplayer.ui.components.rememberTileShared()
+    androidx.compose.runtime.CompositionLocalProvider(com.tmplayer.ui.components.LocalTileShared provides tileShared) {
     Column(Modifier.fillMaxSize().padding(start = TV_START, bottom = Tv.SafeV)) {
         WholeCardInView(grid) {
             LazyVerticalGrid(
@@ -322,6 +325,7 @@ internal fun TvSearchScreen(
         }
         // A fixed height, so the list above never moves as the remote does.
         DetailsStrip(focusedGroup?.takeIf { g -> shown.any { it.key == g.key } }, briefs)
+    }
     }
 }
 
@@ -510,7 +514,9 @@ private fun PosterCard(
             .clickable(interactionSource = interactions, indication = null, onClick = onClick),
     ) {
         ResultPoster(item, Modifier.fillMaxWidth(), fraction)
-        if (group.copies.size > 1 && !group.isShow) CopiesChip(group.copies.size, Modifier.align(Alignment.TopEnd).padding(6.dp), onArt = true)
+        // Files, as the page counts its versions: the same file in two chats is one.
+        val files = remember(group.copies) { group.fileCount }
+        if (files > 1 && !group.isShow) CopiesChip(files, Modifier.align(Alignment.TopEnd).padding(6.dp), onArt = true)
         AvatarStack(
             group.chatIds,
             chats,

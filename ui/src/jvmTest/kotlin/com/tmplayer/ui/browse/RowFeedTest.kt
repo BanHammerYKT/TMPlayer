@@ -84,7 +84,7 @@ class RowFeedTest {
         // Home holds each chat's newest few, as its rows read them.
         val held = chats.mapValues { (_, items) -> items.take(3) }
         val lanes = held.map { (chatId, items) -> FeedLane(chatId, MediaCursors(video = 3), oldest = items.minOf { it.date }) }
-        val row = HomeRow.Across(HomeRow.Across.Kind.Videos, listOf(ShelfEntry.File(held.getValue(2).first())), chatIds = listOf(1, 2))
+        val row = HomeRow.Recent(listOf(ShelfEntry.File(held.getValue(2).first())), loaded = true, chatIds = listOf(1, 2))
         return RowFeed(this, lanes, held.values.flatten(), row, ::read, keep = keep, work = dispatcher)
     }
 

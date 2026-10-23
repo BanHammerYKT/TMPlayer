@@ -1,0 +1,9 @@
+# Created by hand from the 1.24.0 release; regenerate for the current release before submitting.
+# Goes to winget-pkgs at manifests/t/TMPlayer/TMPlayer/<version>/
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
+
+PackageIdentifier: TMPlayer.TMPlayer
+PackageVersion: 1.24.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.12.0

@@ -112,13 +112,13 @@ fun <T> FolderCopyConfirmDialog(
  * Cancel, which stops after the buffer in hand and removes the part copy it leaves.
  */
 @Composable
-fun FolderCopyProgressDialog(progress: FolderCopy.Progress, onCancel: () -> Unit) {
+fun FolderCopyProgressDialog(progress: FolderCopy.Progress, onCancel: () -> Unit, gallery: Boolean = false) {
     val s = LocalStrings.current
     val bodyMax = dialogBodyMax(CONFIRM_BODY_MAX)
     TmAlertDialog(
         // Only Cancel ends it: a tap beside the dialog must not leave a copy running unseen.
         onDismissRequest = {},
-        title = { Text(s.downloadsSaveToFolderTitle) },
+        title = { Text(if (gallery) s.downloadsSaveToGalleryTitle else s.downloadsSaveToFolderTitle) },
         text = {
             Column(
                 Modifier.heightIn(max = bodyMax).verticalScroll(rememberScrollState()),
@@ -176,11 +176,11 @@ fun FolderCopyResultDialog(outcome: FolderCopy.Outcome, onClose: () -> Unit) {
  * answered at once rather than with nothing.
  */
 @Composable
-fun FolderCopyPreparingDialog() {
+fun FolderCopyPreparingDialog(gallery: Boolean = false) {
     val s = LocalStrings.current
     TmAlertDialog(
         onDismissRequest = {},
-        title = { Text(s.downloadsSaveToFolderTitle) },
+        title = { Text(if (gallery) s.downloadsSaveToGalleryTitle else s.downloadsSaveToFolderTitle) },
         text = { LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape), trackColor = Tone.surfaceHigh) },
         confirmButton = {},
     )

@@ -500,7 +500,7 @@ class PlayerFeedback(private val root: FrameLayout, insertBelow: View?) {
             if (rate != shownRate) {
                 shownRate = rate
                 // A small pop as the rate changes, so the slowing is felt in the eye as well.
-                if (!com.tmplayer.ui.theme.Motion.reduced && android.animation.ValueAnimator.areAnimatorsEnabled()) {
+                if (!com.tmplayer.ui.theme.Motion.reduced && com.tmplayer.ui.theme.systemAnimatorsEnabled(root.context)) {
                     rateLine.scaleX = 1.15f
                     rateLine.scaleY = 1.15f
                     rateLine.animate().scaleX(1f).scaleY(1f).setDuration(FADE_MS / 2).start()
@@ -568,7 +568,7 @@ class PlayerFeedback(private val root: FrameLayout, insertBelow: View?) {
             tickView.visibility = if (tick) VISIBLE else GONE
             tickView.animate().cancel()
             // The tick pops in on a small overshoot; with less motion asked for it is just there.
-            val moving = !com.tmplayer.ui.theme.Motion.reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
+            val moving = !com.tmplayer.ui.theme.Motion.reduced && com.tmplayer.ui.theme.systemAnimatorsEnabled(root.context)
             if (tick && moving) {
                 tickView.scaleX = 0.4f
                 tickView.scaleY = 0.4f

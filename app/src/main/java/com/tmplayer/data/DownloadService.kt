@@ -16,6 +16,7 @@ import com.tmplayer.R
 import com.tmplayer.i18n.L
 import com.tmplayer.i18n.Translator
 import com.tmplayer.player.StreamStats
+import com.tmplayer.player.TdByteWindow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -520,6 +521,11 @@ class DownloadService : Service() {
         // request". That is somebody else's request arriving, not this download failing, so the
         // request is simply made again and the fetch survives being watched.
         for (attempt in 1..MAX_TAKEOVERS) {
+            // While a player streams this file the download is the player's: TDLib keeps one per
+            // file, and taking it back from the player starved its reads (a minute and more for an
+            // index read on the 1 GB TV, 2026-10-23). Everything the player brings stays on the
+            // disk, so this carries on from there once it closes.
+            while (TdByteWindow.isStreaming(request.fileId)) delay(TAKEOVER_BACKOFF_MS)
             val result = runCatching {
                 session.client.downloadFile(
                     fileId = request.fileId,
@@ -808,7 +814,7 @@ class DownloadService : Service() {
         // viewer wants to find later. Only the ongoing one holding the service up goes, and it is
         // marked as gone before it is taken down so that nothing arriving late puts it back.
         stopping = true
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopForegroundRemoving()
         // Asked for by hand as well. STOP_FOREGROUND_REMOVE only takes down a notification this
         // service is actually in the foreground with, and an earlier refresh may have replaced it
         // with an ordinary one of the same id, which that flag leaves exactly where it is.
@@ -1141,7 +1147,7 @@ class DownloadService : Service() {
     }
 
     private fun builder(): Notification.Builder =
-        Notification.Builder(this, CHANNEL_ID)
+        notificationBuilder(this, CHANNEL_ID, OldAndroid.IMPORTANCE_LOW)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentIntent(openApp())
             .setOnlyAlertOnce(true)

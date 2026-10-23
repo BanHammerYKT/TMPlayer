@@ -1,44 +1,53 @@
 {
   "schema": 1,
-  "version": "1.27.1",
-  "versionCode": 12701,
-  "published": "2026-10-19T11:43:41Z",
-  "releaseUrl": "https://github.com/dracu-lah/TMPlayer/releases/tag/v1.27.1",
-  "notes": "Windows: TMPlayer starts again on computers where it closed at once with \"failedChats must not be null\". Desktop Home: one starred chat is enough for the carousel, and the rows no longer jump while Home fills in. Casting: subtitles show on the TV, and a soundtrack the TV cannot play is converted on the phone so it is heard, with its audio and subtitle choices kept. Casting: the device list stays open and says it is connecting until the TV is ready, and a 4K video on a 1080p TV says so instead of failing. Casting: if the connection to the TV drops, the video waits with Reconnect and Play here instead of starting on the phone, and a short pause from Telegram is retried. The update window shows what changed as a list, on phone, TV and desktop. On a phone, the screen shown when a video stops arriving fits sideways and upright.",
+  "version": "1.28.1",
+  "versionCode": 12801,
+  "published": "2026-10-23T19:20:41Z",
+  "releaseUrl": "https://github.com/dracu-lah/TMPlayer/releases/tag/v1.28.1",
+  "notes": "A new Home on phone, TV and desktop: a carousel with title logos, ratings from several sites and a short overview, then Continue watching, Recently added and a row for each starred chat, ready at once from your last visit. Android TV speed first: no more freezes on the TV sticks, videos start sooner, even on a slow line, and the remote moves at once. Older TVs: installs on Android 6 and 7, so sticks such as the Fire TV Stick 4K on Fire OS 6 run TMPlayer. Fire TV: Dolby Vision videos that also carry HDR10+ play instead of a black screen, Dolby Vision plays as HDR10 where the TV has none, and DTS-HD MA passthrough works. 3D video: side by side and top and bottom videos as anaglyph, one eye in 2D, or both eyes for a VR headset or a 3D TV. Back always returns where you were: to a video's page after playing, to the row or tile you opened it from, and through \"More like this\". Free up space as one review on every device: what TMPlayer uses, what is free, and one button that asks first before removing a download. Save to folder or to the gallery for one video or a selection, with Select all, a check against free space and progress you can cancel. Search keeps up with typing and shows a title once, however often it was posted. Pictures arrive smoothly: a soft preview first, then the sharp picture fades in. Appearance: your own accent colour, high contrast, a choice of typeface and a live preview. Subtitles: colour, edge, typeface, weight and box darkness, remembered languages per series. Hide a chat from TMPlayer, and one Sort and filter menu in every chat. Player: Even out volume on by default, clearer dialogue when surround is folded to stereo, scrub pictures while streaming, Start over on a show's page, and a clear message when a 4K video is too much for the TV. Android: XviD, DivX, VC-1 and Motion JPEG videos play, and the other decoder takes over by itself when one will not. Haptics on phones, quieter messages, trailers in your YouTube app, a lighter copy on TVs that struggle, and opt-in crash reports on every platform.",
   "changes": [
-    "Windows: TMPlayer starts again on computers where it closed at once with \"failedChats must not be null\"",
-    "Desktop Home: one starred chat is enough for the carousel, and the rows no longer jump while Home fills in",
-    "Casting: subtitles show on the TV, and a soundtrack the TV cannot play is converted on the phone so it is heard, with its audio and subtitle choices kept",
-    "Casting: the device list stays open and says it is connecting until the TV is ready, and a 4K video on a 1080p TV says so instead of failing",
-    "Casting: if the connection to the TV drops, the video waits with Reconnect and Play here instead of starting on the phone, and a short pause from Telegram is retried",
-    "The update window shows what changed as a list, on phone, TV and desktop",
-    "On a phone, the screen shown when a video stops arriving fits sideways and upright"
+    "A new Home on phone, TV and desktop: a carousel with title logos, ratings from several sites and a short overview, then Continue watching, Recently added and a row for each starred chat, ready at once from your last visit",
+    "Android TV speed first: no more freezes on the TV sticks, videos start sooner, even on a slow line, and the remote moves at once",
+    "Older TVs: installs on Android 6 and 7, so sticks such as the Fire TV Stick 4K on Fire OS 6 run TMPlayer",
+    "Fire TV: Dolby Vision videos that also carry HDR10+ play instead of a black screen, Dolby Vision plays as HDR10 where the TV has none, and DTS-HD MA passthrough works",
+    "3D video: side by side and top and bottom videos as anaglyph, one eye in 2D, or both eyes for a VR headset or a 3D TV",
+    "Back always returns where you were: to a video's page after playing, to the row or tile you opened it from, and through \"More like this\"",
+    "Free up space as one review on every device: what TMPlayer uses, what is free, and one button that asks first before removing a download",
+    "Save to folder or to the gallery for one video or a selection, with Select all, a check against free space and progress you can cancel",
+    "Search keeps up with typing and shows a title once, however often it was posted",
+    "Pictures arrive smoothly: a soft preview first, then the sharp picture fades in",
+    "Appearance: your own accent colour, high contrast, a choice of typeface and a live preview",
+    "Subtitles: colour, edge, typeface, weight and box darkness, remembered languages per series",
+    "Hide a chat from TMPlayer, and one Sort and filter menu in every chat",
+    "Player: Even out volume on by default, clearer dialogue when surround is folded to stereo, scrub pictures while streaming, Start over on a show's page, and a clear message when a 4K video is too much for the TV",
+    "Android: XviD, DivX, VC-1 and Motion JPEG videos play, and the other decoder takes over by itself when one will not",
+    "Haptics on phones, quieter messages, trailers in your YouTube app, a lighter copy on TVs that struggle, and opt-in crash reports on every platform"
   ],
   "assets": {
     "android-universal": {
-      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.27.1/TMPlayer-1.27.1-universal.apk",
-      "sha256": "a674b67b2e587a51db888a374d37f70c04b60c0e19d2a58c44f27d9a4d1d3aea",
-      "size": 32520968
+      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.28.1/TMPlayer-1.28.1-universal.apk",
+      "sha256": "7414c764a58fef7a7ee2625174e3787d91c4a7b3967b221359ca7fefbcb1119c",
+      "size": 33835273
     },
     "windows-x64-msi-v2": {
-      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.27.1/TMPlayer-1.27.1-windows-x64.msi",
-      "sha256": "904f0eaee884215e705072edf4f9a87d739439e019555bb99ed610dc6be79afc",
-      "size": 106869880
+      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.28.1/TMPlayer-1.28.1-windows-x64.msi",
+      "sha256": "3c2fce2cf41d8f8eea47695ddcba967210681c4db005bb5d5dfca288005d10d1",
+      "size": 109372560
     },
     "macos-arm64-dmg": {
-      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.27.1/TMPlayer-1.27.1-macos-arm64.dmg",
-      "sha256": "9e4a29771413853d021f14df5440066bf8dc3a43eb20fa3c12e2dab278ff9540",
-      "size": 113470449
+      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.28.1/TMPlayer-1.28.1-macos-arm64.dmg",
+      "sha256": "c9f8ba3d0a83181a967c8c9b1b729e6b33bf328ce455528819abf79bfee3eeda",
+      "size": 116753358
     },
     "linux-x64-appimage": {
-      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.27.1/TMPlayer-1.27.1-x86_64.AppImage",
-      "sha256": "a933ff6535227df92bbbe26a7463db86b0035ec2faa920d1b961c67145d45a75",
-      "size": 100878840
+      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.28.1/TMPlayer-1.28.1-x86_64.AppImage",
+      "sha256": "4f6d14683ce8d242a1d9c0e52c65b6aeec5c51fc27a0fb034101ad42038c4a55",
+      "size": 102844920
     },
     "linux-x64-tarball": {
-      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.27.1/TMPlayer-1.27.1-linux-x64.tar.xz",
-      "sha256": "236aebd3f6ba9e857613eea3cc31068edcf1bda5f3a9041343adf53c9c3cb7a7",
-      "size": 72131156
+      "url": "https://github.com/dracu-lah/TMPlayer/releases/download/v1.28.1/TMPlayer-1.28.1-linux-x64.tar.xz",
+      "sha256": "c95ab6268b2de2ae637ec19e98865b72fc001e0cba19a79699ec4498aa4b54bb",
+      "size": 73547324
     }
   }
 }

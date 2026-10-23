@@ -15,6 +15,12 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,7 +47,7 @@ internal fun SeriesCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     dense: Boolean = false,
-    onFocused: () -> Unit = {},
+    onFocused: (() -> Unit)? = null,
     badge: (@Composable () -> Unit)? = null,
     /** A 2:3 poster card, in a grid of films and shows; a 16:9 card in a row of videos. */
     poster: Boolean = false,
@@ -57,22 +63,25 @@ internal fun SeriesCard(
         poster = poster,
         modifier = modifier,
         meta = { ink ->
-            Text(
+            // A show already begun keeps its line in the accent; otherwise the tile's own colour.
+            val accent = Tone.accent
+            val begun = progress.watched > 0
+            TileCaption(
                 summary,
-                style = if (poster) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
-                color = if (progress.watched > 0) Tone.accent else ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                if (poster) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                remember(begun, accent, ink) { if (begun) androidx.compose.ui.graphics.ColorProducer { accent } else ink },
             )
         },
     ) {
-        SeriesArt(series, progress, Modifier.fillMaxSize(), compact = dense, badge = badge, poster = poster, fresh = fresh)
+        // VideoTile already rounds the art's corners.
+        SeriesArt(series, progress, Modifier.fillMaxSize(), compact = dense, badge = badge, poster = poster, fresh = fresh, clip = false)
     }
 }
 
 /**
  * A show, opened: a page of its own over everything, on a phone and a television alike. Choosing
- * an episode plays it and closes this, so Back from the player lands on the chat, not on the page.
+ * an episode plays it with the page left open under the player, so Back from the player lands on
+ * the show again, on the episode that was pressed.
  */
 @Composable
 internal fun SeriesOpened(
@@ -88,7 +97,29 @@ internal fun SeriesOpened(
 ) {
     // Every episode its chat holds, not only those the screen behind had read.
     val whole = com.tmplayer.ui.browse.rememberWholeSeries(series)
-    SeriesPage(whole, watch, onPlay, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle)
+    // Which episodes are in the Downloads folder, for the season's download buttons: read again
+    // whenever the index changes (a download finishing, or one deleted while the page is open),
+    // each file asked of the disk off the drawing thread, as [queueSeason] does.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val settings = remember(context) { com.tmplayer.data.SettingsStore(context) }
+    val history by remember(settings) { settings.downloadHistory }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val downloadedIds by produceState(initialValue = emptySet<String>(), history) {
+        value = withContext(Dispatchers.IO) {
+            history.filter { com.tmplayer.data.LocalDownloads.presentFile(it) != null }
+                .mapTo(HashSet()) { "${it.chatId}:${it.messageId}" }
+        }
+    }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // The saved place goes first, so the player opening a moment later finds nothing to resume
+    // from, as the video page's Start over does.
+    val startOver: (MediaItem) -> Unit = { item ->
+        scope.launch {
+            runCatching { settings.clearResumePosition(item.chatId, item.messageId, item) }
+            onPlay(item)
+        }
+    }
+    SeriesPage(whole, watch, onPlay, startOver, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle, downloadedIds)
 }
 
 /**
@@ -102,10 +133,12 @@ private fun SeriesPage(
     series: Series,
     watch: SeriesWatch,
     onPlay: (MediaItem) -> Unit,
+    onStartOver: (MediaItem) -> Unit,
     onDismiss: () -> Unit,
     onLongClick: ((MediaItem) -> Unit)?,
     onDownload: ((SeasonDownloadRequest) -> Unit)?,
     chatTitle: String?,
+    downloadedIds: Set<String>,
 ) {
     val touch = isTouch()
     // On a phone the page grows out of the show's tile, and folds back towards it.
@@ -123,8 +156,10 @@ private fun SeriesPage(
                 // The page stays open under the player, so Back from an episode lands on the
                 // show again, with its progress and Continue line brought up to date.
                 onPlay = onPlay,
+                onStartOver = onStartOver,
                 onLongClick = onLongClick,
                 onDownload = onDownload,
+                downloadedIds = downloadedIds,
                 chatTitle = chatTitle,
                 contentPadding = if (touch) {
                     PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp)

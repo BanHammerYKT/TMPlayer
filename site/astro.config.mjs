@@ -1,4 +1,4 @@
-// The site keeps every URL, header and byte it had before Astro (docs/ASTRO-MIGRATION.md):
+// The site keeps every URL, header and byte it had before Astro (site/README.md):
 // directories with a trailing slash, HTML left as written, assets hashed under /_astro/.
 import { defineConfig } from 'astro/config';
 import { mkdirSync, writeFileSync } from 'node:fs';

@@ -173,7 +173,7 @@ class SelectedAndEmptyShotsTest {
         val pages: List<Pair<String, @Composable () -> Unit>> = listOf(
             "no-videos" to { StateBox(UiState.Empty("No playable videos in this chat.")) {} },
             "no-match" to { StateBox(UiState.Empty("Nothing in this chat matches “lecture”.", icon = TmIcons.SearchRemove)) {} },
-            "hidden" to { StateBox(UiState.Empty("No videos here between 100 MB and 2 GB.", StateAction.ShowHidden), onAction = {}) {} },
+            "hidden" to { StateBox(UiState.Empty("No videos here between 100 MB and 2 GB. Change the minimum and maximum size in Settings.", icon = TmIcons.FilterHorizontal)) {} },
             "error" to { StateBox(UiState.Error("Telegram did not answer."), onRetry = {}) {} },
             "watched" to { EmptyNote(HistoryTab.Watched.emptyIcon, "Nothing watched yet. Videos you finish, or mark as watched, appear here.") },
             "unread" to { EmptyNote(com.tmplayer.ui.browse.ChatFilter.Unread.emptyIcon, "Nothing unread. You're up to date.") },

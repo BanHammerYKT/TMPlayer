@@ -64,7 +64,7 @@ class GlobalSearchViewModelTest {
 
     @Test
     fun `typing settles before Telegram is asked, and only the last query goes`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 100)
         model.type("ha")
         model.type("harb")
         model.type("harbour")
@@ -81,7 +81,7 @@ class GlobalSearchViewModelTest {
 
     @Test
     fun `the same words are never asked twice`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 100)
         model.type("harbour")
         advanceUntilIdle()
         val before = asked.size
@@ -96,7 +96,7 @@ class GlobalSearchViewModelTest {
 
     @Test
     fun `the search key skips the wait, clearing drops what was waiting`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 10_000)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 10_000)
         model.type("harbour")
         model.submit("harbour")
         assertTrue(model.state.value.searching)
@@ -114,7 +114,7 @@ class GlobalSearchViewModelTest {
 
     @Test
     fun `one letter is not sent to Telegram`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 100)
         model.type("h")
         advanceUntilIdle()
         assertTrue(asked.isEmpty())
@@ -122,7 +122,7 @@ class GlobalSearchViewModelTest {
 
     @Test
     fun `what was listed and still matches stays up until the new answer`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 100)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 100)
         model.type("harbour")
         advanceUntilIdle()
         model.type("harbour wind")
@@ -135,7 +135,7 @@ class GlobalSearchViewModelTest {
 
     @Test
     fun `a thin first answer keeps asking, three pages at most`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 0)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 0)
         model.type("harbour")
         advanceUntilIdle()
         assertEquals(3, asked.size)
@@ -146,14 +146,17 @@ class GlobalSearchViewModelTest {
     @Test
     fun `what the app already knows shows before Telegram answers`() = runTest(dispatcher) {
         val local = video(40, "Harbour_Notes_2024.mkv")
-        val model = GlobalSearchViewModel(source, known = { listOf(local) }, settleMs = 1_000)
+        val model = GlobalSearchViewModel(source, known = { listOf(local) }, work = dispatcher, settleMs = 1_000)
         model.type("harbour notes")
+        // Worked out off the main thread, but before the settle is over.
+        dispatcher.scheduler.runCurrent()
+        assertTrue(model.state.value.settling)
         assertEquals(listOf(40L), model.state.value.groups.map { it.lead.messageId })
     }
 
     @Test
     fun `a quality or a sort never asks again, a chat type does`() = runTest(dispatcher) {
-        val model = GlobalSearchViewModel(source, known = { emptyList() }, settleMs = 0)
+        val model = GlobalSearchViewModel(source, known = { emptyList() }, work = dispatcher, settleMs = 0)
         model.type("harbour")
         advanceUntilIdle()
         val before = asked.size
@@ -171,7 +174,7 @@ class GlobalSearchViewModelTest {
     @Test
     fun `a search that sat with results is remembered, one typed through is not`() = runTest(dispatcher) {
         val remembered = mutableListOf<String>()
-        val model = GlobalSearchViewModel(source, onSearched = { remembered += it }, known = { emptyList() }, settleMs = 0, rememberMs = 2_000)
+        val model = GlobalSearchViewModel(source, onSearched = { remembered += it }, known = { emptyList() }, work = dispatcher, settleMs = 0, rememberMs = 2_000)
         model.type("harbour")
         advanceUntilIdle()
         assertEquals(listOf("harbour"), remembered)
@@ -187,7 +190,7 @@ class GlobalSearchViewModelTest {
             if (!online) throw VideoSearchSource.Offline()
             source.page(query, cursor, filters)
         }
-        val model = GlobalSearchViewModel(flaky, known = { listOf(video(50, "Harbour.Days.2018.mkv")) }, settleMs = 0)
+        val model = GlobalSearchViewModel(flaky, known = { listOf(video(50, "Harbour.Days.2018.mkv")) }, work = dispatcher, settleMs = 0)
         model.type("harbour")
         advanceUntilIdle()
         assertTrue(model.state.value.offline)
@@ -207,7 +210,7 @@ class GlobalSearchViewModelTest {
             if (calls == 1) throw IllegalStateException("FLOOD_WAIT_3")
             source.page(query, cursor, filters)
         }
-        val model = GlobalSearchViewModel(waiting, known = { emptyList() }, settleMs = 0)
+        val model = GlobalSearchViewModel(waiting, known = { emptyList() }, work = dispatcher, settleMs = 0)
         model.type("harbour")
         dispatcher.scheduler.advanceTimeBy(500)
         dispatcher.scheduler.runCurrent()
@@ -223,7 +226,7 @@ class GlobalSearchViewModelTest {
             override suspend fun page(query: String, cursor: AllChatsCursor, filters: SearchFilters) = source.page(query, cursor, filters)
             override suspend fun stillThere(item: MediaItem): Boolean = item.messageId != 1L
         }
-        val model = GlobalSearchViewModel(gone, known = { emptyList() }, settleMs = 0)
+        val model = GlobalSearchViewModel(gone, known = { emptyList() }, work = dispatcher, settleMs = 0)
         model.type("harbour")
         advanceUntilIdle()
         val first = model.state.value.groups.first().lead

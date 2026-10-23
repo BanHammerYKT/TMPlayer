@@ -49,6 +49,15 @@
     -->
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
 
+    <!-- Which app answers YouTube links, so a trailer goes to Google's app as a video id and to
+         another client, such as SmartTube, as its watch link (TrailerOpener). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="vnd.youtube" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="false"

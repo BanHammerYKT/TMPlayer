@@ -4,6 +4,7 @@ import com.tmplayer.data.ResumeState
 import com.tmplayer.desktop.DesktopPaths
 import com.tmplayer.i18n.L
 import com.tmplayer.platform.Logger
+import com.tmplayer.player.Stereo3d
 import com.tmplayer.player.SubtitlePick
 import com.tmplayer.player.SubtitlePlan
 import com.tmplayer.player.SubtitleStyle
@@ -88,6 +89,20 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
 
     @Volatile
     private var closed = false
+
+    /** 3D video as last set, and what mpv was last given for it: the 3D and the frame size. */
+    @Volatile
+    private var stereo = Stereo3d.OFF
+
+    @Volatile
+    private var stereoApplied: Triple<Stereo3d, Int, Int>? = null
+
+    /**
+     * The shader file mpv was last given. mpv reads a shader file once per path and keeps it for
+     * the player's life, so a file written again under the same name is never read again: each
+     * change gets a file of its own, and the one before is deleted.
+     */
+    private var stereoShaderFile: java.io.File? = null
 
     /** Volume boost, as last set; [mpvVolume] scales by it. */
     @Volatile
@@ -204,6 +219,8 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
                 videoHeight = h.int("dheight")?.takeIf { v -> v > 0 } ?: it.videoHeight,
             )
         }
+        // A video opened with 3D on, or the next file at another size, gets its shader here.
+        if (stereo.on || stereoApplied != null) applyStereo()
         if (tracksDirty || tick % TRACK_POLL_EVERY == 0) {
             tracksDirty = false
             _tracks.value = readTracks(h)
@@ -271,6 +288,7 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
             subtitleDelayMs = prefs.delays.subtitleMs,
             audioDelayMs = prefs.delays.audioMs,
             buffering = true,
+            stereo = stereo,
         )
         _tracks.value = emptyList()
         val h = handle
@@ -522,6 +540,52 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
                 h.setPropertyBoolean("keepaspect", false)
             }
         }
+    }
+
+    override fun setStereo3d(stereo: Stereo3d) {
+        this.stereo = stereo
+        _state.update { it.copy(stereo = stereo) }
+        if (_state.value.opened) runCatching { applyStereo() }
+    }
+
+    /**
+     * mpv's user shader for 3D ([Stereo3d.mpvShader]), hooked before scaling, so hardware decoding
+     * stays on and the subtitles, drawn after it, stay sharp. The shader keeps the frame's size;
+     * the shape of one eye comes from `video-aspect-override`. Waits for the frame's size, which
+     * the shader is written for, and does nothing while what mpv has is already right.
+     */
+    @Synchronized
+    private fun applyStereo() {
+        val h = handle
+        val wanted = stereo
+        if (!wanted.on) {
+            if (stereoApplied == null) return
+            runCatching { h.setPropertyString("glsl-shaders", "") }
+            runCatching { stereoShaderFile?.delete() }
+            stereoShaderFile = null
+            runCatching { h.setPropertyString("video-aspect-override", "no") }
+                .onFailure { runCatching { h.setPropertyString("video-aspect-override", "-1") } }
+            stereoApplied = null
+            return
+        }
+        val width = h.int("width")?.takeIf { it > 0 } ?: return
+        val height = h.int("height")?.takeIf { it > 0 } ?: return
+        val next = Triple(wanted, width, height)
+        if (stereoApplied == next) return
+        runCatching {
+            // A new name every time: mpv would keep drawing the first shader it read at an old
+            // one, so a change of layout (side by side to top and bottom), glasses or eyes after
+            // the first did nothing but change the shape.
+            val file = java.io.File.createTempFile("tmplayer-3d-", ".glsl").apply { deleteOnExit() }
+            file.writeText(Stereo3d.mpvShader(wanted, width, height))
+            h.setPropertyString("glsl-shaders", file.absolutePath)
+            stereoShaderFile?.takeIf { it != file }?.delete()
+            stereoShaderFile = file
+            Stereo3d.aspect(width, height, wanted)?.let { aspect ->
+                h.setPropertyString("video-aspect-override", String.format(java.util.Locale.ROOT, "%.6f", aspect))
+            }
+            stereoApplied = next
+        }.onFailure { Logger.w(TAG, "3D shader not applied", it) }
     }
 
     override fun setDownmix(stereo: Boolean) {
@@ -798,6 +862,7 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
         closed = true
         scope.cancel()
         runCatching { player.close() }
+        runCatching { stereoShaderFile?.delete() }
     }
 
     private fun onEdt(block: () -> Unit) {

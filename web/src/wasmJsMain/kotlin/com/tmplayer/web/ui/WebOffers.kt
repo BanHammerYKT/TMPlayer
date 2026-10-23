@@ -414,7 +414,7 @@ private fun CoffeePill(onHide: () -> Unit) {
     }
 }
 
-/** On a wide window: a small card, the note, Buy Me a Coffee's own button and GitHub Sponsors. */
+/** On a wide window: a small card, the note and Buy Me a Coffee's own button. */
 @Composable
 private fun CoffeeCard(onHide: () -> Unit) {
     val s = LocalStrings.current
@@ -427,7 +427,7 @@ private fun CoffeeCard(onHide: () -> Unit) {
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
     ) {
         Column(
-            Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
+            Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
@@ -437,9 +437,6 @@ private fun CoffeeCard(onHide: () -> Unit) {
                 modifier = Modifier.padding(end = 28.dp),
             )
             CoffeeButton(onClick = { OpenExternal.browse(About.COFFEE) }, modifier = Modifier.fillMaxWidth())
-            TextButton(onClick = { OpenExternal.browse(About.SPONSORS) }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text(s.webCoffeeSponsorGithub, style = MaterialTheme.typography.labelMedium, color = Tone.muted)
-            }
         }
         Box(Modifier.align(Alignment.TopEnd).padding(2.dp)) { HideButton(onHide, framed = false) }
     }

@@ -5,7 +5,6 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.os.Looper
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
@@ -74,6 +73,7 @@ import com.tmplayer.data.ChatRepository
 import com.tmplayer.data.CopyHandoff
 import com.tmplayer.data.VideoCopies
 import com.tmplayer.data.copyQuality
+import com.tmplayer.data.hasPictureInPicture
 import com.tmplayer.data.LocalDownloads
 import com.tmplayer.data.OpeningStall
 import com.tmplayer.data.start
@@ -139,6 +139,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -311,6 +312,16 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** How far the picture stops short of the screen's bottom edge; see [fitSubtitlesTo]. */
     private var subtitleGapBelow = 0
 
+    /**
+     * While 3D is drawn for a VR headset or a 3D TV ([Stereo3d.View.Vr]): the subtitles' second
+     * copy, over the right eye's half, the first one over the left's ([fitSubtitlesTo]). Each eye
+     * then sees the whole line, where one copy across the middle was cut in two.
+     */
+    private var subtitleTwin: SubtitleView? = null
+
+    /** The lines on screen, for a [subtitleTwin] that comes up while one is showing. */
+    private var shownCues: List<Cue> = emptyList()
+
     /** A track picker, or the online subtitle list above one, is open. */
     private var pickerOpen = false
 
@@ -328,6 +339,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     /** The byte runs seen downloaded since the video opened, merged. Main thread only. */
     private var trickplaySpans: List<Trickplay.Span> = emptyList()
+
+    /**
+     * Whether [trickplaySpans] are worth keeping: false once [startTrickplay] found the device too
+     * short of memory for scrub thumbnails, or the setting off. Every TDLib update of the file
+     * (ten to thirty a second while it streams) merged a fresh list there, on the main thread of
+     * the 1 GB sticks that never read it.
+     */
+    private var trickplaySpansWanted = true
 
     /** Subtitle files loaded from the phone; a field because its picker registers before start. */
     private val subtitleFiles = SubtitleFiles(this, { player }, { showGestureFeedback(it) })
@@ -356,6 +375,26 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     /** Night mode for sound, as the viewer left it, read before the player is built. */
     private var nightModeOn = false
+
+    /**
+     * 3D video as chosen for this player ([Stereo3d]): off for every player built, and kept for
+     * an episode that follows in the same one, which is most likely 3D too.
+     */
+    private var stereo = Stereo3d.OFF
+
+    /**
+     * Whether this player has Media3's effects pipeline. It can only be built as the player
+     * starts, so it is built up front only for a file whose name says 3D, and otherwise on the
+     * first time 3D is chosen, by preparing the player again where it stands ([applyStereo]).
+     * Every other video keeps the plain path to the screen, with nothing in between.
+     */
+    private var stereoPipeline = false
+
+    /** The 3D layout the file's name declares, for the hint and the page's focus. */
+    private var stereoTagged: Stereo3d.Layout? = null
+
+    /** Whether the hint that the file looks 3D has been shown for this video. */
+    private var stereoHinted = false
 
     /** Even out volume, read with the others before the player is built; see [VolumeBoostProcessor.level]. */
     private var evenVolumeOn = true
@@ -458,10 +497,56 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private var resumeMs = 0L
 
     /** When the press that opened this video happened, from the intent ([EXTRA_PRESSED_AT]); 0 unknown. */
+    @Volatile
     private var pressedAt = 0L
 
     /** When this player was created, for the timing log when the press is not known. */
+    @Volatile
     private var openedAt = 0L
+
+    /**
+     * The opening's stages already written to the start log ([markStart]), one bit each. Atomic,
+     * because the first bytes are counted on Media3's loading thread.
+     */
+    private val startStages = java.util.concurrent.atomic.AtomicInteger()
+
+    /**
+     * Writes one stage of this video's opening to the start log (`adb logcat -s PlayerStart`),
+     * once, as the time since the press (or since the player opened when the press is not known):
+     * the line a device pass reads to see where the seconds before the first frame go. Nothing
+     * once the first frame is up, so a seek or a retry later adds no lines.
+     */
+    private fun markStart(stage: String, bit: Int) {
+        val opened = openedAt
+        if (opened == 0L) return
+        while (true) {
+            val seen = startStages.get()
+            if (seen and bit != 0) return
+            if (startStages.compareAndSet(seen, seen or bit)) break
+        }
+        val pressed = pressedAt
+        val now = SystemClock.elapsedRealtime()
+        val since = if (pressed > 0) "press" else "open"
+        Log.i(START_TAG, "$stage at ${now - (if (pressed > 0) pressed else opened)} ms since $since (file $fileId)")
+    }
+
+    /**
+     * Completed once this video's first frame is up, or its opening has failed: the lookups that
+     * only feed the menus and the end of the video wait for it on a television ([afterOpening]).
+     */
+    private var openedGate = CompletableDeferred<Unit>()
+
+    /**
+     * On a television, waits until the picture is up (at most [OPENING_GATE_MS]) before the work
+     * that is not needed for it: the episode and copy searches, the skip times, the storyboard and
+     * the session's artwork. On a 1 GB stick with four small cores each of them is a TDLib search,
+     * a network lookup or an image encode competing with the stream, the demuxer and the decoder
+     * for the same CPU while the viewer waits. Elsewhere it returns at once, as before.
+     */
+    private suspend fun afterOpening() {
+        if (!FormFactor.isTv(this)) return
+        withTimeoutOrNull(OPENING_GATE_MS) { openedGate.await() }
+    }
 
     /** Whether this video's picture tracks were looked at yet ([pictureUnplayable]). */
     private var pictureChecked = false
@@ -489,7 +574,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val format = video.first().getTrackFormat(0)
         Log.w("TMPlayer", "No decoder for the picture: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
         player?.pause()
-        showError(if (format.height >= UHD_HEIGHT) L.playerErrorUhd(format.height.toString()) else L.playerErrorFormat, retryable = false)
+        val lines = nominalLines(format.width, format.height)
+        showError(
+            when {
+                FormatRoute.dolbyVisionOnly(format) -> L.playerErrorDolbyVision
+                lines >= UHD_HEIGHT -> L.playerErrorUhd(lines.toString())
+                else -> L.playerErrorFormat
+            },
+            retryable = false,
+        )
         return true
     }
 
@@ -520,26 +613,66 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         )
         if (!heavy) return false
         Log.i("TMPlayer", "Picture decodes in software here: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
+        // 4K in software on this device plays at a few frames a second: with no lighter copy to
+        // hand over to, the sheet says it is too large rather than starting a slide show. Only
+        // when the FFmpeg decoder really took the picture: a device decoder that undersells
+        // itself is left to try, and its failure says the same thing.
+        val unwatchable = com.tmplayer.data.SoftwareDecode.unwatchable(
+            format.sampleMimeType,
+            format.width,
+            format.height,
+            hardware = false,
+            weak = true,
+        ) && DecoderSwitch.softwareVideoChosen(player)
         val swappable = playingQuality == 0 && !qualityHandPicked && !softwareSwapTried &&
             downloadedFile == null && joinedSource == null && hasMessage()
         if (!swappable) {
+            if (unwatchable) return tooLargeForSoftware(format)
             noteSoftwareDecode(playing = false)
             return false
         }
         val copies = postItem?.qualities?.takeIf { it.isNotEmpty() } ?: carriedQualities
         if (copies.isNotEmpty()) {
             if (swapForSoftware(copies)) return true
+            if (unwatchable) return tooLargeForSoftware(format)
             noteSoftwareDecode(playing = false)
             return false
         }
         // The copies not known yet: the message is being read as the player opens ([readPost]),
-        // and the swap waits a moment for it, the upload playing meanwhile.
+        // and the swap waits a moment for it, the upload playing meanwhile (held, when it would
+        // only stutter).
         softwareSwapTried = true
+        if (unwatchable) player?.pause()
         itemScope.launch {
             val later = kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }?.qualities.orEmpty()
-            if (later.isEmpty() || !swapForSoftware(later)) noteSoftwareDecode(playing = true)
+            if (later.isEmpty() || !swapForSoftware(later)) {
+                if (unwatchable) tooLargeForSoftware(format) else noteSoftwareDecode(playing = true)
+            }
         }
         return false
+    }
+
+    /**
+     * The failure sheet for a picture only the FFmpeg decoder takes here and too large for it
+     * ([com.tmplayer.data.SoftwareDecode.unwatchable]): the same sentence as a hardware decoder
+     * that gives up on 4K, naming the height and that a 1080p copy will play. Always true, for
+     * [checkSoftwareDecode].
+     */
+    private fun tooLargeForSoftware(format: androidx.media3.common.Format): Boolean {
+        Log.w("TMPlayer", "Too large to decode in software here: ${format.sampleMimeType} ${format.width}x${format.height}")
+        // Stopped, not paused: a paused player keeps loading, and a stream it cannot show is
+        // downloaded for nothing. TDLib's download goes too, unless the viewer asked to keep the
+        // file, since stopping the player leaves TDLib fetching (3.5 MB/s on the 1 GB TV after the
+        // sheet was up, 2026-10-23).
+        player?.stop()
+        if (fileId > 0 && !OfflineDownloads.isDownloading(fileId)) {
+            val id = fileId
+            lifecycleScope.launch { Td.cancelDownload(id) }
+        }
+        decoderPlan = null
+        beyondDevice = true
+        showError(L.playerErrorUhd(nominalLines(format.width, format.height).toString()), retryable = false)
+        return true
     }
 
     /**
@@ -617,6 +750,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         Log.i(START_TAG, "${fromPress}open to first frame ${now - openedAt} ms (file $fileId, resume $resumeMs ms, ${if (downloadedFile != null) "download" else "stream"})")
         openedAt = 0L
         pressedAt = 0L
+        openedGate.complete(Unit)
     }
 
     /**
@@ -692,6 +826,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         override fun onTransferStart(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
         override fun onBytesTransferred(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
             readBytes.addAndGet(bytesTransferred.toLong())
+            // One atomic read per call once logged, nothing more on the loading thread.
+            if (startStages.get() and STAGE_BYTES == 0) markStart("first bytes read", STAGE_BYTES)
         }
         override fun onTransferEnd(source: androidx.media3.datasource.DataSource, dataSpec: androidx.media3.datasource.DataSpec, isNetwork: Boolean) = Unit
     }
@@ -822,6 +958,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     /** The next episode was started from the credits, so the real end of the file does not start it again. */
     private var creditsSkipped = false
+
+    /**
+     * Wakes [watchForTheEnd] while the video is not playing: it sleeps then rather than looking at
+     * the clock twice a second for a playhead that is not moving, which on a 1 GB television kept
+     * the main thread waking for as long as a paused video was left on screen. Sent whenever
+     * something that loop reads can change without the video playing: playing or stopping, a
+     * seek, the lock, picture in picture, the loading sheet, the skip times arriving.
+     */
+    private val endWatchWake = Channel<Unit>(Channel.CONFLATED)
+
+    private fun wakeEndWatch() {
+        endWatchWake.trySend(Unit)
+    }
 
     /**
      * The "Skip intro" pill and what it works from: the timed stretches of this video, as
@@ -1037,13 +1186,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 activity = this,
                 root = findViewById(R.id.player_root),
                 title = { mediaTitle },
-                pictureInPicture = { packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) },
+                pictureInPicture = { hasPictureInPicture() },
                 saveToDownloads = ::canSaveToDownloads,
                 markWatched = ::hasMessage,
                 watched = { onWatchedList },
                 bookmarks = ::hasMessage,
                 bookmarkCount = { bookmarkList.value.size },
                 openInAnotherApp = { savable == true },
+                stereoOffered = ::stereoOffered,
+                stereo = { stereo.detailText() },
                 volumeBoost = { volumeBoostOn },
                 nightMode = { nightModeOn },
                 evenVolume = { evenVolumeOn },
@@ -1245,6 +1396,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         fileId = from.getIntExtra(EXTRA_FILE_ID, 0)
         pressedAt = from.getLongExtra(EXTRA_PRESSED_AT, 0L)
         openedAt = SystemClock.elapsedRealtime()
+        startStages.set(0)
+        openedGate.complete(Unit)
+        openedGate = CompletableDeferred()
+        // What starting this screen cost after the press: on a weak TV stick a part of the wait.
+        if (pressedAt > 0) Log.i(START_TAG, "player screen open at ${openedAt - pressedAt} ms since press (file $fileId)")
         // Read once: a later open of the same intent (a recreate) is not a press.
         from.removeExtra(EXTRA_PRESSED_AT)
         chatId = from.getLongExtra(EXTRA_CHAT_ID, 0)
@@ -1317,25 +1473,30 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         findCopies()
         findSkipTimes()
         // Telegram's lighter copies and storyboard (CP80), for the quality list and the scrub bar.
-        if (hasMessage()) itemScope.launch { Td.awaitAuthorizedSession(); readPost() }
+        if (hasMessage()) itemScope.launch { afterOpening(); Td.awaitAuthorizedSession(); readPost() }
 
         // Reading the saved position is a disk hit; do it off the main thread and seek once it
         // lands. Under "download the whole video first" there is no player to seek yet, so
         // [startPlayback] applies the same position as well; whichever arrives second sets it again.
         // A few seconds before the saved point, as Settings has it ([ResumeRewind]).
+        // The place saved on this device is read first and used at once: [startPlayback] waits
+        // only [RESUME_WAIT_MS] for it, and a read that misses that window prepares at 0, then
+        // seeks and restarts TDLib's download, which on a weak TV stick is seconds of buffering.
+        // The two slow sources, the other devices' places and the post's own start, are asked
+        // for alongside, after it, and move the video only when they say something else.
+        var bookmarked = false
         val resumeRead = itemScope.launch {
-            // Resume across devices, when on: the other devices' places in first, a couple of
-            // seconds at most, so a video half watched on the phone opens there on the TV.
-            com.tmplayer.data.ResumeSync.pullFor(settings)
             // A bookmark chosen on the detail page opens the video at its moment, once.
-            resumeMs = BookmarkJump.take(chatId, messageId)
+            val jump = BookmarkJump.take(chatId, messageId)
+            bookmarked = jump != null
+            resumeMs = jump
                 // Whichever copy of the video was played last: a switch of quality, or the 720p
                 // started on the phone and the 1080p opened on the television, carries on.
                 ?: runCatching { settings.resumeStartFor(currentItem()) }.getOrDefault(0L)
-            // Never watched here: the moment the poster chose to start at (CP80), if any.
+            // Never watched here: a link's moment, or the moment the poster chose to start at
+            // (CP80) when the post is already read. A post still on its way is [resumeLate]'s.
             if (resumeMs <= 0 && hasMessage()) {
-                val post = postItem ?: kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }
-                val start = com.tmplayer.data.PostStart.startMs(linkSec = startLinkSec, savedMs = 0, postSec = post?.startSec ?: 0, durationSec = durationSec)
+                val start = com.tmplayer.data.PostStart.startMs(linkSec = startLinkSec, savedMs = 0, postSec = postItem?.startSec ?: 0, durationSec = durationSec)
                 if (start > 0) {
                     player?.seekTo(start)
                     resumeMs = start
@@ -1344,9 +1505,34 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             }
             if (resumeMs > 0) {
                 player?.seekTo(resumeMs)
-                resumeNotice = L.playerResumingFrom(Translator.messages.formatter.clock(resumeMs))
-                renderStatusText()
-                offerStartOver()
+                showResumeFrom(resumeMs)
+            }
+        }
+        itemScope.launch {
+            resumeRead.join()
+            if (bookmarked) return@launch
+            val local = resumeMs
+            // Resume across devices, when on: the other devices' places in, a couple of seconds
+            // at most, so a video half watched on the phone opens there on the TV. Taken only when
+            // it is well away from the local place, so a sync that agrees costs no seek.
+            com.tmplayer.data.ResumeSync.pullFor(settings)
+            val synced = runCatching { settings.resumeStartFor(currentItem()) }.getOrDefault(0L)
+            if (synced > 0 && kotlin.math.abs(synced - local) > RESUME_SYNC_SLACK_MS) {
+                if (!movedSinceResume(local)) {
+                    player?.seekTo(synced)
+                    resumeMs = synced
+                    showResumeFrom(synced)
+                }
+                return@launch
+            }
+            // Never watched anywhere: the post's start, once the message is read.
+            if (local <= 0 && resumeMs <= 0 && synced <= 0 && hasMessage()) {
+                val post = postItem ?: kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }
+                val start = com.tmplayer.data.PostStart.startMs(linkSec = startLinkSec, savedMs = 0, postSec = post?.startSec ?: 0, durationSec = durationSec)
+                if (start > 0 && !movedSinceResume(0L)) {
+                    player?.seekTo(start)
+                    resumeMs = start
+                }
             }
         }
 
@@ -1359,6 +1545,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         itemScope.launch {
             val session = Td.awaitAuthorizedSession()
+            markStart("session ready", STAGE_SESSION)
             // The settings the player is built with, read side by side and alongside the file's
             // own decisions below, rather than one after another once those are made: each is a
             // read of the store, and fifteen in a row came before the first request.
@@ -1419,7 +1606,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     return@launch
                 }
                 if (!allowedOnThisConnection(availability)) return@launch
-                if (!makeRoomForThisVideo(availability)) return@launch
+                // The grid asked [RoomOnDisk] about this very file a moment ago, and asking again
+                // walks every cached video and can ask Telegram about each one: on a weak TV stick
+                // that is time added to every press of Play. Trusted once, and only for the file
+                // it was asked about; the next episode, autoplay and a change of copy ask again.
+                val roomDecidedFor = intent.getIntExtra(EXTRA_ROOM_DECIDED, 0)
+                intent.removeExtra(EXTRA_ROOM_DECIDED)
+                if (roomDecidedFor != fileId && !makeRoomForThisVideo(availability)) return@launch
                 // The head and the index on their way while the settings are read and the player
                 // is built ([StreamWarmup]); a no-op if the press already started it.
                 // From the saved place, read as [resumeRead] reads it, where the video resumes.
@@ -1465,6 +1658,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // then a seek away from it.
             if (resumeRead.isActive) withTimeoutOrNull(RESUME_WAIT_MS) { resumeRead.join() }
             if (!session.isCurrent()) return@launch
+            markStart("file and settings decided", STAGE_DECIDED)
             startPlayback(session.client)
         }
     }
@@ -1482,6 +1676,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val heapMb = manager.memoryClass
         return when {
             manager.isLowRamDevice || heapMb < LOW_HEAP_MB -> LOW_RAM_BUFFER_BYTES
+            // A TV stick or box reports a roomy heap but has 1 to 2 GB in all, shared with the
+            // decoder and the picture: 1.27.1's 20 MB played there, the 64 MB that followed lagged.
+            FormFactor.isTv(this) && heapMb < LARGE_HEAP_MB -> LOW_RAM_BUFFER_BYTES
             heapMb >= LARGE_HEAP_MB -> LARGE_BUFFER_BYTES
             else -> MID_BUFFER_BYTES
         }
@@ -1520,10 +1717,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** Builds the player, points it at the file, and puts a video surface in front of it. */
     private fun startPlayback(client: TdlClient) {
         val exo = buildPlayer(client).also { built ->
+            markStart("player built", STAGE_BUILT)
             built.addListener(playerListener)
             // A plain file for a download, which the default data source reads directly; the TDLib
-            // stream for everything else.
-            val source = joinedSource ?: downloadedFile?.let { android.net.Uri.fromFile(it) } ?: tdFileUri(fileId)
+            // stream for everything else, carrying its type so the right reader is tried first.
+            val source = joinedSource ?: downloadedFile?.let { android.net.Uri.fromFile(it) }
+                ?: tdFileUri(fileId, streamType(mediaMime, mediaFileName))
             // A stream also holds the Wi-Fi up while it plays, which matters once the screen is
             // off and the sound plays on ([PlaybackService]); a file on the disk needs only the CPU.
             val local = if (joinedSource != null) joinedAllLocal else downloadedFile != null
@@ -1534,15 +1733,18 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             subtitleFiles.metadata = sessionMetadata()
             built.setMediaItem(subtitleFiles.item(source))
             if (resumeMs > 0) built.seekTo(resumeMs)
+            prepareStereo(built)
             // With a cast up (the next episode, or a video opened while casting) the TV plays it
             // and this player waits, unprepared, for the cast to end. So it does while the cast
             // screen says the TV was lost: only Play here starts it.
             if (cast?.connected != true && cast?.casting != true) {
                 built.prepare()
                 built.playWhenReady = true
+                markStart("prepare asked", STAGE_PREPARED)
             }
         }
         player = exo
+        wakeEndWatch()
         castClient = client
         attachMediaSession(exo)
         attachSurface(exo)
@@ -1580,10 +1782,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         touchSurface = view
         view.resizeMode = videoScale.resizeMode
         controls?.setShape(videoScale)
-        if (!FormFactor.isTv(this)) {
-            view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
-                ?.addOnLayoutChangeListener { frame, _, _, _, _, _, _, _, _ -> fitSubtitlesTo(frame) }
-        }
+        // On a television only while 3D is drawn for a headset, which needs a copy per eye.
+        view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+            ?.addOnLayoutChangeListener { frame, _, _, _, _, _, _, _, _ -> fitSubtitlesTo(frame) }
 
         if (!FormFactor.isTv(this)) {
             // Fed from dispatchTouchEvent rather than attached here: see [PlayerGestures].
@@ -1901,6 +2102,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
         if (chatId == 0L || SeriesShelf.episodeOf(here).episode != null) return
         itemScope.launch {
+            afterOpening()
             val session = Td.awaitAuthorizedSession()
             val title = SeriesShelf.episodeOf(here).title.ifBlank { return@launch }
             val found = runCatching { ChatRepository(session.client).mediaPage(chatId, query = title).items }.getOrNull().orEmpty()
@@ -2234,6 +2436,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun fitSubtitlesTo(frame: View) {
         val root = findViewById<View>(R.id.player_root)
         if (root.width == 0 || frame.width == 0) return
+        val vr = stereo.on && stereo.view == Stereo3d.View.Vr
+        if (FormFactor.isTv(this) && !vr) {
+            fullScreenSubtitles()
+            return
+        }
         val at = IntArray(2)
         val origin = IntArray(2)
         frame.getLocationInWindow(at)
@@ -2249,11 +2456,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // taking it off and then adding the position's share on top stacked the two, so on a
         // picture that filled the screen the lines stood clearly higher than on a letterboxed one.
         val params = subtitleView.layoutParams as FrameLayout.LayoutParams
-        val width = right - left
+        // For a headset each eye's half of the picture gets its own copy of the lines.
+        val width = if (vr) (right - left) / 2 else right - left
         val height = (bottom - top).coerceAtLeast(0)
         if (
             params.width == width && params.height == height && subtitleGapBelow == root.height - bottom &&
-            params.leftMargin == left && params.topMargin == top && params.bottomMargin == 0
+            params.leftMargin == left && params.topMargin == top && params.bottomMargin == 0 &&
+            (subtitleTwin != null) == vr
         ) {
             return
         }
@@ -2267,9 +2476,67 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // Set from inside a layout pass, so the change is posted rather than lost.
         subtitleView.post {
             subtitleView.layoutParams = params
+            if (vr) {
+                twinSubtitles().layoutParams = FrameLayout.LayoutParams(params).apply { leftMargin = left + width }
+            } else {
+                dropSubtitleTwin()
+            }
             applySubtitleStyle()
             liftSubtitles()
         }
+    }
+
+    /**
+     * A television's subtitles as the layout has them, over the whole screen, once 3D for a
+     * headset is off again. Nothing to do while they already are.
+     */
+    private fun fullScreenSubtitles() {
+        val params = subtitleView.layoutParams as FrameLayout.LayoutParams
+        val margin = resources.getDimensionPixelSize(R.dimen.player_subtitle_bottom)
+        if (subtitleTwin == null && params.width == FrameLayout.LayoutParams.MATCH_PARENT && params.bottomMargin == margin) return
+        subtitleGapBelow = 0
+        params.gravity = FrameLayout.LayoutParams.UNSPECIFIED_GRAVITY
+        params.width = FrameLayout.LayoutParams.MATCH_PARENT
+        params.height = FrameLayout.LayoutParams.MATCH_PARENT
+        params.leftMargin = 0
+        params.topMargin = 0
+        params.bottomMargin = margin
+        subtitleView.post {
+            subtitleView.layoutParams = params
+            dropSubtitleTwin()
+            applySubtitleStyle()
+            liftSubtitles()
+        }
+    }
+
+    /** The right eye's copy of the subtitles, made the first time a headset needs it. */
+    private fun twinSubtitles(): SubtitleView = subtitleTwin ?: SubtitleView(this).also { twin ->
+        twin.setApplyEmbeddedStyles(true)
+        val parent = subtitleView.parent as android.view.ViewGroup
+        parent.addView(twin, parent.indexOfChild(subtitleView) + 1, FrameLayout.LayoutParams(0, 0))
+        twin.visibility = subtitleView.visibility
+        twin.alpha = subtitleView.alpha
+        twin.translationY = subtitleView.translationY
+        twin.setCues(shownCues)
+        subtitleTwin = twin
+    }
+
+    private fun dropSubtitleTwin() {
+        val twin = subtitleTwin ?: return
+        subtitleTwin = null
+        (twin.parent as? android.view.ViewGroup)?.removeView(twin)
+    }
+
+    /** Puts [cues] on screen, in both copies while a headset has two. */
+    private fun showCues(cues: List<Cue>) {
+        shownCues = cues
+        subtitleView.setCues(cues)
+        subtitleTwin?.setCues(cues)
+    }
+
+    /** Fits the subtitles again after 3D changed, as the picture's next layout would. */
+    private fun refitSubtitles() {
+        touchSurface?.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)?.let(::fitSubtitlesTo)
     }
 
     /**
@@ -2425,9 +2692,30 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         .build()
 
     private fun buildPlayer(client: TdlClient): ExoPlayer {
+        failurePinned = false
+        stereoPipeline = false
+        // A new player starts with both decoders on, so each may switch by itself once again.
+        decodersSwitched.clear()
         // Hardware decoders first; NextLib's FFmpeg renderers pick up the audio codecs a TV stick
         // has no silicon for: DTS and TrueHD tracks are common in video remuxes.
+        // Read once here, outside the factory, so nothing depends on when the factory's own
+        // constructor gets round to it.
+        val maskHdr10Plus = HevcHdr10PlusMasker.affectedDevice(android.os.Build.MANUFACTURER, android.os.Build.MODEL)
+        val fireTv = DeviceQuirks.isFireTv(this@PlayerActivity)
         val renderers = object : NextRenderersFactory(this@PlayerActivity) {
+            /**
+             * The stock codec adapters, except on the Fire TV sticks with the MediaTek MT8696
+             * decoder, where a Dolby Vision profile 8 decoder gets [Hdr10PlusMaskingCodecAdapterFactory]:
+             * a file that carries HDR10+ next to the Dolby Vision RPU plays as a black screen there
+             * otherwise. Wrapping the factory's adapters, not its renderers, keeps every renderer
+             * option Media3 and NextLib set. Elsewhere the HDR10+ layer can be what a screen without
+             * Dolby Vision shows, so it is left alone.
+             */
+            override fun getCodecAdapterFactory(): androidx.media3.exoplayer.mediacodec.MediaCodecAdapter.Factory {
+                val stock = super.getCodecAdapterFactory()
+                return if (maskHdr10Plus) Hdr10PlusMaskingCodecAdapterFactory(stock) else stock
+            }
+
             /**
              * The stock sink, plus the stereo fold described in [AudioDownmix].
              *
@@ -2511,8 +2799,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     .build()
                 // The provider goes to the AudioTrack output rather than to the sink itself, which
                 // is where Media3 1.11 moved it; otherwise this is the output the sink would build.
+                // On a Fire TV a bitstream track is held under its AudioFlinger's 2 MB line, see
+                // [PassthroughBufferCap]; elsewhere nothing has been seen refusing the larger size.
                 val output = AudioTrackAudioOutputProvider.Builder(context)
-                    .setAudioTrackBufferSizeProvider(audioBuffers)
+                    .setAudioTrackBufferSizeProvider(if (fireTv) PassthroughBufferCap(audioBuffers) else audioBuffers)
                     .build()
                 return DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(enableFloatOutput)
@@ -2547,6 +2837,30 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 )
             }
 
+            /**
+             * The video renderers as built, with the device's decoder judged by the picture's size
+             * rather than the level its file claims. See [LevelLenientVideoRenderer].
+             */
+            override fun buildVideoRenderers(
+                context: Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                eventHandler: android.os.Handler,
+                eventListener: androidx.media3.exoplayer.video.VideoRendererEventListener,
+                allowedVideoJoiningTimeMs: Long,
+                out: ArrayList<Renderer>,
+            ) {
+                val built = ArrayList<Renderer>()
+                super.buildVideoRenderers(
+                    context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback,
+                    eventHandler, eventListener, allowedVideoJoiningTimeMs, built,
+                )
+                built.mapTo(out) {
+                    if (it is androidx.media3.exoplayer.video.MediaCodecVideoRenderer) LevelLenientVideoRenderer(it) else it
+                }
+            }
+
             /** Media3's own text renderers, each behind the subtitle delay. See [DelayedTextRenderer]. */
             override fun buildTextRenderers(
                 context: Context,
@@ -2573,6 +2887,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         // Sized by the memory the system gives the app ([targetBufferBytes]): small on a 1 GB
         // stick, where a generous buffer is what gets the app killed, generous elsewhere.
+        val bufferBytes = targetBufferBytes()
+        // The back buffer is held inside the same byte budget as the buffer ahead, from the
+        // keyframe before it, so on a 20 MB budget ten seconds behind (more with a long GOP) of a
+        // high rate file left a few seconds ahead, or none, and the picture stalled with the line
+        // fine. There the back buffer is cut to a few seconds: a longer jump back reads the bytes
+        // off the disk, where the stream already put them.
+        val backBufferMs = if (bufferBytes <= LOW_RAM_BUFFER_BYTES) LOW_RAM_BACK_BUFFER_MS else BACK_BUFFER_MS
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(BUFFER_MIN_MS, BUFFER_MAX_MS, BUFFER_PLAYBACK_MS, BUFFER_REBUFFER_MS)
             // The same figures again for what Media3 calls local playback. Since 1.9.0 a file://
@@ -2587,13 +2908,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 BUFFER_PLAYBACK_MS,
                 BUFFER_REBUFFER_MS,
             )
-            .setTargetBufferBytes(targetBufferBytes())
+            .setTargetBufferBytes(bufferBytes)
             .setPrioritizeTimeOverSizeThresholds(false)
             // A few seconds of what has already played, kept behind the position. Without it a
             // short back-seek falls outside the buffer, which puts the read outside TDLib's
             // download window and restarts the download from there. Deliberately short, and from
             // the last keyframe, because this is memory on a 1 GB stick.
-            .setBackBuffer(BACK_BUFFER_MS, /* retainBackBufferFromKeyframe = */ true)
+            .setBackBuffer(backBufferMs, /* retainBackBufferFromKeyframe = */ true)
             .build()
 
         val plan = trackPlan
@@ -2625,8 +2946,25 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // Constant-bitrate seeking rescues formats that ship without a seek index. Not "always":
         // on a file that has an index the estimate is worse than the index, and the seek lands
         // somewhere other than where it was asked to.
-        val extractors = DefaultExtractorsFactory()
-            .setConstantBitrateSeekingEnabled(true)
+        //
+        // MPEG-TS as Blu-ray rips and TV recordings write it: DTS in an .m2ts is declared with the
+        // Blu-ray (HDMV) stream type, which Media3 leaves unread unless asked, so the film played
+        // silent; a recording whose H.264 has no IDR frames, only recovery points, never showed a
+        // picture; and a long GOP pushed the timestamps a seek searches for past Media3's window,
+        // so seeking landed far from the asked place. Jellyfin and Just Player set the same.
+        //
+        // Wrapped last so a Dolby Vision track this device would not show as Dolby Vision reaches
+        // the player as its HEVC base layer, which both decoders take ([DolbyVisionBaseLayer]).
+        val extractors = DolbyVisionBaseLayer(
+            this,
+            DefaultExtractorsFactory()
+                .setConstantBitrateSeekingEnabled(true)
+                .setTsExtractorFlags(
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
+                        androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES,
+                )
+                .setTsExtractorTimestampSearchBytes(TS_TIMESTAMP_SEARCH_BYTES),
+        )
 
         return ExoPlayer.Builder(this, renderers)
             .setLoadControl(loadControl)
@@ -2646,7 +2984,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                         ),
                     ).setTransferListener(byteCounter),
                     extractors,
-                ),
+                )
+                    // A text track saved in a Windows code page rather than UTF-8 reads in its
+                    // language's page instead of as mojibake ([SubtitleEncoding]).
+                    .setSubtitleParserFactory(SubtitleEncoding(androidx.media3.extractor.text.DefaultSubtitleParserFactory())),
             )
             .setSeekBackIncrementMs(Skip.BACK_MS)
             .setSeekForwardIncrementMs(Skip.FORWARD_MS)
@@ -2655,6 +2996,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // before the target up to it, seconds of waiting on a long GOP. Only a frame step and
             // the A-B repeat seek exactly ([exactSeekTo]).
             .setSeekParameters(SeekParameters.CLOSEST_SYNC)
+            // On a television the playback thread wakes when a renderer next has something to
+            // do (the next frame due, the audio buffer running down) instead of every 10 ms. It
+            // was the busiest thread in the app while a video played on the 1 GB stick, about 13%
+            // of a core, with the UI idle. A renderer that cannot say keeps the 10 ms. Left as it
+            // was on phones and tablets, where nothing measured asked for it.
+            .experimentalSetDynamicSchedulingEnabled(FormFactor.isTv(this))
             .build()
             .apply {
                 setAudioAttributes(movieAudioAttributes, /* handleAudioFocus = */ true)
@@ -2850,6 +3197,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The failure sheet is up for something worth trying again ([showError]). */
     private var failedRetryable = false
 
+    /**
+     * The failure sheet is up ([showError]) and stays up until the viewer answers it or a new
+     * player starts: the player's own later states (a buffering spell, ready) no longer take it
+     * down. A 4K picture this TV cannot decode used to have its sheet hidden by the buffering that
+     * followed it, leaving "Loading 12%" over a paused picture for good (2026-10-23).
+     */
+    private var failurePinned = false
+
     /** True while the sheet counts down to the next episode ([onVideoEnded]). */
     private var countingDownToNext = false
 
@@ -3035,7 +3390,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     private val playerListener = object : Player.Listener {
         override fun onCues(cueGroup: CueGroup) {
-            subtitleView.setCues(scaledForPicture(cueGroup.cues))
+            showCues(scaledForPicture(cueGroup.cues))
             if (!firstCuesLogged && cueGroup.cues.isNotEmpty()) {
                 firstCuesLogged = true
                 val pictures = cueGroup.cues.count { it.bitmap != null }
@@ -3057,6 +3412,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
          * a phone, and the file's defaults on a series being watched for the first time.
          */
         override fun onTracksChanged(tracks: Tracks) {
+            if (!tracks.isEmpty) markStart("tracks known", STAGE_TRACKS)
             logSubtitleTracks(tracks)
             if (pictureUnplayable(tracks)) return
             if (checkSoftwareDecode(tracks)) return
@@ -3068,6 +3424,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         override fun onRenderedFirstFrame() {
             logFirstFrame()
+            hintStereo()
             if (videoBackAskedAt == 0L) return
             Log.i("TMPlayer", "Background audio: picture back in ${SystemClock.elapsedRealtime() - videoBackAskedAt} ms")
             videoBackAskedAt = 0L
@@ -3092,6 +3449,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            wakeEndWatch()
             loopHandler.removeCallbacks(loopWatch)
             if (isPlaying && abLoop?.complete == true) loopHandler.post(loopWatch)
             // Started again from outside the card (a headset, the notification): the question
@@ -3115,8 +3473,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             when (state) {
                 // Only the very first wait earns the full screen; later stalls get the chip.
                 Player.STATE_BUFFERING -> {
-                    if (openingFilm) showStatus(L.commonLoading) else showRebuffering()
-                    controls?.setBuffering(!openingFilm)
+                    if (!failurePinned) {
+                        if (openingFilm) showStatus(L.commonLoading) else showRebuffering()
+                        controls?.setBuffering(!openingFilm)
+                    }
                 }
 
                 // Playing again is the only proof that a recovery worked, so the budget is
@@ -3127,12 +3487,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                         seekStartedAt = 0L
                     }
                     recoveryAttempts = 0
+                    markStart("ready to play", STAGE_READY)
+                    // Sound alone has no first frame: ready is its picture.
+                    openedGate.complete(Unit)
                     firstFrameReady = true
                     noteSeekIndex()
                     readChapters()
                     offerStartOver()
                     controls?.setBuffering(false)
-                    hideStatus()
+                    if (!failurePinned) hideStatus()
                     showAudioCard()
                     // Once, as the picture first lands: the viewer sees the name of what they
                     // opened and where the controls live, and the row folds away on its own.
@@ -3170,6 +3533,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             newPosition: Player.PositionInfo,
             reason: Int,
         ) {
+            // A paused playhead moved by a seek may have left the skip pill's stretch or the
+            // next-up card's last half minute, or come into them.
+            wakeEndWatch()
             if (reason != Player.DISCONTINUITY_REASON_SEEK) return
             seekStartedAt = SystemClock.elapsedRealtime()
             noteSeek(oldPosition.positionMs, newPosition.positionMs)
@@ -3180,6 +3546,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // only when the other decoder can take this format.
             decoderPlan = DecoderSwitch.planFor(player, error)
             lastPlaybackError = error
+            if (switchDecoderByItself(error)) return
             // A file TDLib cannot size is a stale id, not a slow network: retrying the same id
             // only spins for a minute, while asking for the message again fixes it in a second.
             if (staleFileId(error) && resourceAgain(error, sameId = { if (!recoverFrom(error)) showError(friendlyError(error), retryable = !isHopeless(error)) })) return
@@ -3449,7 +3816,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         player = null
         // The listener is gone before the release, so the player's own "no cues" never arrives:
         // the line on screen would stay frozen over the next video's opening.
-        subtitleView.setCues(emptyList())
+        showCues(emptyList())
     }
 
     /**
@@ -3465,12 +3832,31 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun isHopeless(error: PlaybackException): Boolean = when (error.errorCode) {
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
         PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
         -> true
 
-        else -> false
+        else -> tooLargeForDecoder(error)
+    }
+
+    /**
+     * A 4K video the device's decoder gave up on part way. A 1080p television's decoder (the Mi
+     * TV's Amlogic among them) says it cannot do 3840x2160, is used anyway because it is the only
+     * one that knows the codec, and fails at its first frame with a bare decoding error, which
+     * put "Something went wrong" on the screen. No retry helps, and the sentence should say why.
+     */
+    private fun tooLargeForDecoder(error: PlaybackException): Boolean =
+        error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED && failedLines(error) >= UHD_HEIGHT
+
+    /**
+     * The video's size as people name it (1080, 2160): what played, or what the failing renderer
+     * was handed when nothing did. See [nominalLines].
+     */
+    private fun failedLines(error: PlaybackException): Int {
+        val format = (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+        return maxOf(nominalLines(videoWidth, videoHeight), nominalLines(format?.width ?: 0, format?.height ?: 0))
     }
 
     /**
@@ -3535,15 +3921,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             L.playerErrorConnection
 
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED.takeIf { tooLargeForDecoder(error) },
         ->
             // A remux with a single video track bypasses the selector's viewport constraints, so a
             // 4K stream reaches a decoder built for 1080p. Naming the resolution matters: "a
             // different copy may work" sends somebody looking for a bad file, not a smaller one.
-            if (videoHeight >= UHD_HEIGHT) {
-                L.playerErrorUhd(videoHeight.toString())
-            } else {
-                L.playerErrorFormat
+            // Dolby Vision profile 5 says what it is, since no copy of the same file plays here.
+            when {
+                (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+                    ?.let(FormatRoute::dolbyVisionOnly) == true -> L.playerErrorDolbyVision
+                failedLines(error) >= UHD_HEIGHT -> L.playerErrorUhd(failedLines(error).toString())
+                else -> L.playerErrorFormat
             }
 
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
@@ -3578,6 +3968,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         itemScope.launch {
             if (chatId == 0L) return@launch
+            afterOpening()
             val session = Td.awaitAuthorizedSession()
             val repository = ChatRepository(session.client)
             // In a group with topics the next episode is looked for in this video's own topic, or
@@ -4014,11 +4405,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 inPictureInPicture || intent.getBooleanExtra(EXTRA_OUTSIDE_APP_TASK, false),
             ),
         )
+        // This screen lingers until the next one is drawn, and its player with it: still reading
+        // the stream, still holding the decoders. A TV stick's hardware decoder may serve only one
+        // player at a time, and its line and its cores are the new video's now. Stopped here,
+        // which releases the decoders and the reads on the playback thread without the wait a
+        // release would cost this one; the place is kept, so the saves on the way out still find
+        // it, and [onDestroy] releases the rest as before.
+        player?.let { exo ->
+            saveResumePosition(leaving = true)
+            // A stopped player has no tracks to report, so the later saves on the way out would
+            // write the place without them: this one is the last.
+            savedForHandOver = true
+            exo.stop()
+        }
         finish()
     }
 
     /** Set by [playEpisode], so the episode handing over to the next does not open the app too. */
     private var handingOver = false
+
+    /** Set once [playEpisode] has written the place and stopped the player: nothing later saves. */
+    private var savedForHandOver = false
 
     /**
      * An episode started from the corner window lands in the window's own task, not the app's,
@@ -4265,9 +4672,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * outline is what survives a bright frame, and the optional box is for a busy one.
      */
     private fun applySubtitleStyle() {
-        subtitleView.setFractionalTextSize(subtitleTextFraction())
-        subtitleView.setBottomPaddingFraction(subtitleBottomFraction())
-        subtitleView.setStyle(SubtitleLook.captionStyle(subtitleStyle))
+        for (view in listOfNotNull(subtitleView, subtitleTwin)) {
+            view.setFractionalTextSize(subtitleTextFraction())
+            view.setBottomPaddingFraction(subtitleBottomFraction())
+            view.setStyle(SubtitleLook.captionStyle(subtitleStyle))
+        }
     }
 
     /**
@@ -4650,9 +5059,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * with too little memory to decode a second picture beside the film (a 1 GB stick).
      */
     private fun startTrickplay() {
-        if (!DeviceQuirks.trickplayMemory(this)) return
+        if (!DeviceQuirks.trickplayMemory(this)) {
+            stopTrickplaySpans()
+            return
+        }
         lifecycleScope.launch {
-            if (!runCatching { settings.trickplayNow() }.getOrDefault(true)) return@launch
+            if (!runCatching { settings.trickplayNow() }.getOrDefault(true)) {
+                stopTrickplaySpans()
+                return@launch
+            }
             val frames = TrickplayFrames(
                 scope = lifecycleScope,
                 // Not for a video joined from pieces: one piece's file is not the video's.
@@ -4665,6 +5080,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             trickplay = frames
             showScrubPictures()
         }
+    }
+
+    /** No scrub thumbnails from the video's own frames this time: their byte runs are not kept either. */
+    private fun stopTrickplaySpans() {
+        trickplaySpansWanted = false
+        trickplaySpans = emptyList()
     }
 
     /**
@@ -4704,7 +5125,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         if (fileSizeBytes <= 0 && file.size > 0) fileSizeBytes = file.size
         val local = file.local
         trickplayPath = local.path.takeIf { it.isNotBlank() }
-        if (local.downloadedPrefixSize > 0) {
+        if (trickplaySpansWanted && local.downloadedPrefixSize > 0) {
             val run = Trickplay.Span(local.downloadOffset, local.downloadOffset + local.downloadedPrefixSize)
             trickplaySpans = Trickplay.merge(trickplaySpans + run)
         }
@@ -4864,7 +5285,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (FormFactor.isTv(this)) return
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        if (!hasPictureInPicture()) return
         if (player?.isPlaying != true) return
         if (cast?.casting == true) return
         if (statusOverlay.visibility == View.VISIBLE) return
@@ -4876,7 +5297,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     /** The overflow menu's and the row's picture in picture: straight into the corner. */
     private fun enterPictureInPictureNow() {
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        if (!hasPictureInPicture()) return
         runCatching { enterPictureInPictureMode(pictureInPictureParams()) }
     }
 
@@ -4886,10 +5307,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun updatePictureInPictureParams() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        if (!hasPictureInPicture()) return
         runCatching { setPictureInPictureParams(pictureInPictureParams()) }
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun pictureInPictureParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder()
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -4924,6 +5346,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPictureInPicture = isInPictureInPictureMode
+        wakeEndWatch()
         if (!isInPictureInPictureMode) pictureInPictureEndedAt = SystemClock.elapsedRealtime()
         // At thumbnail size there is room for the picture and nothing else. The system draws its
         // own play and pause over the window, fed by the media session.
@@ -4935,6 +5358,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             undoChip?.hide()
         }
         subtitleView.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+        subtitleTwin?.visibility = subtitleView.visibility
         downloadChip.visibility = View.GONE
         gestures?.controlsVisible = false
     }
@@ -4968,7 +5392,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val menu = android.widget.PopupMenu(this, anchor, Gravity.END)
         val items = menu.menu
         val entries = PlayerMenu.phoneEntries(
-            pictureInPicture = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE),
+            pictureInPicture = hasPictureInPicture(),
             openInAnotherApp = savable == true,
             saveToDownloads = canSaveToDownloads(),
             markWatched = hasMessage(),
@@ -4979,6 +5403,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             saveFrame = savable == true,
             // Only while the row has no button for it: a phone held upright.
             pictureShape = controls?.shapeOnRow != true,
+            stereo = stereoOffered(),
         )
         // Speed and the sleep timer open the pickers' sheet rather than a submenu, so a choice
         // of one of several looks the same here as the subtitle and audio pickers.
@@ -4989,6 +5414,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 loop = abLoop,
                 bookmarks = bookmarkList.value.size,
                 shape = videoScale,
+                stereo = stereo.detailText(),
             )
             // Lock the screen heads the menu in a group of its own, under a divider, with the
             // lock the television's and the desktop's menus draw beside the same words.
@@ -5006,6 +5432,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 PhoneMenuEntry.LockScreen -> lockScreen()
                 PhoneMenuEntry.PictureInPicture -> enterPictureInPictureNow()
                 PhoneMenuEntry.PictureShape -> showSheet { it.showShape(videoScale, ::applyScale) }
+                PhoneMenuEntry.Stereo -> showStereo()
                 PhoneMenuEntry.VolumeBoost -> toggleVolumeBoost()
                 PhoneMenuEntry.NightMode -> toggleNightMode()
                 PhoneMenuEntry.EvenVolume -> toggleEvenVolume()
@@ -5039,6 +5466,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             PlayerMenuEntry.LockScreen -> lockScreen()
             PlayerMenuEntry.PlaybackDetails -> showPlaybackDetails()
             PlayerMenuEntry.StartOver -> startOver()
+            PlayerMenuEntry.Stereo -> showStereo()
             PlayerMenuEntry.PictureInPicture -> enterPictureInPictureNow()
             PlayerMenuEntry.OpenInAnotherApp -> openInAnotherApp()
             PlayerMenuEntry.SaveToDownloads -> saveToDownloads()
@@ -5334,6 +5762,91 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         lifecycleScope.launch { runCatching { settings.setNightMode(on) } }
     }
 
+    /** 3D video is for a picture: not sound alone, and not while a cast plays the video. */
+    private fun stereoOffered(): Boolean = !isAudio && cast?.connected != true && cast?.casting != true
+
+    /**
+     * Before the player is first prepared: what the file's name says about 3D, and the effects
+     * pipeline built only for a file that says it is 3D, or when 3D is already on (an episode
+     * that follows in a new player), so turning it on there needs no second start.
+     */
+    private fun prepareStereo(exo: ExoPlayer) {
+        stereoTagged = if (isAudio) null else Stereo3d.detect(listOf(mediaFileName, mediaCaption, mediaTitle).joinToString(" "))
+        stereoHinted = false
+        if (stereoPipeline || isAudio) return
+        if (stereo.on || stereoTagged != null) {
+            exo.setVideoEffects(if (stereo.on) listOf(Stereo3dEffect(stereo)) else emptyList())
+            stereoPipeline = true
+        }
+    }
+
+    /** Once a video, on its first picture: a file named as 3D says where 3D video is. Nothing changes by itself. */
+    private fun hintStereo() {
+        if (stereoHinted || stereo.on || stereoTagged == null) return
+        stereoHinted = true
+        showGestureFeedback(L.playerStereoFound)
+    }
+
+    private fun showStereo() {
+        showSheet { it.showStereo(stereo, stereoTagged) { next -> applyStereo(next) to stereo } }
+    }
+
+    /**
+     * Why 3D cannot be drawn for the video playing, or null when it can: an HDR picture, whose
+     * colours the shader would wash out, and a video on the app's own (FFmpeg) decoder, whose
+     * frames do not pass through Media3's effects.
+     */
+    private fun stereoBlocked(exo: ExoPlayer): String? {
+        val color = exo.videoFormat?.colorInfo
+        if (color != null && androidx.media3.common.ColorInfo.isTransferHdr(color)) return L.playerStereoNotHdr
+        val onFfmpeg = (0 until exo.rendererCount).any { index ->
+            exo.getRendererType(index) == C.TRACK_TYPE_VIDEO &&
+                exo.getRenderer(index).state != androidx.media3.exoplayer.Renderer.STATE_DISABLED &&
+                DecoderSwitch.isFfmpeg(exo.getRenderer(index))
+        }
+        return if (onFfmpeg) L.playerStereoNotSoftware else null
+    }
+
+    /**
+     * Puts [next] on the picture. A choice that only changes the glasses while 3D is off, or that
+     * the video cannot take ([stereoBlocked]), changes nothing on screen. The first time 3D comes
+     * on in a player without the pipeline, the player is prepared again where it stands, a
+     * moment's wait with the place, the tracks and play or pause kept.
+     *
+     * Returns why 3D could not come on, for the page to say, or null.
+     */
+    private fun applyStereo(next: Stereo3d): String? {
+        val exo = player ?: return null
+        val before = stereo
+        if (next.on && !before.on) {
+            stereoBlocked(exo)?.let { why ->
+                // Kept as a choice of glasses, so a later video can use it.
+                stereo = before.copy(view = next.view, swapEyes = next.swapEyes)
+                return why
+            }
+        }
+        stereo = next
+        if (!next.on && !before.on) return null
+        val effects: List<androidx.media3.common.Effect> = if (next.on) listOf(Stereo3dEffect(next)) else emptyList()
+        if (stereoPipeline) {
+            exo.setVideoEffects(effects)
+        } else if (next.on) {
+            stereoPipeline = true
+            val at = exo.currentPosition
+            val play = exo.playWhenReady
+            exo.stop()
+            exo.setVideoEffects(effects)
+            exo.seekTo(at)
+            exo.prepare()
+            exo.playWhenReady = play
+        }
+        stereoHinted = true
+        // A headset's two halves take a copy of the subtitles each, and lose it after.
+        refitSubtitles()
+        showGestureFeedback(if (next.on) L.playerStereoOnNow(next.view.label()) else L.playerStereoOffNow)
+        return null
+    }
+
     /**
      * The menu's Even out volume: a quiet track lifted towards the level of other videos, on the
      * sound already playing (the lift moves slowly, so it does not jump), and kept for every video.
@@ -5549,6 +6062,22 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         App.backgroundScope.launch { runCatching { store.rememberSpeed(scopes, value) } }
     }
 
+    /** Puts the "Resuming from" line up for [atMs] and offers the phone's way back to the start. */
+    private fun showResumeFrom(atMs: Long) {
+        resumeNotice = L.playerResumingFrom(Translator.messages.formatter.clock(atMs))
+        renderStatusText()
+        offerStartOver()
+    }
+
+    /**
+     * Whether the viewer has taken the video somewhere else since it opened at [fromMs], in which
+     * case a late answer about where to resume must leave it there.
+     */
+    private fun movedSinceResume(fromMs: Long): Boolean {
+        val at = player?.currentPosition ?: return false
+        return kotlin.math.abs(at - fromMs) > RESUME_SYNC_SLACK_MS
+    }
+
     /**
      * The phone's way back to the start of a video that opened where it was left: a line over the
      * picture with "Start over", for a few seconds. It needs both the saved position and a picture,
@@ -5633,6 +6162,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         undoChip?.hide()
         if (locked) return
         locked = true
+        wakeEndWatch()
         // The lock is invisible to a hand on a lap: it is felt going on and coming off.
         findViewById<View>(R.id.player_root)?.haptic(com.tmplayer.ui.components.Haptic.Confirm, touchPrefs.haptics)
         lockedAt = android.os.SystemClock.uptimeMillis()
@@ -5760,6 +6290,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun unlockScreen() {
         if (!locked) return
         locked = false
+        wakeEndWatch()
         findViewById<View>(R.id.player_root)?.haptic(com.tmplayer.ui.components.Haptic.ToggleOff, touchPrefs.haptics)
         unlockHeldKey = 0
         unlockPill?.removeCallbacks(unlockAfterHold)
@@ -5803,6 +6334,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * in, and near the end of an episode with a successor and autoplay on, the card comes up and
      * counts the remaining seconds down.
      *
+     * While the video is not playing (paused, waiting for bytes, not built yet) nothing here moves
+     * on its own, so the loop sleeps until [endWatchWake] says something did, and looks once.
+     *
      * "Near the end" is the last half minute, or from the start of the closing credits where
      * somebody has timed them and they begin earlier than that: credits that roll for two minutes
      * are two minutes nobody is watching for, which is when every streaming service raises its
@@ -5813,7 +6347,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val autoplay = runCatching { settings.autoplayNextNow() }.getOrDefault(true)
                 while (true) {
-                    delay(500)
+                    if (player?.isPlaying == true) delay(500) else endWatchWake.receive()
                     val exo = player ?: continue
                     updateSkipPill(exo, autoplay)
                     if (!autoplay) continue
@@ -5871,6 +6405,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun findSkipTimes() {
         val metadata = OnlineMetadata.current ?: return
         itemScope.launch {
+            afterOpening()
             var seconds = durationSec
             if (seconds <= 0) {
                 withTimeoutOrNull(SKIP_TIMES_WAIT_MS) {
@@ -5888,6 +6423,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             skipSegments = withContext(Dispatchers.IO) {
                 runCatching { metadata.skipTimes(item) }.getOrDefault(emptyList())
             }
+            wakeEndWatch()
         }
     }
 
@@ -6130,11 +6666,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 gap = (8 * resources.displayMetrics.density).toInt(),
                 tv = tv,
             )
-            subtitleView.animate()
-                .alpha(if (place.hidden) 0f else 1f)
-                .translationY(-place.lift.toFloat())
-                .setDuration(SUBTITLE_LIFT_MS)
-                .start()
+            for (view in listOfNotNull(subtitleView, subtitleTwin)) {
+                view.animate()
+                    .alpha(if (place.hidden) 0f else 1f)
+                    .translationY(-place.lift.toFloat())
+                    .setDuration(SUBTITLE_LIFT_MS)
+                    .start()
+            }
         }
     }
 
@@ -6264,15 +6802,17 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 loaderHost?.thumbnail = frame
             }
             val full = frame.asAndroidBitmap()
-            // The notification's and the lock screen's picture too.
-            sessionArtwork = withContext(Dispatchers.Default) { artworkOf(full) }
-            refreshSessionMetadata()
             statusPoster?.setImageBitmap(full)
             // Where there was a minithumbnail the backdrop keeps it: stretching a real thumbnail
             // across 1080p is a soft, ugly photograph, while stretching a forty-pixel one is a
             // blur. Where there was not, a soft backdrop still beats a flat sheet.
             if (mini == null) statusArt?.setImageBitmap(full)
             revealArtwork()
+            // The notification's and the lock screen's picture too: an image encode, which a
+            // television leaves until the video is up ([afterOpening]).
+            afterOpening()
+            sessionArtwork = withContext(Dispatchers.Default) { artworkOf(full) }
+            refreshSessionMetadata()
         }
     }
 
@@ -6376,6 +6916,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         watchOpening()
         layOutSheetForThisScreen()
         statusOverlay.visibility = View.VISIBLE
+        wakeEndWatch()
         statusIcon.visibility = View.GONE
         rebufferChip.visibility = View.GONE
         feedback?.buffering(false)
@@ -6539,7 +7080,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** A stall after playback has begun: a small chip, so the video stays on screen. */
     private fun showRebuffering() {
         // The sheet saying nothing is arriving stays until bytes do, or the viewer answers it.
-        if (slowStartUp) return
+        if (slowStartUp || failurePinned) return
         openingFilm = false
         statusOverlay.visibility = View.GONE
         val offline = networkOffline && !downloadComplete
@@ -6595,6 +7136,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      *   certain to fail again is worse than offering none.
      */
     private fun showError(message: String, retryable: Boolean = true, freeUp: Boolean = false) {
+        failurePinned = true
+        val beyond = beyondDevice
+        beyondDevice = false
+        // The opening is over, if not the way it was meant to be: the waiting lookups go ahead.
+        openedGate.complete(Unit)
         // Out of sight the sheet waits for the viewer, and the notification says it is there.
         stopUnseen()
         failedRetryable = retryable
@@ -6623,7 +7169,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // One attempt button, not two: the app works out whether it means a plain retry or a
         // delete and a fresh fetch. See [reloadFromScratch].
         statusRetry?.visibility = View.GONE
-        showFailureActions(retryable)
+        showFailureActions(retryable, offerOtherApp = !beyond)
         updateDownloadChip()
     }
 
@@ -6639,6 +7185,41 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusName?.visibility = View.GONE
     }
 
+    /** The track types this player already moved to the other decoder by itself ([switchDecoderByItself]). */
+    private val decodersSwitched = mutableSetOf<Int>()
+
+    /**
+     * The first decoder failure of a picture or a soundtrack goes straight to the other decoder,
+     * the way the failure sheet's "Try the other decoder" would, without the viewer having to read
+     * a sheet first: a device decoder that claimed a format and then choked on it (a Hi10P film, a
+     * profile the chip lists and cannot do), the FFmpeg decoder failing where the device's would
+     * not, or a Dolby or DTS track whose passthrough AudioTrack the device refused. Once per track
+     * type per player ([FormatRoute.switchesByItself]): a second failure brings the sheet, with
+     * the button to go back. Never to software for a 4K picture on a weak device, which would
+     * only stutter; the sheet says so instead.
+     */
+    private fun switchDecoderByItself(error: PlaybackException): Boolean {
+        val plan = decoderPlan ?: return false
+        if (player == null) return false
+        val format = (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+        val tooSlow = weakDevice && format != null && com.tmplayer.data.SoftwareDecode.unwatchable(
+            format.sampleMimeType,
+            format.width,
+            format.height,
+            hardware = false,
+            weak = true,
+        )
+        if (!FormatRoute.switchesByItself(plan.trackType, plan.toFfmpeg, decodersSwitched, tooSlow, firstFrameReady)) return false
+        decodersSwitched += plan.trackType
+        Log.w(
+            "TMPlayer",
+            "Decoder failed (${error.errorCodeName}) on ${format?.sampleMimeType} ${format?.codecs.orEmpty()}: " +
+                "switching to the ${if (plan.toFfmpeg) "FFmpeg" else "device"} decoder",
+        )
+        tryOtherDecoder()
+        return true
+    }
+
     /**
      * "Try the other decoder": the failed side's renderers off ([DecoderSwitch]), and the player
      * prepared again where it stood. A player that failed keeps its position, so nothing is lost.
@@ -6649,6 +7230,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         decoderPlan = null
         hideFailureActions()
         DecoderSwitch.apply(exo, plan)
+        failurePinned = false
         showStatus(if (plan.toFfmpeg) L.playerDecoderSoftwareNow else L.playerDecoderDeviceNow)
         exo.prepare()
         exo.playWhenReady = true
@@ -6679,7 +7261,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * button becomes the handover to an app that does have it. That is settled from disk and so
      * arrives a moment after the sheet, which is readable immediately either way.
      */
-    private fun showFailureActions(retryable: Boolean) {
+    private fun showFailureActions(retryable: Boolean, offerOtherApp: Boolean = true) {
         statusReload?.visibility = View.GONE
         statusOpenWith?.visibility = View.GONE
         // Last and quietest: the logs to send with a report of it. See [rememberSendLogs].
@@ -6735,7 +7317,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             if (state == ExternalPlayer.Readiness.Nothing) return@launch
             // Offered on the failure another app fixes, and left off the one it does not: a stream
             // that would not start has nothing on disk worth handing anywhere.
-            if (retryable) return@launch
+            if (retryable || !offerOtherApp) return@launch
             if (savable != true) return@launch
             statusOpenWith?.apply {
                 text = if (state == ExternalPlayer.Readiness.Complete) {
@@ -6763,6 +7345,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * failure it was for.
      */
     private var freeUpOnFailure = false
+
+    /**
+     * The failure on screen is a picture beyond this device's decoders ([tooLargeForSoftware]), so
+     * no other app plays it either and the sheet offers none. Cleared by [showError] each time.
+     */
+    private var beyondDevice = false
 
     /** Leaves for the Downloads screen with Free up space up, which is what the refusal offers. */
     private fun openFreeUpSpace() {
@@ -6801,6 +7389,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusRetry?.visibility = View.GONE
         lifecycleScope.launch {
             val plan = runCatching { reloadPlan() }.getOrDefault(Reload.Plan.PlainRetry)
+            failurePinned = false
             showStatus(Reload.status(plan))
             if (plan == Reload.Plan.StartOver) {
                 val session = Td.awaitAuthorizedSession()
@@ -6864,6 +7453,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun retryPlayback() {
         failedRetryable = false
+        failurePinned = false
         statusRetry?.visibility = View.GONE
         recoveryAttempts = 0
         showStatus(L.playerTryingAgain)
@@ -7021,6 +7611,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         failedRetryable = false
         openingFilm = false
         statusOverlay.visibility = View.GONE
+        wakeEndWatch()
         stopArtDrift()
         rebufferChip.visibility = View.GONE
         feedback?.buffering(false)
@@ -7102,7 +7693,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     }
 
     override fun onDestroy() {
-        loopHandler.removeCallbacks(loopWatch)
+        // Every runnable on this handler, the undo chip's expiry among them: a delayed one holds
+        // the whole activity until it fires.
+        loopHandler.removeCallbacksAndMessages(null)
         stopArtDrift()
         saveResumePosition(leaving = true)
         // After the write above, which took the TV's place while the cast was still up.
@@ -7197,6 +7790,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * last tenth of a film is still being watched.
      */
     private fun saveResumePosition(leaving: Boolean = false) {
+        if (savedForHandOver) return
         val exo = player ?: return
         // While the video is on a TV, the TV's place is the one to keep.
         val castAt = cast?.positionMs
@@ -7333,8 +7927,27 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         /** The log tag of the start and seek timings. */
         private const val START_TAG = "PlayerStart"
 
+        /** The opening's stages, one bit each, for [markStart]. */
+        private const val STAGE_SESSION = 1
+        private const val STAGE_DECIDED = 2
+        private const val STAGE_BUILT = 4
+        private const val STAGE_PREPARED = 8
+        private const val STAGE_BYTES = 16
+        private const val STAGE_TRACKS = 32
+        private const val STAGE_READY = 64
+
+        /** The longest a television holds the lookups back for a picture that is slow to come. */
+        private const val OPENING_GATE_MS = 15_000L
+
         /** How long the player waits for a saved position still being read before it starts anyway. */
         private const val RESUME_WAIT_MS = 400L
+
+        /**
+         * How far another device's place, or a late post start, has to be from where the video
+         * opened before the player seeks to it, and how far the viewer has to have moved for it
+         * to be left alone. A seek restarts TDLib's download, so a near agreement is not worth one.
+         */
+        private const val RESUME_SYNC_SLACK_MS = 10_000L
         private const val EXTRA_CHAT_ID = "chat_id"
         private const val EXTRA_MESSAGE_ID = "message_id"
         private const val EXTRA_TITLE = "title"
@@ -7345,6 +7958,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** A t.me link's `?t=` in seconds (CP80), for a player opened from a link. */
         const val EXTRA_LINK_START_SEC = "link_start_sec"
+
+        /**
+         * The file id the screen that started the player already checked for room ([RoomOnDisk]),
+         * so the player does not measure the disk a second time for the same press.
+         */
+        const val EXTRA_ROOM_DECIDED = "room_decided"
         private const val EXTRA_SIZE = "size"
         private const val EXTRA_DURATION = "duration"
         private const val EXTRA_CHAT_TITLE = "chat_title"
@@ -7417,6 +8036,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** Enough for the back-seek a thumb makes when it missed a line of dialogue. */
         private const val BACK_BUFFER_MS = 10_000
+
+        /** The back buffer under [LOW_RAM_BUFFER_BYTES]: see [buildPlayer]. */
+        private const val LOW_RAM_BACK_BUFFER_MS = 3_000
         private const val END_GUARD_MS = 1_000L
         /** What a held finger runs the picture at, the same figure every player uses for it. */
         /** The phone's top bar height, which the corner chips sit under. */
@@ -7532,6 +8154,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         /** Anything at or above this is 4K territory, where a stick's decoder gives up. */
         private const val UHD_HEIGHT = 1600
+
+        /**
+         * The height a picture would have at 16:9, so a 4K film cropped to 3840x1606 counts (and
+         * is named) as 2160 rather than slipping under [UHD_HEIGHT] or reading as "1606p".
+         */
+        internal fun nominalLines(width: Int, height: Int): Int =
+            if (width <= 0 || height <= 0) maxOf(height, 0) else maxOf(height, width * 9 / 16)
+
+        /**
+         * How far either side of a seek target the MPEG-TS extractor looks for a timestamp:
+         * three times Media3's 600 packets, enough for a broadcast recording's long GOP.
+         */
+        private const val TS_TIMESTAMP_SEARCH_BYTES = 1800 * 188
 
         /** Android's own limits on a picture-in-picture window's shape. */
         private const val PIP_MIN_RATIO = 1f / 2.39f

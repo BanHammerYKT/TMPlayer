@@ -68,10 +68,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -82,6 +85,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -187,6 +191,16 @@ class SeriesWatch(
     fun download(series: Series, season: SeriesSeason, which: SeasonDownload.Which) = SeasonDownloadRequest { held ->
         SeasonDownload.copies(series, season, which, finished, { point(it)?.fraction ?: 0f }, held)
     }
+
+    /** Where that button stands now, chosen as [download] chooses: see [SeasonDownload.state]. */
+    fun downloadState(
+        series: Series,
+        season: SeriesSeason,
+        which: SeasonDownload.Which,
+        downloaded: (MediaItem) -> Boolean,
+        queued: (MediaItem) -> Boolean,
+    ): SeasonDownload.State =
+        SeasonDownload.state(series, season, which, finished, { point(it)?.fraction ?: 0f }, downloaded, queued)
 
     companion object {
         val None = SeriesWatch({ null }, { false })
@@ -720,6 +734,12 @@ fun SeriesPanel(
      * null leaves the download buttons out.
      */
     onDownload: ((SeasonDownloadRequest) -> Unit)? = null,
+    /**
+     * [MediaItem.id] of every episode copy in the Downloads folder, so the download buttons say
+     * when the season is downloaded already, rather than offering it again. Kept up to date by
+     * the platform, so a download deleted while the page is open offers it again.
+     */
+    downloadedIds: Set<String> = emptySet(),
     /** The chat the show was posted in, for the facts line; null leaves it out. */
     chatTitle: String? = null,
     /**
@@ -730,6 +750,12 @@ fun SeriesPanel(
     onBack: (() -> Unit)? = null,
     /** What the band keeps clear at the top: the status bar on a phone, nothing on the desktop. */
     barInsets: WindowInsets = WindowInsets(0),
+    /**
+     * Plays an episode from its first frame, forgetting where it stopped. Offered beside the play
+     * pill while that pill resumes an episode part way, as a video's own page offers it beside
+     * Resume; null leaves it out.
+     */
+    onStartOver: ((MediaItem) -> Unit)? = null,
 ) {
     val s = LocalStrings.current
     val tv = !isTouch()
@@ -762,8 +788,17 @@ fun SeriesPanel(
     // slow television that item is laid out well after the page opens: a request before then is
     // lost, so it waits for Play itself rather than for a count of frames, which a stick outlasts.
     var playPlaced by remember(series.key) { mutableStateOf(false) }
+    // The episode OK last played from this page on a television, by its id: Back from the player
+    // puts the remote back on it rather than on Play or the season tabs (user, 2026-10-23). Saved,
+    // since a 1 GB stick may let the app go while the player is up and build the page again on the
+    // way back, which used to start on Play. Any other OK on the page forgets it.
+    val episodeReturn = com.tmplayer.ui.components.deviceForm() == com.tmplayer.data.DeviceForm.Tv && onOpenEpisode == null
+    var returnEpisode by rememberSaveable(series.key) { mutableStateOf<String?>(null) }
+    val episodeFocus = remember(series.key) { EpisodeFocus() }
     LaunchedEffect(series.key, windowFocused, playPlaced) {
         if (!tv || !windowFocused || !playPlaced) return@LaunchedEffect
+        // Back from an episode: that episode takes the focus (below), not Play.
+        if (returnEpisode != null) return@LaunchedEffect
         // Asked again on each frame until Play has focus, for as long as a slow first
         // layout may take.
         val until = System.nanoTime() + FOCUS_WAIT_NS
@@ -775,7 +810,47 @@ fun SeriesPanel(
     }
     // Download is for the season shown, so its buttons follow the season picked.
     val downloads = onDownload != null && SeasonDownload.anySavable(shown)
+    // What each button stands for now, from the download index and the queue, so a season kept
+    // already says Downloaded and does nothing, and one coming down says so with its ring.
+    // Derived rather than read here: the queue ticks every second for any download's progress,
+    // and the panel only has to compose again when what a button says changes.
+    val queue = com.tmplayer.ui.components.rememberDownloadQueue()
+    val seasonState by remember(downloads, watch, series, shown, downloadedIds, queue) {
+        derivedStateOf {
+            if (!downloads) SeasonDownload.State.Nothing else watch.downloadState(
+                series, shown, SeasonDownload.Which.Season, { it.id in downloadedIds }, { queue.value.containsKey(it.fileId) },
+            )
+        }
+    }
     val bothDownloads = downloads && SeasonDownload.unwatchedDiffers(shown, watch.finished)
+    // Nothing left in the season means nothing left in its unwatched part either. That button
+    // stays where it is, dimmed, rather than going (which would drop a remote's focus off the
+    // row); the season's button beside it is the one that says Downloaded or Downloading.
+    val unwatchedLeft by remember(downloads, watch, series, shown, downloadedIds, queue) {
+        derivedStateOf {
+            seasonState == SeasonDownload.State.Fetch && watch.downloadState(
+                series, shown, SeasonDownload.Which.Unwatched, { it.id in downloadedIds }, { queue.value.containsKey(it.fileId) },
+            ) == SeasonDownload.State.Fetch
+        }
+    }
+    // How far the season's downloads have come, for the ring while it is coming down.
+    val seasonProgress by remember(downloads, watch, series, shown, downloadedIds, queue) {
+        derivedStateOf {
+            if (seasonState != SeasonDownload.State.Coming) null else {
+                val entries = shown.episodes.flatMap { it.copies }.mapNotNull { queue.value[it.fileId] }
+                val total = entries.sumOf { it.totalBytes }
+                if (total > 0) (entries.sumOf { it.downloadedBytes }.toFloat() / total).coerceIn(0f, 1f) else 0f
+            }
+        }
+    }
+    // Pressed, and on its way to the queue: an empty ring at once, so the press shows before the
+    // queue does. Let go after a few seconds, in case nothing was queued (no room).
+    var asked by remember(series.key, shown.number) { mutableStateOf(false) }
+    LaunchedEffect(asked) {
+        if (!asked) return@LaunchedEffect
+        kotlinx.coroutines.delay(ASKED_RING_MS)
+        asked = false
+    }
 
     val metaState = com.tmplayer.ui.online.rememberMetaState(series.cover, showOnly = true)
     val meta = metaState.value
@@ -842,6 +917,35 @@ fun SeriesPanel(
         }
         if (list.firstVisibleItemIndex > SEASONS_ITEM) list.scrollToItem(SEASONS_ITEM)
     }
+    // Back from the player (the window has the focus again, or the page was built again behind
+    // it), the remote lands on the episode it was played from. Held for a few frames, as a list's
+    // tile is after a video's page, so the page's own first focus does not take it back; scrolled
+    // to first when the list has not composed it, and its range picked again when the page was
+    // rebuilt on the up-next one.
+    val ranged by rememberUpdatedState(ranges)
+    val listedNow by rememberUpdatedState(listed)
+    LaunchedEffect(series.key, windowFocused, firstPaint) {
+        if (!episodeReturn || !windowFocused || !firstPaint) return@LaunchedEffect
+        val id = returnEpisode ?: return@LaunchedEffect
+        var settled = 0
+        for (frame in 0 until EPISODE_RETURN_FRAMES) {
+            withFrameNanos { }
+            if (episodeFocus.focused == id) {
+                if (++settled >= EPISODE_RETURN_SETTLED_FRAMES) break
+                continue
+            }
+            settled = 0
+            if (episodeFocus.request(id)) continue
+            val at = listedNow.indexOfFirst { it.item.id == id }
+            if (at >= 0) {
+                list.scrollToItem(FIRST_EPISODE_ITEM + at)
+                continue
+            }
+            val range = ranged.indexOfFirst { members -> members.any { it.item.id == id } }
+            if (range < 0 || range == rangeAt) break
+            rangeAt = range
+        }
+    }
     // On a television Down from Play goes straight to the up-next card, scrolled into view first
     // since a lazy list has not composed it yet; Up from the cards still reaches the seasons.
     val downToUpNext = if (tv && upNextAt >= 0) {
@@ -862,7 +966,13 @@ fun SeriesPanel(
 
     BoxWithConstraints(
         modifier
-            .onPreviewKeyEvent { keyPressed = true; false }
+            .onPreviewKeyEvent { event ->
+                keyPressed = true
+                // OK on anything else (Play, a download, a season tab) forgets the episode played
+                // last; OK on an episode sets it again as the press is let go.
+                if (event.type == KeyEventType.KeyDown && event.key in OK_KEYS) returnEpisode = null
+                false
+            }
             // Should focus come into the page from outside before Play has it, it goes to Play.
             .then(if (tv) Modifier.focusProperties { onEnter = { runCatching { playFocus.requestFocus() } } } else Modifier)
             .focusGroup(),
@@ -978,12 +1088,46 @@ fun SeriesPanel(
             val trailer = extras?.trailer
             val trailerGhost = trailer == null && holdTrailer
             val others = buildList {
-                if (trailer != null || holdTrailer) add(Triple(s.metadataTrailer, TrailerIcon) { trailer?.let(trailers::open); Unit })
+                // Beside a pill that resumes part way: the same episode from its first frame.
+                if (onStartOver != null && (watch.pointOf(target)?.positionMs ?: 0L) > 0L) {
+                    add(PageAction(s.detailStartOver, TmIcons.Refresh, { onStartOver(copyOf(target, next?.item ?: watch.pick(target, progress))) }))
+                }
+                if (trailer != null || holdTrailer) add(PageAction(s.metadataTrailer, TrailerIcon, { trailer?.let(trailers::open); Unit }))
                 if (downloads) {
-                    add(Triple(s.seriesDownloadSeason, TmIcons.Download) { onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Season)); Unit })
+                    add(
+                        when (seasonState) {
+                            SeasonDownload.State.Fetch -> PageAction(
+                                s.seriesDownloadSeason,
+                                TmIcons.Download,
+                                {
+                                    asked = true
+                                    onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Season))
+                                    Unit
+                                },
+                                progress = if (asked) 0f else null,
+                            )
+                            SeasonDownload.State.Coming ->
+                                PageAction(s.downloadsDownloading, TmIcons.Download, {}, enabled = false, progress = seasonProgress)
+                            SeasonDownload.State.Done ->
+                                PageAction(s.downloadsDownloaded, TmIcons.Download, {}, enabled = false)
+                            SeasonDownload.State.Nothing ->
+                                PageAction(s.seriesDownloadSeason, TmIcons.Download, {}, enabled = false)
+                        },
+                    )
                 }
                 if (bothDownloads) {
-                    add(Triple(s.seriesDownloadUnwatched, TmIcons.Download) { onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Unwatched)); Unit })
+                    add(
+                        PageAction(
+                            s.seriesDownloadUnwatched,
+                            TmIcons.Download,
+                            {
+                                asked = true
+                                onDownload?.invoke(watch.download(series, shown, SeasonDownload.Which.Unwatched))
+                                Unit
+                            },
+                            enabled = unwatchedLeft,
+                        ),
+                    )
                 }
             }
             val hero: @Composable (Modifier) -> Unit = { m ->
@@ -1007,12 +1151,21 @@ fun SeriesPanel(
                             focusRequester = playFocus,
                             large = true,
                         )
-                        others.forEach { (label, icon, run) -> WideIconAction(label, icon, run, ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                        others.forEach { (label, icon, run, enabled, progress) -> WideIconAction(label, icon, run, ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled, progress = progress, enabled = enabled) }
                     }
                 } else if (tv) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         hero(Modifier)
-                        others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                        others.forEach { action ->
+                            RoundAction(
+                                action.label, action.icon, action.run,
+                                short = roundLabel(action.label, s),
+                                ghost = trailerGhost && action.label == s.metadataTrailer,
+                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
+                                progress = action.progress,
+                                enabled = action.enabled,
+                            )
+                        }
                     }
                 } else if (wide) {
                     // A phone on its side: the round buttons in Play's row, after it, as on a
@@ -1020,7 +1173,16 @@ fun SeriesPanel(
                     // so the trailer arriving later never moves it.
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         hero(Modifier)
-                        others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                        others.forEach { action ->
+                            RoundAction(
+                                action.label, action.icon, action.run,
+                                short = roundLabel(action.label, s),
+                                ghost = trailerGhost && action.label == s.metadataTrailer,
+                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
+                                progress = action.progress,
+                                enabled = action.enabled,
+                            )
+                        }
                     }
                 } else {
                     hero(Modifier.fillMaxWidth())
@@ -1031,7 +1193,16 @@ fun SeriesPanel(
                             horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            others.forEach { (label, icon, run) -> RoundAction(label, icon, run, short = roundLabel(label, s), ghost = trailerGhost && label == s.metadataTrailer, waiting = trailerGhost && label == s.metadataTrailer && !extrasState.settled) }
+                            others.forEach { action ->
+                            RoundAction(
+                                action.label, action.icon, action.run,
+                                short = roundLabel(action.label, s),
+                                ghost = trailerGhost && action.label == s.metadataTrailer,
+                                waiting = trailerGhost && action.label == s.metadataTrailer && !extrasState.settled,
+                                progress = action.progress,
+                                enabled = action.enabled,
+                            )
+                        }
                         }
                     }
                 }
@@ -1102,6 +1273,12 @@ fun SeriesPanel(
             items(listed, key = { it.item.id }) { episode ->
                 val chosen = copyOf(episode, if (next != null && episode.sameAs(next)) next.item else watch.pick(episode, progress))
                 val rowFocus = remember { FocusRequester() }
+                if (episodeReturn) {
+                    DisposableEffect(episode.item.id) {
+                        episodeFocus.attach(episode.item.id, rowFocus)
+                        onDispose { episodeFocus.detach(episode.item.id, rowFocus) }
+                    }
+                }
                 EpisodeRow(
                     episode = episode,
                     point = watch.pointOf(episode),
@@ -1109,13 +1286,19 @@ fun SeriesPanel(
                     upNext = next != null && episode.sameAs(next),
                     onClick = {
                         val open = onOpenEpisode
-                        if (open != null) open(chosen) { runCatching { rowFocus.requestFocus() } } else onPlay(chosen)
+                        if (open != null) {
+                            open(chosen) { runCatching { rowFocus.requestFocus() } }
+                        } else {
+                            if (episodeReturn) returnEpisode = episode.item.id
+                            onPlay(chosen)
+                        }
                     },
                     onLongClick = onLongClick?.let { { it(chosen) } },
                     chosen = chosen,
                     modifier = Modifier.padding(pad).widthIn(max = if (large) EPISODES_MAX_LARGE else EPISODES_MAX),
                     lineModifier = (if (next != null && episode.sameAs(next)) Modifier.focusRequester(upNextFocus) else Modifier)
-                        .focusRequester(rowFocus),
+                        .focusRequester(rowFocus)
+                        .then(if (episodeReturn) Modifier.onFocusChanged { episodeFocus.changed(episode.item.id, it.hasFocus) } else Modifier),
                     name = EpisodeNames.listName(episode.season, episode.episode, names),
                     guide = EpisodeNames.listed(episode.season, episode.episode, names),
                     showOverview = true,
@@ -1379,6 +1562,44 @@ private fun Modifier.okHold(
 
 private val OK_KEYS = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
+/**
+ * The show page's episode cards by id, and which one the remote is on, for putting it back on
+ * the episode played last. Plain fields read only from an effect: the remote moving between
+ * episodes is no reason to compose the page again.
+ */
+private class EpisodeFocus {
+    private val requesters = HashMap<String, FocusRequester>()
+
+    /** The episode the remote is on, or null when it is elsewhere on the page. */
+    var focused: String? = null
+        private set
+
+    fun attach(id: String, requester: FocusRequester) {
+        requesters[id] = requester
+    }
+
+    fun detach(id: String, requester: FocusRequester) {
+        if (requesters[id] === requester) requesters.remove(id)
+        if (focused == id) focused = null
+    }
+
+    fun changed(id: String, has: Boolean) {
+        if (has) focused = id else if (focused == id) focused = null
+    }
+
+    /** Asks for the episode's focus; false when its card is not composed. */
+    fun request(id: String): Boolean {
+        val requester = requesters[id] ?: return false
+        return runCatching { requester.requestFocus() }.isSuccess
+    }
+}
+
+/** How many frames after the page has the focus back the episode played last is held. */
+private const val EPISODE_RETURN_FRAMES = 12
+
+/** Frames in a row the remote has to stay on that episode for it to count as back. */
+private const val EPISODE_RETURN_SETTLED_FRAMES = 3
+
 /** How long to keep asking for Play's focus after it is placed, before giving up on it. */
 private const val FOCUS_WAIT_NS = 3_000_000_000L
 
@@ -1413,3 +1634,15 @@ private fun HeroStaysWhole(list: LazyListState, content: @Composable () -> Unit)
     }
     CompositionLocalProvider(LocalBringIntoViewSpec provides spec, content = content)
 }
+
+/** A round button beside a show's Play: the trailer, or a season's download in its present state. */
+private data class PageAction(
+    val label: String,
+    val icon: ImageVector,
+    val run: () -> Unit,
+    val enabled: Boolean = true,
+    val progress: Float? = null,
+)
+
+/** How long a pressed season download shows its empty ring while the queue has not shown it. */
+private const val ASKED_RING_MS = 5_000L

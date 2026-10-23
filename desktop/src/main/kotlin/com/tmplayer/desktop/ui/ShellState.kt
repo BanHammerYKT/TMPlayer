@@ -274,19 +274,61 @@ class ShellState(
      */
     var detailFirst by mutableStateOf(true)
 
-    /** The detail pane beside or over the page, or null while none is open. */
-    var detail by mutableStateOf<DetailRequest?>(null)
-        private set
+    /**
+     * The detail panes open, the one showing on top: a video opened from a pane's "More like this"
+     * lies over the pane it came from, so Esc or Back goes back to that one before closing.
+     */
+    private val details = com.tmplayer.ui.browse.DetailBackStack<DetailRequest>({ it.item })
 
+    /**
+     * The detail pane a video was started from (its Play, a bookmark, a comment's video), with the
+     * panes under it, put away while the player is up and shown again when it closes, so leaving
+     * the video, or a video that would not play, lands on the pane Play was pressed on rather than
+     * on the page behind it. Kept out of the window while the player is up: the pane holds the
+     * keyboard's focus and draws over a picture shown under the window. Going anywhere else lets
+     * them go.
+     */
+    private var detailUnderPlayer by mutableStateOf(false)
+
+    /** The detail pane beside or over the page, or null while none is open. */
+    val detail: DetailRequest?
+        get() = details.top?.page?.takeUnless { detailUnderPlayer }
+
+    /** The poster the showing pane gives the focus back to, after Back from a video opened by it. */
+    val detailReturn: com.tmplayer.ui.browse.DetailReturn?
+        get() = details.top?.returnTo
+
+    /** Opens a pane afresh, from a poster on a page: any panes open before are let go. */
     fun openDetail(request: DetailRequest) {
-        detail = request
+        details.open(request)
+        detailUnderPlayer = false
     }
 
-    /** Closes the pane and gives focus back to the poster it came from. */
+    /** Opens another video's pane over the one showing, for "More like this". */
+    fun pushDetail(request: DetailRequest) {
+        details.push(request)
+    }
+
+    /** Turns the showing pane to another copy of the same film, in place. */
+    fun turnDetail(request: DetailRequest) {
+        details.turn(request)
+    }
+
+    /**
+     * Back to the pane under this one, or, on the last, closes it and gives focus back to the
+     * poster it came from.
+     */
     fun closeDetail() {
         val open = detail ?: return
-        detail = null
-        open.onClosed()
+        if (!details.back()) open.onClosed()
+    }
+
+    /** Closes every pane at once (a click on the scrim), focus back to the first one's poster. */
+    fun closeAllDetails() {
+        if (detail == null) return
+        val first = details.entries.firstOrNull()?.page
+        details.clear()
+        first?.onClosed?.invoke()
     }
 
     fun chatOf(chatId: Long): ChatSummary? = knownChats[chatId]
@@ -294,7 +336,8 @@ class ShellState(
     fun go(to: Destination) {
         openChat = null
         chatToRefocus = null
-        detail = null
+        details.clear()
+        detailUnderPlayer = false
         if (to != Destination.Settings) settingsUnlocked = false
         destination = to
     }
@@ -302,7 +345,8 @@ class ShellState(
     fun openChat(chat: ChatSummary) {
         chatTitles[chat.id] = chat.title
         knownChats[chat.id] = chat
-        detail = null
+        details.clear()
+        detailUnderPlayer = false
         openChat = chat
     }
 
@@ -332,12 +376,14 @@ class ShellState(
 
     /**
      * The one way anything in the window starts a video. The browse pages stay composed under
-     * the player, so closing it returns to the same page and scroll position.
+     * the player, so closing it returns to the same page and scroll position, and a detail pane
+     * open at the press comes back with it ([detailUnderPlayer]).
      *
      * @param startFromBeginning true for "Play from start"; false resumes where the viewer left
      *   off, if anywhere.
      */
     fun openPlayer(item: MediaItem, startFromBeginning: Boolean) {
+        if (detail != null) detailUnderPlayer = true
         warmStream(item, fromStart = startFromBeginning)
         if (item.versions.size <= 1) {
             nowPlaying = PlayRequest(item, startFromBeginning, chatTitleOf(item.chatId))
@@ -370,6 +416,7 @@ class ShellState(
     fun closePlayer() {
         nowPlaying = null
         fullscreen = false
+        detailUnderPlayer = false
     }
 
     /** Puts the cursor in the page's search field. Quietly nothing when the page has none. */

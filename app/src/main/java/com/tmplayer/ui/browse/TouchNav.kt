@@ -961,7 +961,8 @@ private fun ProfilePopover(
                     // Taps inside the card stay inside it rather than reaching the scrim.
                     .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                     .verticalScroll(rememberScrollState())
-                    .padding(vertical = 4.dp),
+                    // The rows' own 6 dp at the sides, so the last row's fill keeps it below too.
+                    .padding(vertical = 6.dp),
             ) {
                 com.tmplayer.ui.components.ViewingSummary(
                     watching = watchingCount,
@@ -1015,7 +1016,8 @@ private fun PopoverRow(
             .fillMaxWidth()
             .height(POPOVER_ROW)
             .padding(horizontal = 6.dp)
-            .clip(RoundedCornerShape(12.dp))
+            // The card's 20 dp corner less the 6 dp inset, so a filled row runs parallel to it.
+            .clip(RoundedCornerShape(14.dp))
             .background(fill)
             .clickable(interactionSource = press, indication = ripple(), role = Role.Button, onClick = onClick)
             .padding(horizontal = 8.dp),

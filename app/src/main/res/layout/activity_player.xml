@@ -85,10 +85,10 @@
         <!--
           The sheet itself: a poster and a column of words, stacked or side by side.
 
-          Stacked is the shape it was drawn for and the shape a television keeps. On a screen with
-          no room to stack, which is any phone held sideways, the same two parts are laid out as
-          two columns instead: picture on the left, everything that can be read or pressed on the
-          right. A phone held upright has no room beside the picture either, and stacks with a
+          Stacked is the shape it was drawn for. On a screen with no room to stack, which is any
+          phone held sideways and a television once the buttons add up, the same two parts are laid
+          out as two columns instead: picture on the left, everything that can be read or pressed on
+          the right. A phone held upright has no room beside the picture either, and stacks with a
           smaller one. Which of them is decided by the sheet from the width it is measured at
           (StatusSheet), rather than by a layout-land folder, because the rest of this file is
           four hundred lines that would then exist twice.

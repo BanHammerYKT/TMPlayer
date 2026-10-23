@@ -93,7 +93,7 @@ fun ArtBackdrop(
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         filterQuality = FilterQuality.Low,
-                        modifier = Modifier.fillMaxSize().then(if (step.blurred) Modifier.blur(STAND_IN_BLUR) else Modifier),
+                        modifier = Modifier.fillMaxSize().then(if (step.blurred && !com.tmplayer.ui.theme.Motion.television) Modifier.blur(STAND_IN_BLUR) else Modifier),
                     )
                     step.picture?.let { SmallPicture(it, Modifier.align(Alignment.TopEnd)) }
                 }
@@ -168,6 +168,8 @@ internal fun rememberBackdropArt(source: BackdropSource, drawn: Int): BackdropAr
                             if (art == null) {
                                 withContext(Dispatchers.Default) { Thumbnails.mini(source.miniThumbnail) }?.let { if (art == null) art = BackdropArt(field = it) }
                             }
+                            // Not on a television: one download and decode less per page.
+                            if (com.tmplayer.ui.theme.Motion.television) return@launch
                             val tiny = MetaImageSize.tiny(url) ?: return@launch
                             val onDisk = withContext(Dispatchers.IO) {
                                 provider.hasImage(url) || provider.hasImage(MetaImageSize.atLeast(url, Thumbnails.lighter(widest)))

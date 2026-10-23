@@ -987,8 +987,8 @@ private val PROMO_RECENT = listOf("quiet orbit", "harbour lines", "lesson 03", "
  */
 private fun promoState(variant: String): UiState<Unit>? = when (variant) {
     "empty-hidden" -> UiState.Empty(
-        "${noVideosWithin(SizeFilter.DEFAULT_MIN, SizeFilter.DEFAULT_MAX)}\n\n${L.browseHiddenBySize(12)}",
-        StateAction.ShowHidden,
+        "${noVideosWithin(SizeFilter.DEFAULT_MIN, SizeFilter.DEFAULT_MAX)}\n\n${L.browseHiddenBySize(12)} ${L.browseSizeLimitsInSettings}",
+        icon = com.tmplayer.ui.icons.TmIcons.FilterHorizontal,
     )
     "empty-more" -> UiState.Empty(STILL_MORE_TO_SEARCH, StateAction.KeepLooking)
     "slow" -> UiState.Loading(L.browseFindingVideos)
@@ -1059,18 +1059,19 @@ private fun ComponentActivity.promoChannels() {
     Thread {
         if (!runBlocking { SettingsStore(context).tvChannelsNow() }) return@Thread
         val chats = PromoCatalog.chats.map { ChatSummary(it.id, it.title, null, 0, it.kind) }
-        val starred = HomeRows.favouriteChats(chats, library.favourites)
+        // As Home builds them: its own chats, starred or not.
         val rows = HomeRows.build(
             library.continueWatching,
-            starred,
-            library.byChat.filterKeys { it in library.favourites },
+            HomeRows.homeChats(chats, library.favourites, library.all),
+            library.byChat,
             library.all,
             watchLater = library.watchLater,
             fresh = library.newEpisodes,
+            recentMinStarred = 1,
+            autoFill = true,
         )
         val plan = com.tmplayer.data.TvChannels.plan(
             rows = rows,
-            starred = starred.size,
             allowed = null,
             chatTitle = PromoCatalog::chatTitle,
             progress = { chat, message -> library.all.firstOrNull { it.chatId == chat && it.messageId == message }?.let(library::point) },

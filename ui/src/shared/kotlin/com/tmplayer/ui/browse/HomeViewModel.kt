@@ -3,7 +3,9 @@ package com.tmplayer.ui.browse
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tmplayer.data.ChatRepository
@@ -27,6 +29,7 @@ import com.tmplayer.data.Td
 import com.tmplayer.data.WatchedRecord
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
@@ -189,7 +192,29 @@ class HomeViewModel(
      * promo build, whose sources are fixtures.
      */
     private val cached: Boolean = false,
+    /**
+     * True while a video plays (the Android app's player): Home's own refetches, set off by a
+     * post in one of its chats or by the line coming back, wait until it is false, so they never
+     * compete with playback for the line and a weak CPU. Coming back from the player refreshes
+     * Home anyway ([refreshIfStale]).
+     */
+    private val busy: () -> Boolean = { false },
+    /** Where the Cached badges are read off the disk again ([refreshLocalAvailability]): off the main thread. */
+    private val disk: kotlin.coroutines.CoroutineContext = Dispatchers.IO,
 ) : ViewModel() {
+
+    /** The rows [rememberHomeRows] built last, drawn again at once when Home comes back. */
+    var lastRows: List<HomeRow> = emptyList()
+        internal set
+
+    /**
+     * True once the rows have been built from an answer about the chats' videos: until then an
+     * empty Home means "not built yet", not "nothing to show". Since the rows are built off the
+     * main thread, Home opened empty for a moment on every cold start and showed the first run's
+     * "Open Saved Messages" card to accounts full of videos.
+     */
+    var rowsSettled: Boolean by androidx.compose.runtime.mutableStateOf(false)
+        internal set
 
     private val _loaded = MutableStateFlow<Map<Long, List<MediaItem>>>(emptyMap())
 
@@ -277,6 +302,13 @@ class HomeViewModel(
     /** When the rows were last brought up to date from Telegram, in elapsed real time; 0 for never. */
     @Volatile private var refreshedAt = 0L
 
+    /**
+     * Chats with new or changed videos not yet acted on; touched on the main thread only.
+     * Declared ahead of `init`, whose collector fills it.
+     */
+    private val changedWhileBusy = HashSet<Long>()
+    private var changedFlush: Job? = null
+
     private val created = System.nanoTime()
     @Volatile private var firstFresh = false
 
@@ -301,29 +333,53 @@ class HomeViewModel(
         }
         // The line to Telegram back: the rows it cost are fetched again.
         viewModelScope.launch {
-            Td.connected.collect { connected -> if (connected) retryFailed() }
+            Td.connected.collect { connected ->
+                if (!connected) return@collect
+                // A conflated state: waiting here drops nothing that matters.
+                untilIdle()
+                retryFailed()
+            }
         }
         // A post in a starred chat refreshes its row, and the recent row that draws from those
         // chats, in place: the old tiles stay up until the new ones arrive.
         viewModelScope.launch {
             source.changedChats().collect { chats ->
-                // A post in the chat of a show in progress asks for that show again, past its cache.
-                tracked.value.shows.filter { it.chatId in chats }.forEach { show ->
-                    showCache.remove(show.key)
-                    asked -= "show:${show.key}"
-                    requestShow(show)
-                }
-                val rows = chats.filter { it in _loaded.value }
-                if (rows.isEmpty()) return@collect
-                rows.forEach { chatId ->
-                    asked -= "chat:$chatId"
-                    request(chatId)
-                }
-                if (_recent.value != null) {
-                    asked -= "recent"
-                    requestRecent()
+                // Gathered while a video plays and acted on once it stops, never suspending the
+                // flow of Telegram's updates here (see [busy]).
+                changedWhileBusy += chats
+                if (changedFlush?.isActive == true) return@collect
+                changedFlush = viewModelScope.launch {
+                    untilIdle()
+                    val batch = changedWhileBusy.toSet()
+                    changedWhileBusy.clear()
+                    chatsChanged(batch)
                 }
             }
+        }
+    }
+
+    /** Returns once no video is playing ([busy]), checking every [BUSY_RECHECK_MS]. */
+    internal suspend fun untilIdle() {
+        while (busy()) kotlinx.coroutines.delay(BUSY_RECHECK_MS)
+    }
+
+    /** Asks again for the rows of [chats], which had new or changed videos, and the shows in them. */
+    private fun chatsChanged(chats: Set<Long>) {
+        // A post in the chat of a show in progress asks for that show again, past its cache.
+        tracked.value.shows.filter { it.chatId in chats }.forEach { show ->
+            showCache.remove(show.key)
+            asked -= "show:${show.key}"
+            requestShow(show)
+        }
+        val rows = chats.filter { it in _loaded.value }
+        if (rows.isEmpty()) return
+        rows.forEach { chatId ->
+            asked -= "chat:$chatId"
+            request(chatId)
+        }
+        if (_recent.value != null) {
+            asked -= "recent"
+            requestRecent()
         }
     }
 
@@ -356,7 +412,7 @@ class HomeViewModel(
                 HomeCache.Snapshot(loaded, recent, partial, art, System.currentTimeMillis())
             }.collectLatest { snapshot ->
                 // Settled, not mid-refresh: a row at a time arriving should not write ten times.
-                kotlinx.coroutines.delay(PERSIST_AFTER_MS)
+                kotlinx.coroutines.delay(if (com.tmplayer.ui.theme.Motion.television) PERSIST_AFTER_TV_MS else PERSIST_AFTER_MS)
                 if (snapshot.isEmpty) return@collectLatest
                 withContext(Dispatchers.IO) { HomeCache.save(snapshot) }
             }
@@ -414,10 +470,12 @@ class HomeViewModel(
 
     /** Follows [chatId]'s new posts while Home is open, for as many rows as [FOLLOW_MAX] allows. */
     private fun follow(chatId: Long) {
-        if (chatId in following || following.size >= FOLLOW_MAX) return
+        // Fewer on a television, whose weak cores read every post of every open chat as it comes.
+        val most = if (com.tmplayer.ui.theme.Motion.television) FOLLOW_MAX_TV else FOLLOW_MAX
+        if (chatId in following || following.size >= most) return
         viewModelScope.launch {
             val handle = runCatching { source.follow(chatId) }.getOrNull() ?: return@launch
-            if (chatId in following || following.size >= FOLLOW_MAX) handle.close() else following[chatId] = handle
+            if (chatId in following || following.size >= most) handle.close() else following[chatId] = handle
         }
     }
 
@@ -445,7 +503,7 @@ class HomeViewModel(
         noteFresh()
         // A chat shown on Home is one likely opened next: the first few have their grid's first
         // page fetched behind, at low priority, so opening one draws it at once.
-        if (source === TdHomeSource && items.isNotEmpty() && prefetched.size < PREFETCH_CHATS && prefetched.add(chatId)) {
+        if (source === TdHomeSource && items.isNotEmpty() && prefetched.size < (if (com.tmplayer.ui.theme.Motion.television) PREFETCH_CHATS_TV else PREFETCH_CHATS) && prefetched.add(chatId)) {
             com.tmplayer.data.PageQueries.prefetchChat(chatId)
         }
     }
@@ -516,7 +574,12 @@ class HomeViewModel(
                 if (failure is CancellationException) throw failure
                 // Not cached: a show whose search failed is asked again on the next visit.
                 null
-            }?.also { showCache[show.key] = now to it }
+            }?.also {
+                // Answers past their time are dropped as new ones come in: the map is for the
+                // process, and the shows in progress change over a long session.
+                showCache.entries.removeAll { (_, entry) -> now - entry.first >= SHOW_TTL_MS }
+                showCache[show.key] = now to it
+            }
             ?: return@once
         val kept = withinLimits(items)
         found.update { it + (show.key to kept) }
@@ -577,9 +640,16 @@ class HomeViewModel(
             val loadedBefore = _loaded.value
             val recentBefore = _recent.value
             val artBefore = _art.value
-            val loaded = loadedBefore.mapValues { (_, items) -> recheckAll(items) }
-            val recent = recentBefore?.let { recheckAll(it) }
-            val art = artBefore.mapValues { (_, item) -> recheckOne(item) }
+            // Off the main thread: every tile is a lookup of its file and a look at the disk, and
+            // on a TV stick coming back from the player that burst held the remote up. The answers
+            // are written back below, on the main thread, as before.
+            val (loaded, recent, art) = withContext(disk) {
+                Triple(
+                    loadedBefore.mapValues { (_, items) -> recheckAll(items) },
+                    recentBefore?.let { recheckAll(it) },
+                    artBefore.mapValues { (_, item) -> recheckOne(item) },
+                )
+            }
             // Written only over what is still the list that was checked: a row fetched meanwhile
             // came after the change and is right as it stands.
             _loaded.update { now ->
@@ -604,7 +674,6 @@ class HomeViewModel(
      */
     fun seeAll(row: HomeRow): RowFeed? {
         val chats = when (row) {
-            is HomeRow.Across -> row.chatIds
             is HomeRow.Recent -> row.chatIds
             is HomeRow.Chat -> listOf(row.chatId)
             else -> return null
@@ -649,6 +718,15 @@ class HomeViewModel(
         /** How many of Home's chats have their grid prefetched in a run: the first rows, not all of them. */
         const val PREFETCH_CHATS = 6
 
+        /** The same on a television, where each prefetch competes with the posters on screen. */
+        const val PREFETCH_CHATS_TV = 2
+
+        /** How long the inputs stay still before Home's rows are built again ([rememberHomeRows]). */
+        const val ROWS_SETTLE_MS = 300L
+
+        /** How often work held back by a video playing ([busy]) looks again. */
+        const val BUSY_RECHECK_MS = 5_000L
+
         /** How often Home brings itself up to date while it is open (user, 2026-10-21: "short auto refresh"). */
         const val AUTO_REFRESH_MS = 3 * 60 * 1000L
 
@@ -657,6 +735,9 @@ class HomeViewModel(
 
         /** How long the rows have to stay still before the cache is written. */
         const val PERSIST_AFTER_MS = 1_500L
+
+        /** The same on a television, where each write is a large encode on a weak core. */
+        const val PERSIST_AFTER_TV_MS = 8_000L
 
         /**
          * Past this a row's fetch counts as failed: its skeleton goes, and it is asked for again
@@ -669,6 +750,9 @@ class HomeViewModel(
          * step with the server, which is not free on a 1 GB stick; the first rows are the ones seen.
          */
         const val FOLLOW_MAX = 12
+
+        /** Chats followed at once on a television. */
+        const val FOLLOW_MAX_TV = 4
 
         /**
          * How long a show's search answers for. Ten minutes, like the forum topic counts: coming
@@ -710,8 +794,8 @@ fun rememberHomeRows(
     /** See [HomeRows.build]: one on a phone, whose Recently added is the featured carousel. */
     recentMinStarred: Int = HomeRows.RECENT_MIN_STARRED,
     /**
-     * Home fills itself from the chats with videos, favourites first ([HomeRows.homeChats]), with
-     * Movies and Shows rows across them and each chat's movies and shows in rows of their own.
+     * Home fills itself from the chats with videos, favourites first ([HomeRows.homeChats]): they
+     * feed Recently added, and each starred chat has a row of its own under it.
      * False draws the starred chats alone, as Home did before 2026-10-21.
      */
     autoFill: Boolean = true,
@@ -728,34 +812,89 @@ fun rememberHomeRows(
     val partial by model.partial.collectAsState()
     val fresh by model.newEpisodes.collectAsState()
     LaunchedEffect(model, continueWatching, watched) { model.followShows(continueWatching, watched) }
-    val home = remember(chats, favourites, recent, autoFill) {
-        if (autoFill) HomeRows.homeChats(chats, favourites, recent) else HomeRows.favouriteChats(chats, favourites)
-    }
-    // Filling itself, Home has no chat rows to ask for their videos when drawn, so Movies and
-    // Shows saw only the newest videos across every chat: a show posted before the last few
-    // dozen uploads anywhere never reached them. Each of Home's chats is asked for its own.
-    LaunchedEffect(home, autoFill) { if (autoFill) home.forEach { model.request(it.id) } }
+    // Home's chats are picked with the rows below, off the main thread: picked here they were
+    // worked out again on every change to the chat list, which a busy account sends often.
+    val homeMemo = remember { HomeChatsMemo() }
     // "Not the same video" pulls a copy out of its folded card at once, so the rows are built
     // again when a correction changes.
     val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
-    val rows = remember(continueWatching, watchLater, home, favourites, loaded, recent, partial, fresh, corrections, recentMinStarred, autoFill) {
-        HomeRows.build(
-            continueWatching, home, loaded, recent, partial = partial, watchLater = watchLater, fresh = fresh,
-            recentMinStarred = recentMinStarred, starred = favourites, autoFill = autoFill,
-        )
+    // Built off the main thread, and only once the chats' answers stop arriving for a moment: a
+    // filled Home reads a dozen chats, each answer changed the inputs, and every build reads
+    // hundreds of names. Built on the main thread, that held a TV stick past the ANR limit
+    // (1.28.0, Bell Streamer). The last rows stay on screen meanwhile.
+    val rows by produceState(model.lastRows, continueWatching, watchLater, chats, favourites, loaded, recent, partial, fresh, corrections, recentMinStarred, autoFill) {
+        val key = listOf(chats, favourites, recent, autoFill)
+        val home = homeMemo.home.takeIf { homeMemo.same(homeMemo.key, key) } ?: withContext(Dispatchers.Default) {
+            val picked = if (autoFill) HomeRows.homeChats(chats, favourites, recent) else HomeRows.favouriteChats(chats, favourites)
+            // The same chats as before keep the list rows were built from, so the check below holds.
+            homeMemo.home?.takeIf { it == picked } ?: picked
+        }.also { picked ->
+            homeMemo.key = key
+            if (picked !== homeMemo.home) {
+                homeMemo.home = picked
+                // Filling itself, Home has no row for a chat it picked to ask for its videos when
+                // drawn, so Recently added saw only the newest videos across every chat. Each of
+                // Home's chats is asked for its own (once each: the model keeps count).
+                if (autoFill) picked.forEach { model.request(it.id) }
+            }
+        }
+        // A new chat list that leaves Home's chats as they were, with nothing else changed, is
+        // not a new Home: the rows stand, as they did when the chats were picked in composition.
+        // The last run's videos are in but the chat list is not: Home's chats are not known yet.
+        val chatsPending = autoFill && chats.isEmpty() && !recent.isNullOrEmpty()
+        val inputs = listOf(continueWatching, watchLater, home, favourites, loaded, recent, partial, fresh, corrections, recentMinStarred, autoFill, chatsPending)
+        if (value.isNotEmpty() && homeMemo.same(homeMemo.built, inputs)) return@produceState
+        if (value.isNotEmpty()) delay(HomeViewModel.ROWS_SETTLE_MS)
+        val built = withContext(Dispatchers.Default) {
+            HomeRows.build(
+                continueWatching, home, loaded, recent, partial = partial, watchLater = watchLater, fresh = fresh,
+                recentMinStarred = recentMinStarred, starred = favourites, autoFill = autoFill,
+                chatsPending = chatsPending,
+            )
+        }
+        homeMemo.built = inputs
+        model.lastRows = built
+        value = built
+        // Rows that are there, or a list of where the videos are that has come back: either way
+        // what Home shows now is the answer. Starred chats alone need no such list.
+        if (built.isNotEmpty() || recent != null || !autoFill) model.rowsSettled = true
     }
-    PrefetchHomeArt(rows)
+    PrefetchHomeArt(rows, model)
     return rows
+}
+
+/** Home's chats as last picked and what the rows were built from, so a change that alters neither builds nothing. */
+private class HomeChatsMemo {
+    /** What [home] was picked from. */
+    var key: List<Any?>? = null
+    var home: List<ChatSummary>? = null
+
+    /** What the rows on screen were built from. */
+    var built: List<Any?>? = null
+
+    /**
+     * Whether [then] and [now] are the same inputs, by identity (a flag, a number or the starred set by value):
+     * comparing the chat lists item by item would put the main thread's work back.
+     */
+    fun same(then: List<Any?>?, now: List<Any?>): Boolean {
+        then ?: return false
+        return then.size == now.size && then.indices.all { i ->
+            val a = then[i]
+            val b = now[i]
+            a === b || ((a is Boolean || a is Number || a is Set<*>) && a == b)
+        }
+    }
 }
 
 /**
  * Looks up the posters of the first tiles in each row, and fetches them, before the rows are
  * drawn: a row a screen down is sharp when it scrolls in rather than starting its lookups then.
- * A handful per row, two lookups at a time, and only while lookups are on. Everything it finds
+ * A handful per row, two lookups at a time, only while lookups are on and no video plays
+ * ([HomeViewModel.untilIdle]). Everything it finds
  * lands in [OnlineMetadata]'s memory and disk caches, which the tiles read on their first frame.
  */
 @Composable
-private fun PrefetchHomeArt(rows: List<HomeRow>) {
+private fun PrefetchHomeArt(rows: List<HomeRow>, model: HomeViewModel) {
     val online = com.tmplayer.online.OnlineMetadata.current ?: return
     val settings by online.settings.collectAsState()
     if (!settings.enabled) return
@@ -764,7 +903,6 @@ private fun PrefetchHomeArt(rows: List<HomeRow>) {
             val entries = when (row) {
                 is HomeRow.Chat -> row.entries
                 is HomeRow.Recent -> row.entries
-                is HomeRow.Across -> row.entries
                 else -> emptyList()
             }
             // The carousel's pages want their title logos too.
@@ -785,7 +923,11 @@ private fun PrefetchHomeArt(rows: List<HomeRow>) {
             items.forEach { (item, show, logo) ->
                 launch(Dispatchers.IO) {
                     gate.withPermit {
-                        val query = com.tmplayer.online.MetaQuery.of(item.nameForParsing, item.caption)
+                        // Not while a video plays: Home stays composed under the player, and a
+                        // row that changed meanwhile set off lookups, downloads and decodes that
+                        // took the line and a weak CPU from playback. They go on once it stops.
+                        model.untilIdle()
+                        val query = item.metaQuery
                             ?.let { if (show) it.showOnly() else it } ?: return@withPermit
                         val known = (online.peek(query) as? com.tmplayer.online.MetaResult.Found)?.info
                         if (known != null && !logo) return@withPermit

@@ -1,10 +1,10 @@
 # TMPlayer in the browser (CP92, web.tmplayer.org)
 
-Status (2026-10-21): being built, in the `web/` module, on branch `worktree-agent-a3db7b7ec854ecc21`
-until it is merged. A signed in session runs against the real Telegram with the app's own api_id:
-QR sign in, the chat list, a chat's video grid, and playback of real MP4 and MKV files from a
-channel, seeking to 90 % of a 2 hour MKV with the page's JavaScript heap at 78 MB. Phase by phase
-status is in the table under "Phases"; what is still to do is under "Open work".
+Frozen since 2026-10-22: no work or deploys; shared code is only kept compiling. When it stopped,
+a signed in session ran against the real Telegram with the app's own api_id: QR sign in, the chat
+list, a chat's video grid, and playback of real MP4 and MKV files from a channel, seeking to 90 %
+of a 2 hour MKV with the page's JavaScript heap at 78 MB. "Where it stopped" lists what was done
+and what was not.
 
 Goal: as much of the app as a browser allows, for the videos already in the viewer's own Telegram
 chats, at web.tmplayer.org, a static site with no server of ours in the path.
@@ -120,8 +120,8 @@ the FFmpeg source offer are ours to ship: THIRD_PARTY_NOTICES "Web" section, and
 ## Feature parity
 
 Every feature reaches every platform (user, 2026-10-21): what the apps have the web app gets, and
-what the web app gains goes to the apps. "Built" is in the branch now; "Planned" is designed and
-waiting (mostly for the `:core` and `:ui` moves); where a browser cannot, the closest equivalent.
+what the web app gains goes to the apps. "Built" was done when the work was frozen; "Planned" is designed
+and waiting (mostly for the `:core` and `:ui` moves); where a browser cannot, the closest equivalent.
 
 | Feature | Android phone | TV | Desktop | Web, phone | Web, desktop |
 | --- | --- | --- | --- | --- | --- |
@@ -162,6 +162,11 @@ waiting (mostly for the `:core` and `:ui` moves); where a browser cannot, the cl
 Built for the web that the apps lack, to take back to them: head and tail warm up on hover or
 focus and for the next episode 30 s ahead (reelbox's largest measured win); stopping read-ahead
 the moment a video closes; the honest "too heavy to decode here" notice with Play anyway.
+
+Cannot work in a browser: offline downloads beyond the storage quota, the Downloads folder, a
+storage location, TV and remote control layouts, DTS, TrueHD and most AC-3 sound, background
+playback after the tab closes, MPRIS/SMTC (the Media Session API covers the basics), the system
+tray, self update (the site is the update), the LAN cast server.
 
 ## Findings from the prototype (2026-10-19)
 
@@ -416,57 +421,27 @@ Decided before anything downloads, from Telegram's MIME type, the file name and 
 "Get the TMPlayer app" linking to tmplayer.org/download/, which picks the right build for the
 device. The grid marks such tiles "Needs the app" before they are opened.
 
-## Feature parity
+## Where it stopped
 
-Ports as it is (phase 2, same code through `:core` and `:ui`): QR, phone, email code and password
-sign in; Home with the carousel, Continue watching and rows; Chats with folders; chat grids, sort,
-size filter; series and show pages with seasons and episodes; copies and qualities; Search with
-@username and filters; the chat info sheet; online metadata (TMDB, TVmaze); Watched, Watch later,
-favourites, history; rename and fix matches; resume across devices through Saved Messages; the kids
-lock and PIN; themes including Black; the 21 languages; tooltips.
+The sections below still name the original plan's phases: 1, the proof; 2, `:core` and the
+screens in shared code; 3, the player and codecs; 4, shipping (PWA, pages, deploy).
 
-Changes for the browser: the player is the browser's `<video>` with TMPlayer's controls drawn over
-it (phase 3): speed, chapters (from MP4 and MKV chapter readers in `:core`), bookmarks, A-B repeat,
-frame step (`requestVideoFrameCallback`), skip intro, the desktop's keyboard shortcuts, picture in
-picture (the element's own), audio track choice (`audioTracks` in Safari, one track elsewhere
-unless repacked), subtitles as WebVTT text tracks including online subtitles; notifications through
-the Notifications API when allowed and only while a tab is open; casting through the Remote
-Playback API (Chrome's Cast) instead of the app's own cast server; proxies only if tdweb's
-transport allows them (TDLib in a browser reaches Telegram over WebSockets; SOCKS5 and HTTP proxies
-are not possible from a page, MTProto proxies to be checked in phase 2).
-
-Cannot work in a browser: offline downloads beyond the storage quota, the Downloads folder, a
-storage location, TV and remote control layouts, DTS, TrueHD and most AC-3 sound, background
-playback after the tab closes, MPRIS/SMTC (the Media Session API covers the basics), the system
-tray, self update (the site is the update), the LAN cast server.
-
-## Phases
-
-Status on 2026-10-21: phase 1 done except the movement of the screens into `:ui` it never needed;
-phase 2 under way (`:core` pure set started, a fork moving the rest; the screens in `web/` meanwhile);
-phase 3 partly (the player, the sparse storage, movi-player in place of the planned repack and
-WebCodecs AC-3 conversion, which reelbox showed are not needed); phase 4 partly (PWA, offline shell).
-
-| Phase | Deliverables | Acceptance checks | Effort |
-| --- | --- | --- | --- |
-| 1. Proof | `web/` module (Kotlin/Wasm, Compose for Web); tdweb 1.8.64 pinned by hash; the JSON bridge; QR and phone sign in mapped onto `AuthState`; chat list; one chat's video grid with titles from MediaName, sizes and thumbnails; MP4 through the Service Worker; the codec check and "needs the app"; `:core` pure source set with a wasmJs target; dev and production Gradle tasks | `./gradlew build` green with `:core` wasmJs tests on Node; `node --test` range tests; Playwright with `/usr/bin/chromium-browser` plays and seeks a generated 30 MB MP4 and WebM through the worker; the sign in screen shows a QR code at 1280 and 390 wide; a real sign in by the user ends on the chat list and plays an MP4 from a chat | 3 to 4 days (about half was done in the prototype) |
-| 2. Core and screens | tdweb built by our own workflow (TDLib 1.8.67, OpenSSL 3.x, hashes recorded); `TdGateway` with JVM and web implementations; org.json to kotlinx.serialization; storage and HTTP interfaces; `:ui` with a wasmJs target; the desktop screens moved into `:ui` and used by desktop and web; i18n catalogs loaded on the web | the Android and desktop builds and all `:core` jvmTest suites unchanged and green; `:core` common tests on Node; web Home, Chats, show pages and Search render with real data; every screen works by keyboard alone | 3 to 5 weeks |
-| 3. Player and codecs | the player's controls over `<video>`; subtitles as WebVTT and online subtitles; split pieces as one stream; MKV with H.264/AAC repacked through Media Source; AC-3 / E-AC-3 converted with WebCodecs where it exists; OPFS backed partial downloads in our tdweb; size and codec handoff rules | a 4 GB MKV seeks to its end without the tab's memory growing past a set ceiling; each codec matrix row behaves as listed in Chrome, Firefox and Safari; keyboard shortcuts match the desktop | 3 to 4 weeks |
-| 4. Ship | PWA (manifest, icons, install, offline shell); SEO and Markdown twin for the landing page, legal and privacy pages for the web app (what is stored in the browser, nothing on our servers), analytics as the site has; THIRD_PARTY_NOTICES "Web" section; the second Vercel project and CI | Lighthouse 100 for SEO and best practices on the landing page; installs as a PWA on Android Chrome and desktop Chrome; privacy page reviewed by the user | 1 week |
+- Done: the `web/` module, tdweb pinned by hash, the JSON bridge, sign in, the chat list and a
+  chat's grid, the player with both engines, sparse OPFS storage, the Service Worker, the PWA and
+  offline shell, the `:core` pure source set with a wasmJs target.
+- Partly: `:core` moving into the pure set (Home, shows, Search and the rest of the screens wait
+  on it); `:ui`'s wasmJs target.
+- Not started: tdweb and `movi.wasm` built by our own workflow, the MKV repack into
+  ManagedMediaSource on iOS, the web app's privacy and legal pages, automated deploys.
 
 ## Deployment
 
-A second Vercel project, "tmplayer-web", with its root directory `web/` and the production build's
-output `web/build/dist/wasmJs/productionExecutable`, on the domain web.tmplayer.org (a CNAME the
-user adds). The site project stays as it is. Vercel builds nothing: GitHub Actions builds with
-Gradle and deploys the static output with the Vercel CLI (`vercel deploy --prebuilt`), so the JDK
-and Gradle never run on Vercel. Workflow `web.yml`, path filtered to `web/**`, `core/**`, `ui/**`,
-`gradle/**`, `kotlin-js-store/**` and the build files; the existing workflows ignore `web/**`.
-`web/vercel.json`: `Content-Type: application/wasm` and long immutable caching for the hashed
-`.wasm` and `.js` names, `no-cache` for `index.html` and `sw.js` (a worker must update promptly),
-and `Service-Worker-Allowed: /`. No COOP/COEP headers are needed (tdweb's build has no threads).
-The Telegram API id and hash come from repository secrets at build time; they are visible in the
-page's script, exactly as they are in the APK.
+It was deployed by hand to Cloudflare Pages with the wrangler CLI, from the production build's
+output `web/build/dist/wasmJs/productionExecutable`, on the domain web.tmplayer.org. `web.yml`
+builds and tests the app on every change under `web/`, `core/` and `ui/` and deploys nothing.
+The Telegram API id and hash come from `local.properties` or the environment at build time; they
+are visible in the page's script, exactly as they are in the APK. No COOP/COEP headers are needed
+(tdweb's build has no threads).
 
 ## Risks
 
@@ -497,29 +472,19 @@ page's script, exactly as they are in the APK.
 - Recreate movi's wasm module after a number of videos or past a heap limit (it only grows).
 - Styled ASS through JASSUB (MIT); PGS drawn or at least labelled.
 - tdweb built by our own workflow (TDLib 1.8.67, OpenSSL 3), `movi.wasm` from source in CI.
-- The CI job, the Vercel project, the privacy and legal pages.
+- The privacy and legal pages, and an automated deploy.
 
-## Open decisions for the user
-
-1. Build tdweb ourselves (recommended, about 1.5 h of CI per TDLib version) or accept DIBgram's
-   CI builds at pinned commits.
-2. The api_id: the apps' own, or a separate one registered for the web app.
-3. A size ceiling for files the web app streams before phase 3 (for example 500 MB), and whether
-   phase 3's OPFS work is worth it or big files simply hand off to the app.
-4. Whether the web app needs a sign in warning ("you are signing in on a shared computer?") and a
-   "sign out everywhere else" note in its privacy page.
-5. web.tmplayer.org as a subdomain (a second Vercel project, as above) or tmplayer.org/app/ inside
-   the site project.
-6. Firefox and Safari as first class targets in phase 1, or Chromium first.
-
-## Running it (once built)
+## Running it
 
 ```sh
 ./gradlew :web:wasmJsBrowserDevelopmentRun      # http://localhost:8080/
 ./gradlew :web:wasmJsBrowserDistribution        # web/build/dist/wasmJs/productionExecutable
-./gradlew :web:streamTest                        # the worker's range logic on Node
-cd web/stream-test && npm ci && node browser-test.mjs   # Chromium: stream and sign in checks
+node --test web/tools/storage-keeper.test.mjs    # the storage keeper's tests on Node
+node web/tools/serve.mjs <dist folder> --port 8091 &
+node web/player/test/browser-test.mjs http://127.0.0.1:8091/player/test/player-test.html <files>
 ```
 
-Node.js comes from the machine (tested with 24.21); the Telegram id and hash from local.properties
-or `TG_API_ID` and `TG_API_HASH` in the environment, never committed.
+The last two are the player's test in headless Chromium, as `web.yml` runs it: copy
+`web/player/test` into the dist folder and generate the media files first (the workflow shows the
+`ffmpeg` lines). Node.js comes from the machine; the Telegram id and hash from local.properties or
+`TG_API_ID` and `TG_API_HASH` in the environment, never committed.

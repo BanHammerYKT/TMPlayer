@@ -38,6 +38,9 @@ object FrameSaver {
 
     /** The frame showing in [surface], [width] by [height] (the video's size), or null when it could not be read. */
     suspend fun capture(surface: SurfaceView, width: Int, height: Int): Bitmap? {
+        // PixelCopy is Android 7's. The menu only offers this from [supported] on, so this is a
+        // second line, not the one that hides it.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null
         if (width <= 0 || height <= 0 || !surface.holder.surface.isValid) return null
         val scale = minOf(1f, MAX_SIDE.toFloat() / maxOf(width, height))
         val bitmap = Bitmap.createBitmap((width * scale).toInt().coerceAtLeast(1), (height * scale).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)

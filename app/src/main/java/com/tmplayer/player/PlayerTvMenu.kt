@@ -80,6 +80,9 @@ class PlayerTvMenu(
     private val bookmarkCount: () -> Int = { 0 },
     /** Whether Open in another app is offered, asked each time the menu opens. */
     private val openInAnotherApp: () -> Boolean = { true },
+    /** Whether 3D video is offered (a picture, not sound alone), and its state for the line's detail. */
+    private val stereoOffered: () -> Boolean = { false },
+    private val stereo: () -> String? = { null },
     /** Whether volume boost is on, for the line's detail. */
     private val volumeBoost: () -> Boolean = { false },
     /** Whether Night mode is on, for the line's detail. */
@@ -143,6 +146,7 @@ class PlayerTvMenu(
                     paused(),
                     bookmarks(),
                     chapters = chapter() != null,
+                    stereo = stereoOffered(),
                 ).map { action(it) },
                 onDismiss = ::close,
                 onClose = ::close,
@@ -171,6 +175,11 @@ class PlayerTvMenu(
             PlayerMenuEntry.LockScreen -> MenuAction(s.playerLockScreen, TmIcons.Lock, detail = s.playerHoldOkToUnlock) { choose(entry) }
             PlayerMenuEntry.PlaybackDetails -> MenuAction(s.playerPlaybackDetails, TmIcons.Info) { choose(entry) }
             PlayerMenuEntry.StartOver -> MenuAction(s.playerStartOver, TmIcons.Refresh) { choose(entry) }
+            PlayerMenuEntry.Stereo -> MenuAction(
+                label = s.playerStereo,
+                icon = TmIcons.Visibility,
+                detail = stereo() ?: s.commonOff,
+            ) { choose(entry) }
             PlayerMenuEntry.VolumeBoost -> MenuAction(
                 label = s.playerVolumeBoost,
                 icon = ImageVector.vectorResource(R.drawable.ic_volume),

@@ -27,7 +27,7 @@ aur.archlinux.org for "tmplayer" finds nothing, and the publish step skips itsel
    cp ../TMPlayer/desktop/packaging/aur/PKGBUILD .
    makepkg --printsrcinfo > .SRCINFO
    git add PKGBUILD .SRCINFO
-   git commit -m "Initial upload: tmplayer-bin 1.27.1"
+   git commit -m "Initial upload: tmplayer-bin <current version>"
    git -c core.sshCommand='ssh -i ~/.ssh/aur' push origin master
    ```
 

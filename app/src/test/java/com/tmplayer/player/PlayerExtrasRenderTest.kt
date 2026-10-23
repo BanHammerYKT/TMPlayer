@@ -174,11 +174,27 @@ class PlayerExtrasRenderTest {
             text = L.playerGoBack
             visibility = View.VISIBLE
         }
+        if (tv) {
+            // A television's worst case: every way out at once, which the old stack ran off the
+            // bottom of the screen.
+            activity.findViewById<Button>(R.id.status_decoder).apply {
+                text = L.playerDecoderOther
+                visibility = View.VISIBLE
+            }
+            openWith.apply {
+                text = L.playerOpenWith
+                visibility = View.VISIBLE
+            }
+        }
         logs?.visibility = View.VISIBLE
         idle()
         assertTrue("Send logs is in the sheet", logs != null && logs.isShown)
+        val screen = activity.findViewById<View>(R.id.status_overlay)
+        val back = activity.findViewById<View>(R.id.status_back)
+        val at = IntArray(2).also(back::getLocationInWindow)
+        assertTrue("Go back is on the screen", at[1] + back.height <= screen.height)
         val sheet = activity.findViewById<StatusSheet>(R.id.status_sheet)
-        val expected = if (tv) StatusSheetShape.Shape.Column else StatusSheetShape.Shape.Stacked
+        val expected = if (tv) StatusSheetShape.Shape.Tv else StatusSheetShape.Shape.Stacked
         assertEquals("the sheet's shape", expected, sheet.shape)
         assertWordsWhole(activity.findViewById(R.id.status_title), listOfNotNull<TextView>(activity.findViewById(R.id.status_reload), logs as? TextView, activity.findViewById(R.id.status_back)))
         shot(activity, name, dialog = false)
@@ -298,7 +314,7 @@ class PlayerExtrasRenderTest {
 
     @Test
     @Config(sdk = [35], qualifiers = "w960dp-h540dp-land-night-xhdpi")
-    fun stallSheetTelevision() = stallSheet(tv = true, name = "extras-stall-tv.png", expected = StatusSheetShape.Shape.Column)
+    fun stallSheetTelevision() = stallSheet(tv = true, name = "extras-stall-tv.png", expected = StatusSheetShape.Shape.Tv)
 
     // ---- the frame saved answer and the fine scrub ---------------------------------------------
 

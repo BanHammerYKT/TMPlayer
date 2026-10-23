@@ -54,7 +54,7 @@ class AndroidDownloadRunner(private val context: Context) : DownloadRunner {
     override fun download(request: DownloadRequest) {
         // A foreground service, so it keeps going with the app closed. Android requires the
         // notification within a few seconds of this call, which the service posts first thing.
-        context.startForegroundService(request.intent(context, DownloadService.ACTION_DOWNLOAD))
+        context.startForegroundServiceCompat(request.intent(context, DownloadService.ACTION_DOWNLOAD))
     }
 
     override fun cancel(fileId: Int) = send(DownloadService.ACTION_CANCEL, fileId)
@@ -66,7 +66,7 @@ class AndroidDownloadRunner(private val context: Context) : DownloadRunner {
             this.action = action
             putExtra(DownloadService.EXTRA_FILE_ID, fileId)
         }
-        context.startForegroundService(intent)
+        context.startForegroundServiceCompat(intent)
     }
 
     companion object {

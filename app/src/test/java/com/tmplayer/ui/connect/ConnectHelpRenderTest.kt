@@ -56,7 +56,7 @@ class ConnectHelpRenderTest {
     @androidx.compose.runtime.Composable
     private fun Stalled() {
         val s = Translator.messages
-        BrandLoader(label = L.stateConnecting, lines = emptyList(), sweepAt = 0.5f) {
+        BrandLoader(label = L.stateConnecting, sweepAt = 0.5f) {
             ConnectingHelpView(
                 status = connectStepLabel(ConnectStep.Connecting, s),
                 stalled = true,

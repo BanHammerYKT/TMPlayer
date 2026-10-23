@@ -9,6 +9,7 @@ import com.tmplayer.data.valueOrNull
 import com.tmplayer.platform.Logger
 import dev.g000sha256.tdl.TdlClient
 import dev.g000sha256.tdl.dto.File as TdFile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -77,8 +78,9 @@ class TdByteWindow(private val td: TdlClient) {
      * A stretch away from TDLib's download that is on the disk all the same, as
      * `getFileDownloadedPrefixSize` confirmed: an MKV's Cues or an MP4's moov that [StreamWarmup]
      * (or an earlier play) brought down. Read from where it is, without moving the download there
-     * and back, which used to cost a round trip each way before the first frame. Never in Low
-     * storage mode, whose rolls delete what lies outside the window.
+     * and back, which used to cost a round trip each way before the first frame. In Low storage
+     * mode too, where the stretch is recorded as held ([LowStorageStreams.onDisk]) so the window's
+     * budget counts it, and dropped with the window at every delete ([deleteForLowStorage]).
      */
     @Volatile
     private var side = Window.EMPTY
@@ -339,6 +341,9 @@ class TdByteWindow(private val td: TdlClient) {
                 runCatching { handle?.close() }
                 handle = null
                 localPath = usablePath
+                // A stretch found on the old file says nothing about the new one: a delete by
+                // another reader's roll, or the file removed under us, comes back empty.
+                side = Window.EMPTY
             }
             if (availability == LocalFileAvailability.Complete) {
                 completed = true
@@ -456,11 +461,17 @@ class TdByteWindow(private val td: TdlClient) {
     /**
      * Bytes at [target] on the disk outside TDLib's current download (see [side]), recorded so the
      * reads can be served without re-aiming the download; 0 when there are none or it cannot say.
+     *
+     * In Low storage mode, 0 too for a stretch the mode would rather fetch afresh (too short to be
+     * worth reading when the window could not carry on from its end: [LowStorageWindow.onDisk]),
+     * and any other is recorded as held, so the budget counts it and the window rolls on near its
+     * end like any stretch it asked for.
      */
     private suspend fun onDiskAt(target: Long): Long {
-        if (lowStorage || localPath == null) return 0
+        if (localPath == null) return 0
         val here = td.getFileDownloadedPrefixSize(fileId, target).valueOrNull?.size ?: return 0
         if (here <= 0) return 0
+        if (lowStorage && LowStorageStreams.onDisk(fileId, target, here, size) == LowStorageWindow.OnDisk.Use.Fetch) return 0
         synchronized(this) { side = Window(target, minOf(size, target + here)) }
         return here
     }
@@ -539,10 +550,12 @@ class TdByteWindow(private val td: TdlClient) {
      * played before the download carries on from its end ([followSide]). A jump far from where
      * the stream reads is left to the first read, which fetches it as a probe ([probeAt]); any
      * other open is a seek, and asked for at once.
+     *
+     * Low storage mode does the same within its window ([lowStorageOpen]).
      */
     suspend fun requestUnlessOnDisk(offset: Long) {
         if (lowStorage) {
-            requestDownloadFrom(offset)
+            lowStorageOpen(offset)
             return
         }
         val known = window
@@ -568,6 +581,41 @@ class TdByteWindow(private val td: TdlClient) {
     }
 
     /**
+     * [requestUnlessOnDisk] in Low storage mode, which used to ask TDLib from [offset] at every
+     * open and so waited on Telegram for bytes already on the disk: the head of a video played or
+     * warmed before, and its index at the far end, which also sent the download there and back.
+     *
+     * Nothing is asked when the window's own download is running and will reach [offset]. Bytes
+     * on the disk there are read from where they are ([onDiskAt]): an index without moving the
+     * download, anything else with the download carried on from its end when that fits the window
+     * ([followSide]). A read in the index's part of the file away from the picture is left to the
+     * first read, which fetches it as a probe ([probeAt]). Anything else is a seek, as before:
+     * asked for at once, deleting first when the window says so.
+     */
+    private suspend fun lowStorageOpen(offset: Long) {
+        val known = window
+        if (LowStorageStreams.holds(fileId, offset) && !DownloadWindow.needsRestart(
+                position = offset,
+                downloadOffset = known.start,
+                downloadedPrefixSize = known.end - known.start,
+                active = downloading,
+                completed = completed,
+            )
+        ) {
+            return
+        }
+        val run = onDiskAt(offset)
+        if (run >= ON_DISK_ENOUGH || (run > 0 && offset + run >= size)) {
+            Logger.i(TAG, "Low storage: file $fileId opened at $offset, on the disk already")
+            followSide(offset, run)
+            return
+        }
+        if (isFar(offset)) return
+        markSeek(offset)
+        requestDownloadFrom(offset)
+    }
+
+    /**
      * The stream reads at [target], in a stretch of [run] bytes on the disk away from TDLib's
      * download ([side]). A probe there (far ahead of where the stream reads: an index at the end)
      * leaves the download alone. Otherwise it is where the stream is now, a seek back into what
@@ -583,12 +631,28 @@ class TdByteWindow(private val td: TdlClient) {
             return
         }
         markSeek(target)
-        if (end < size && !continuesInto(end)) requestDownloadFrom(end)
+        if (end >= size) return
+        // In Low storage mode the window has to know the download goes on from [end], or the
+        // stretch alone counts as held and the first read in it rolls the window on, deleting the
+        // head that was just found on the disk (seen at the start of a video the warm-up brought
+        // down, 2026-10-23). The request from [end] records it, and moves nothing that runs there.
+        if (!lowStorage && continuesInto(end)) return
+        // In Low storage mode a request from its end that would delete the file would take the
+        // stretch being read with it: the window rolls on near its end instead, as it does for
+        // any stretch it holds (see [LowStorageWindow.onDisk]).
+        if (lowStorage && LowStorageStreams.wouldDelete(fileId, end, size)) return
+        requestDownloadFrom(end)
     }
 
-    /** Whether [target] is far enough from where the stream reads to be a probe; see [Playhead]. */
+    /**
+     * Whether [target] is far enough from where the stream reads to be a probe; see [Playhead].
+     * In Low storage mode only in the index's part of the file ([LowStorageWindow.nearTheEnd]):
+     * anywhere else a probe that the reader then carried on from would be followed by a request
+     * that deletes it, so such a jump is a seek from the start.
+     */
     private fun isFar(target: Long): Boolean {
-        if (lowStorage || saveData || completed) return false
+        if (saveData || completed) return false
+        if (lowStorage && !LowStorageWindow.nearTheEnd(target, size)) return false
         val ph = playhead ?: return false
         val at = ph.mainAt
         // Before the first read there is no stream to keep: wherever it starts is the stream.
@@ -645,8 +709,10 @@ class TdByteWindow(private val td: TdlClient) {
     /**
      * A read at [target] far from where the stream reads ([isFar]): a megabyte or two around it,
      * on part boundaries, fetched on its own, and then the download pointed back at the stream.
-     * Returns the bytes at [target] once they are on the disk, or null when they did not land
-     * there, and the ordinary wait takes over.
+     * Returns the bytes at [target] once [PROBE_READY_BYTES] of them (or the rest of the probe,
+     * when less) are on the disk, while the rest of the probe comes down behind the read and the
+     * download goes back once it has; or null when they did not land there, and the ordinary
+     * wait takes over.
      */
     private suspend fun probeAt(target: Long): Long? {
         val ph = playhead ?: return null
@@ -656,35 +722,130 @@ class TdByteWindow(private val td: TdlClient) {
         if (end - target < PROBE_BYTES / 2) end += PROBE_BYTES
         end = minOf(end, size)
         if (end <= target) return null
+        // Low storage mode counts the probe against its window, and sends a probe that would take
+        // the disk past it down the seek path instead.
+        if (lowStorage && !LowStorageStreams.probe(fileId, start, end, size)) return null
         ph.probe = Window(start, end)
         Logger.i(TAG, "File $fileId probed at $target: $start to $end on its own, the stream stays at ${ph.mainAt}")
         if (shut) throw IOException("File $fileId is closed")
         StreamWarmup.claim(fileId)
-        val result = td.downloadFile(
-            fileId = fileId,
-            priority = PLAYBACK_PRIORITY,
-            offset = start,
-            limit = end - start,
-            synchronous = false,
-        )
-        result.errorMessage?.let { throw IOException(Failures.humanise(it)) }
-        // The whole of it, not only the first bytes: the request that puts the stream back drops
-        // whatever parts of the probe are still in flight.
-        val deadline = System.nanoTime() + STALL_TIMEOUT_MS * 1_000_000
+        suspend fun ask() {
+            val result = td.downloadFile(
+                fileId = fileId,
+                priority = PLAYBACK_PRIORITY,
+                offset = start,
+                limit = end - start,
+                synchronous = false,
+            )
+            result.errorMessage?.let { throw IOException(Failures.humanise(it)) }
+        }
+        ask()
+        // TDLib sometimes takes such a request and brings nothing for it, until it is asked again:
+        // on the 1 GB TV a probe of an MKV's index sat for the whole minute of the stall timeout
+        // and then came in a second after the wait below re-asked (2026-10-23, 64 s before the
+        // first frame). So a probe with no bytes for [PROBE_NUDGE_MS] is asked for again, and one
+        // whose read is still short after [PROBE_GIVE_UP_MS] is left to the ordinary wait, which
+        // moves the download to the byte as streaming did before probes.
+        val wait = ProbeWait(System.nanoTime())
+        val probe = Window(start, end)
+        // The read is handed its bytes as soon as a useful amount at [target] is on the disk,
+        // rather than once the whole megabyte or two is: an index is parsed while the rest of it
+        // comes down, and an index shorter than the probe is not kept waiting for bytes past it.
+        val ready = DownloadWindow.probeReady(start, end, target, PROBE_READY_BYTES)
+        val have = awaitProbe(target, start, ready, wait) { ask() }
+        if (have < 0) {
+            Logger.i(TAG, "File $fileId: the probe at $target brought too little of ${end - start} bytes; reading it as a seek")
+            ph.probe = Window.EMPTY
+            return null
+        }
+        val run = onDiskAt(target)
+        val rest = scope
+        if (have >= end - start || run <= 0 || rest == null) {
+            // Whole already, or nothing to hand the read yet, or no scope to finish in: the whole
+            // of it is waited for here, as before.
+            val finished = have >= end - start || awaitProbe(target, start, end - start, wait) { ask() } >= 0
+            if (!finished) {
+                Logger.i(TAG, "File $fileId: the probe at $target did not finish; reading it as a seek")
+                ph.probe = Window.EMPTY
+                return null
+            }
+            val whole = if (run > 0 && have >= end - start) run else onDiskAt(target)
+            putBack(ph)
+            return whole.takeIf { it > 0 }
+        }
+        // The rest of the probe keeps coming down, and only once it is whole does the download go
+        // back to the stream: the request that puts it back drops whatever parts of the probe are
+        // still in flight. A source closed meanwhile (the reader went back to the picture, which
+        // opens the stream again and asks for it there) cancels this with its scope.
+        rest.launch {
+            try {
+                val whole = awaitProbe(target, start, end - start, wait) { ask() }
+                // The stream moved since (a seek, or the reader carried on past the probe and the
+                // download followed it): nothing here is to be put back.
+                if (ph.probe != probe) return@launch
+                if (whole < 0) {
+                    Logger.i(TAG, "File $fileId: the probe at $target did not finish; its reads wait the ordinary way")
+                    return@launch
+                }
+                // The reads still to come in it are served from the disk once the download leaves.
+                onDiskAt(target)
+                putBack(ph)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logger.i(TAG, "File $fileId: the rest of the probe at $target stopped: ${e.message}")
+            }
+        }
+        return run
+    }
+
+    /** How long a probe has been waited for, and what it brought: one per [probeAt], shared by both of its waits. */
+    private class ProbeWait(val started: Long) {
+        var lastHave = -1L
+        var lastGrowth = started
+        var asked = 1
+    }
+
+    /**
+     * Waits until [need] bytes from [start] are on the disk, asking for the probe again ([ask])
+     * once when nothing came for [PROBE_NUDGE_MS]. Returns the bytes there, or -1 once
+     * [PROBE_GIVE_UP_MS] have gone by since the probe was first asked for.
+     */
+    private suspend fun awaitProbe(target: Long, start: Long, need: Long, wait: ProbeWait, ask: suspend () -> Unit): Long {
         while (true) {
             if (shut) throw IOException("File $fileId was closed while a read waited")
             val have = td.getFileDownloadedPrefixSize(fileId, start).valueOrNull?.size ?: 0L
-            if (have >= end - start) break
-            if (System.nanoTime() >= deadline) throw IOException("Telegram stopped sending file $fileId at byte $target")
+            if (have >= need) return have
+            val now = System.nanoTime()
+            if (have > wait.lastHave) {
+                wait.lastHave = have
+                wait.lastGrowth = now
+            }
+            if (now - wait.started >= PROBE_GIVE_UP_MS * 1_000_000) {
+                Logger.i(TAG, "File $fileId: the probe at $target has $have of the $need bytes it waits for")
+                return -1
+            }
+            if (now - wait.lastGrowth >= PROBE_NUDGE_MS * 1_000_000 && wait.asked < 2) {
+                Logger.i(TAG, "File $fileId: no bytes for the probe at $target; asking again")
+                if (!OfflineDownloads.isDownloading(fileId)) td.cancelDownloadFile(fileId, onlyIfPending = false)
+                ask()
+                wait.asked++
+                wait.lastGrowth = now
+            }
             val seen = revision.value
             if (withTimeoutOrNull(POLL_INTERVAL_MS) { revision.first { it != seen } } == null) {
                 td.getFile(fileId).valueOrNull?.let(::absorb)
             }
         }
-        val run = onDiskAt(target)
+    }
+
+    /** After a probe: the download pointed back at where the stream reads. */
+    private suspend fun putBack(ph: Playhead) {
         val back = ph.mainAt
-        if (back in 0 until size && !completed) requestDownloadFrom(back)
-        return run.takeIf { it > 0 }
+        // Not in Low storage mode when going back would delete the file, the probe with it: the
+        // stream's next read asks from where it is.
+        val allowed = !(lowStorage && LowStorageStreams.wouldDelete(fileId, back, size))
+        if (back in 0 until size && !completed && allowed) requestDownloadFrom(back)
     }
 
     /**
@@ -724,6 +885,7 @@ class TdByteWindow(private val td: TdlClient) {
         synchronized(this) {
             deleting = true
             window = Window.EMPTY
+            side = Window.EMPTY
         }
         try {
             Logger.i(TAG, "Low storage: deleting file $fileId to restart at $offset")
@@ -763,6 +925,15 @@ class TdByteWindow(private val td: TdlClient) {
         /** How near a probe's end a read has to come before the download follows it. */
         private const val PROMOTE_MARGIN_BYTES = 256L * 1024
 
+        /** How much at a probe's byte is enough to hand its read, while the rest comes down. */
+        private const val PROBE_READY_BYTES = 64L * 1024
+
+        /** How long a probe may bring nothing before it is asked for again; see [probeAt]. */
+        private const val PROBE_NUDGE_MS = 2_000L
+
+        /** How long a probe may take before its read waits the ordinary way instead. */
+        private const val PROBE_GIVE_UP_MS = 8_000L
+
         /** With no window open at a file for this long, its next open is a new play. */
         private const val NEW_PLAY_AFTER_MS = 5_000L
 
@@ -781,6 +952,13 @@ class TdByteWindow(private val td: TdlClient) {
             }
             ph
         }
+
+        /**
+         * Whether a player has [fileId] open now. TDLib keeps one download per file, so a saved
+         * download of the same file waits while it is (DownloadService): taking the download back
+         * from the player every two seconds left the player's reads unanswered for minutes.
+         */
+        fun isStreaming(fileId: Int): Boolean = synchronized(playheads) { (playheads[fileId]?.open ?: 0) > 0 }
 
         private fun letGo(ph: Playhead) = synchronized(playheads) {
             ph.open = (ph.open - 1).coerceAtLeast(0)

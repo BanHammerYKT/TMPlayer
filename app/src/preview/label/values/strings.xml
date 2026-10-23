@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The preview build installs beside the real one, so its name says which icon is which.
+    -->
+    <string name="app_name">TMPlayer Test</string>
+</resources>

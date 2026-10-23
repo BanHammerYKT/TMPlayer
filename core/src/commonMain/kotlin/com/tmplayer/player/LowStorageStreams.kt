@@ -63,6 +63,49 @@ object LowStorageStreams {
         return request
     }
 
+    /**
+     * What to do with [run] bytes TDLib already has on the disk at [offset] of [fileId], away from
+     * its running download ([LowStorageWindow.onDisk]), recording them as held when they are to be
+     * read. Null when the mode does not apply.
+     */
+    @Synchronized
+    fun onDisk(fileId: Int, offset: Long, run: Long, size: Long): LowStorageWindow.OnDisk.Use? {
+        val state = files[fileId] ?: return null
+        if (OfflineDownloads.isDownloading(fileId)) return null
+        val answer = LowStorageWindow.onDisk(state.ranges, offset, run, size, state.window)
+        state.ranges = answer.ranges
+        return answer.use
+    }
+
+    /** Whether a request from [offset] of [fileId] would delete the file first. Records nothing. */
+    @Synchronized
+    fun wouldDelete(fileId: Int, offset: Long, size: Long): Boolean {
+        val state = files[fileId] ?: return false
+        if (OfflineDownloads.isDownloading(fileId)) return false
+        return LowStorageWindow.plan(state.ranges, offset, size, state.window).deleteFirst
+    }
+
+    /** Whether [position] of [fileId] lies in a stretch the mode asked for or found on the disk. */
+    @Synchronized
+    fun holds(fileId: Int, position: Long): Boolean {
+        val state = files[fileId] ?: return false
+        return state.ranges.any { position >= it.start && position < it.end }
+    }
+
+    /**
+     * Records a probe of `[start, end)` of [fileId], [size] bytes long, about to be fetched, if it
+     * keeps the disk within the window and its slack ([LowStorageWindow.probeFits]); false, and
+     * nothing recorded, when it would not, and the read is fetched as a seek instead.
+     */
+    @Synchronized
+    fun probe(fileId: Int, start: Long, end: Long, size: Long): Boolean {
+        val state = files[fileId] ?: return true
+        if (OfflineDownloads.isDownloading(fileId)) return true
+        if (!LowStorageWindow.probeFits(state.ranges, start, end, size, state.window)) return false
+        state.ranges = LowStorageWindow.merge(state.ranges + LowStorageWindow.indexRange(start, end, size))
+        return true
+    }
+
     /** Whether a read at [position] should roll [fileId]'s window on before it is served. */
     @Synchronized
     fun rollDue(fileId: Int, position: Long, size: Long): Boolean {

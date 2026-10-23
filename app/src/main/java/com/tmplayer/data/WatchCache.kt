@@ -82,6 +82,12 @@ object WatchCache {
 
     fun isPlaying(fileId: Int): Boolean = synchronized(playing) { fileId in playing }
 
+    /**
+     * Whether any video is open in a player: the shell's own background work (Home's refetches,
+     * the TV home screen's channels) waits while it is, so it never competes with playback.
+     */
+    fun anyPlaying(): Boolean = synchronized(playing) { playing.isNotEmpty() }
+
     private fun playingNow(): Set<Int> = synchronized(playing) { playing.keys.toSet() }
 
     /** Deletes every cached video except [keepFileId]. See [WatchCacheRules.evictAllBut]. */

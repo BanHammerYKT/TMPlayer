@@ -148,18 +148,56 @@ object SeriesShelf {
         // pieces make ([SplitPieces.join]) is keyed as any other.
         if (item.splitPiece?.certain == true && item.pieces.isEmpty()) return null
         filmKeyOf(item, name)?.let { return it }
-        val key = keyOf(name.title).ifEmpty { return null }
+        val key = name.titleKey.ifEmpty { return null }
         name.airDate?.let { return "date:$key|$it" }
         val episode = name.episode ?: return null
         return "episode:$key|${name.season ?: 1}|$episode"
     }
 
-    /** "harbour notes" for "Harbour.Notes", "Harbour Notes:" and "HARBOUR NOTES". */
-    fun keyOf(title: String): String =
-        title.lowercase()
-            .replace(NOT_WORD, " ")
-            .trim()
-            .replace(SPACES, " ")
+    /**
+     * "harbour notes" for "Harbour.Notes", "Harbour Notes:" and "HARBOUR NOTES": the letters,
+     * marks and digits of the title, lower-cased, each run of anything else one space, none at
+     * either end. A scan rather than three regular expressions, since every build of Home keys
+     * hundreds of names; a name with a character outside the basic plane (an emoji, a rare
+     * script) still goes through the expressions, which read it as one character rather than two.
+     */
+    fun keyOf(title: String): String {
+        val lower = title.lowercase()
+        // Most names are a key already, or need nothing but lower case: no copy made for those.
+        var key = true
+        for (index in lower.indices) {
+            val char = lower[index]
+            if (char.isSurrogate()) return keyByPattern(lower)
+            if (!isWordChar(char) && (char != ' ' || index == lower.lastIndex || index == 0 || !isWordChar(lower[index - 1]))) key = false
+        }
+        if (key) return lower
+        val out = StringBuilder(lower.length)
+        var gap = false
+        for (char in lower) {
+            if (isWordChar(char)) {
+                if (gap && out.isNotEmpty()) out.append(' ')
+                gap = false
+                out.append(char)
+            } else {
+                gap = true
+            }
+        }
+        return out.toString()
+    }
+
+    private fun isWordChar(char: Char): Boolean = if (char < '\u0080') {
+        char in 'a'..'z' || char in 'A'..'Z' || char in '0'..'9'
+    } else when (char.category) {
+        CharCategory.UPPERCASE_LETTER, CharCategory.LOWERCASE_LETTER, CharCategory.TITLECASE_LETTER,
+        CharCategory.MODIFIER_LETTER, CharCategory.OTHER_LETTER,
+        CharCategory.NON_SPACING_MARK, CharCategory.ENCLOSING_MARK, CharCategory.COMBINING_SPACING_MARK,
+        CharCategory.DECIMAL_DIGIT_NUMBER, CharCategory.LETTER_NUMBER, CharCategory.OTHER_NUMBER,
+        -> true
+        else -> false
+    }
+
+    /** [keyOf] by its regular expressions, for a name the scan leaves to them. */
+    private fun keyByPattern(lower: String): String = lower.replace(NOT_WORD, " ").trim().replace(SPACES, " ")
 
     /** One file that names an episode: the key it was read under, and the others it could go by. */
     private class Found(
@@ -242,7 +280,7 @@ object SeriesShelf {
         val strict = items.indices.map { index ->
             val item = items[index]
             val name = names[index]
-            val key = keyOf(name.title)
+            val key = name.titleKey
             val number = name.episode
             if (key.isEmpty() || number == null || name.extra != null) {
                 null
@@ -315,7 +353,7 @@ object SeriesShelf {
         // name that says "Trailer" needs something to back it (a feature beside it, a short length
         // or a small size), so a film titled "The Sample Room" stays a film; a short with a year of
         // its own and no such word is a short film, not an extra.
-        fun titleKey(index: Int) = keyOf(names[index].title)
+        fun titleKey(index: Int) = names[index].titleKey
         val featureOf = HashMap<String, String>()
         val featureYear = HashMap<String, Int?>()
         for (index in loose) {
@@ -339,7 +377,7 @@ object SeriesShelf {
             val year = names[index].year
             val sameFilm = year == null || year == featureYear[key]
             val kind = word ?: ExtraKind.Extra.takeIf { short && feature != null && sameFilm } ?: continue
-            val labelled = item.copy(extra = kind)
+            val labelled = item.copy(extra = kind).keptReads(item)
             shown[item.id] = labelled
             if (feature != null && feature != item.id) {
                 after.getOrPut(feature) { ArrayList() } += labelled
@@ -398,6 +436,16 @@ object SeriesShelf {
      */
     fun sameVideoKey(item: MediaItem): String? {
         val corrections = VideoCorrections.current
+        // Asked for every tile on every build of Home: kept on the item while the viewer has not
+        // corrected it.
+        if (corrections.isEmpty() || item.id !in corrections) return item.uncorrectedCopyKey
+        return copyKeyOf(item, corrections)
+    }
+
+    /** [sameVideoKey] with none of the viewer's corrections, which [MediaItem] keeps. */
+    internal fun uncorrectedCopyKey(item: MediaItem): String? = copyKeyOf(item, emptyMap())
+
+    private fun copyKeyOf(item: MediaItem, corrections: Map<String, VideoCorrection>): String? {
         val name = episodeOf(item, corrections)
         val key = candidateKey(item, corrections, name) ?: return null
         return if (name.part != null) "$key|part${name.part}" else key
@@ -430,8 +478,8 @@ object SeriesShelf {
         val title = when {
             renamed != null -> renamed
             item.versions.size > 1 || item.parts.size > 1 || item.isJoined -> filmTitle(item)
-            item.fileName.isBlank() || MediaText.isGenericName(item.fileName) -> item.title
-            else -> MediaName.tileTitle(item.fileName, item.caption) ?: item.title
+            item.fileName.isBlank() || item.genericFileName -> item.title
+            else -> item.fileTileTitle ?: item.title
         }
         val extra = item.extra ?: return title
         return L.messages.gridExtraTitle(title, extraLabel(extra))
@@ -456,8 +504,10 @@ object SeriesShelf {
         if (item.extra != null) return false
         if (item.versions.size > 1 || item.parts.size > 1) return true
         val renamed = VideoCorrections.current[item.id]?.title
-        if (renamed == null && (item.fileName.isBlank() || MediaText.isGenericName(item.fileName))) return false
-        val name = if (renamed != null) MediaName.parse(renamed) else MediaName.parse(item.fileName, item.caption)
+        if (renamed == null && (item.fileName.isBlank() || item.genericFileName)) return false
+        // The item's own reading where the name is its file's: Home sorts and folds by this, and
+        // reading the name afresh each time held a TV stick's main thread (1.28.0).
+        val name = if (renamed != null) MediaName.parse(renamed) else item.parsedName
         return !name.isSeries && name.extra == null && name.year != null && name.title.isNotBlank()
     }
 
@@ -491,9 +541,9 @@ object SeriesShelf {
      */
     private fun filmKeyOf(item: MediaItem, name: ParsedName): String? {
         if (name.isSeries) return null
-        val key = keyOf(name.title)
+        val key = name.titleKey
         if (key.isEmpty()) return null
-        if (name.year == null && EpisodeCopies.markers(item.nameForParsing).isEmpty()) return null
+        if (name.year == null && item.nameMarkers.isEmpty()) return null
         return "$key|${name.year ?: ""}"
     }
 
@@ -502,13 +552,13 @@ object SeriesShelf {
      * "Show, E5. Vlog", which only counts once [joining] finds the show it names.
      */
     private fun loose(item: MediaItem): Found? {
-        val caption = item.caption.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
         // Most files carry no bare "E05" at all, and finding that out is cheaper than a parse.
-        if (!MAYBE_LOOSE.containsMatchIn(item.nameForParsing) && (caption == null || !MAYBE_LOOSE.containsMatchIn(caption))) return null
+        if (!item.mayNameLooseEpisode) return null
+        val caption = item.caption.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
         val name = listOfNotNull(item.nameForParsing.ifBlank { null }, caption)
             .firstNotNullOfOrNull { MediaName.looseEpisode(it) }
             ?: return null
-        val key = keyOf(name.title)
+        val key = name.titleKey
         val number = name.episode ?: return null
         if (key.isEmpty()) return null
         return Found(item, key, name, number, alternatesOf(item, key))
@@ -529,15 +579,26 @@ object SeriesShelf {
             .firstOrNull()
     }
 
-    /** The keys the file name alone and the caption alone would give, other than [key]. */
-    private fun alternatesOf(item: MediaItem, key: String): List<String> {
+    /** Whether [item]'s name or its caption's first line holds something [MediaName.looseEpisode] could read. */
+    internal fun mayBeLoose(item: MediaItem): Boolean {
+        if (MAYBE_LOOSE.containsMatchIn(item.nameForParsing)) return true
         val caption = item.caption.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
-        // Without a caption the file name alone gave [key] already.
+        return caption != null && MAYBE_LOOSE.containsMatchIn(caption)
+    }
+
+    /** The keys the file name alone and the caption alone would give, other than [key]. */
+    private fun alternatesOf(item: MediaItem, key: String): List<String> =
+        item.alternateKeys.filter { it.isNotEmpty() && it != key }.distinct()
+
+    /** Every key [alternatesOf] picks from, read once per item ([MediaItem.alternateKeys]). */
+    internal fun alternateKeysOf(item: MediaItem): List<String> {
+        val caption = item.caption.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+        // Without a caption the file name alone gave the key already.
         if (caption == null) return emptyList()
         return listOfNotNull(
             item.fileName.ifBlank { null }?.let { if (it == item.nameForParsing) item.parsedNameAlone.title else MediaName.parse(it).title },
             MediaName.parse(caption).title,
-        ).map(::keyOf).filter { it.isNotEmpty() && it != key }.distinct()
+        ).map(::keyOf)
     }
 
     private fun series(key: String, files: List<Found>, separate: (MediaItem) -> Boolean, durationOf: (MediaItem) -> Int): Series {
@@ -566,10 +627,11 @@ object SeriesShelf {
             .map { (number, list) -> SeriesSeason(number, list.sortedBy { it.episode }) }
         // "harbour_notes_720p" is the same show as "Harbour.Notes", but the second is how to write it.
         // A file that joined under another name is a last resort for the title.
-        val titles = files.sortedBy { keyOf(it.name.title) != key }.map { it.name.title }
-        val title = titles.firstOrNull { it != it.lowercase() && keyOf(it) == key }
-            ?: titles.firstOrNull { keyOf(it) == key }
-            ?: titles.first()
+        // Each title keyed once, not once per comparison of a sort.
+        val (own, joined) = files.map { it.name.title }.partition { keyOf(it) == key }
+        val title = own.firstOrNull { it != it.lowercase() }
+            ?: own.firstOrNull()
+            ?: joined.first()
         return Series(key = key, title = title, seasons = seasons)
     }
 

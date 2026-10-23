@@ -51,7 +51,10 @@ suspend fun Updates.downloadAndInstall(context: Context, release: Release) {
 /** Whether the device will let TMPlayer hand an APK to the installer at all. */
 @Suppress("UnusedReceiverParameter")
 fun Updates.canInstall(context: Context): Boolean =
-    context.packageManager.canRequestPackageInstalls()
+    // Before Android 8 there is no per-app permission, only the one "unknown sources" switch, and
+    // the system's installer asks for that itself when the APK is handed over.
+    android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+        context.packageManager.canRequestPackageInstalls()
 
 /**
  * The system screen where "allow apps from this source" is turned on.
@@ -61,9 +64,14 @@ fun Updates.canInstall(context: Context): Boolean =
  */
 @Suppress("UnusedReceiverParameter")
 fun Updates.unknownSourcesIntent(context: Context): Intent =
-    Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-        .setData(android.net.Uri.parse("package:${context.packageName}"))
-        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+            .setData(android.net.Uri.parse("package:${context.packageName}"))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    } else {
+        // Android 7 and older keep the one global switch on the security page.
+        Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
 private fun installIntent(context: Context, file: File): Intent {
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", file)

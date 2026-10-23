@@ -57,8 +57,19 @@ import kotlinx.coroutines.delay
  * without one (or with it disabled); those keep the YouTube app and the QR code.
  */
 @Composable
-internal fun rememberInAppTrailers(): Boolean = remember {
-    runCatching { WebView.getCurrentWebViewPackage() != null }.getOrDefault(false)
+internal fun rememberInAppTrailers(): Boolean {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    return remember {
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                WebView.getCurrentWebViewPackage() != null
+            } else {
+                // Android 6 and 7 cannot name the WebView package; the system feature is the
+                // nearest answer they give.
+                context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_WEBVIEW)
+            }
+        }.getOrDefault(false)
+    }
 }
 
 /**

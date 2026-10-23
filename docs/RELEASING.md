@@ -3,15 +3,15 @@
 Releases are cut by pushing a tag. Nothing else produces a signed APK or a desktop installer:
 
 ```bash
-git tag -a v0.3.0 -F notes.txt
-git push origin v0.3.0
+git tag -a v1.28.1 -F notes.txt
+git push origin v1.28.1
 ```
 
-The tag is annotated, and its message is the release notes: a `release: 0.3.0` subject, a blank
+The tag is annotated, and its message is the release notes: a `release: 1.28.1` subject, a blank
 line, then one `- ` line per change, short and in plain words, no em or en dashes:
 
 ```
-release: 0.3.0
+release: 1.28.1
 
 - An Episodes list in the player on phone, TV and desktop
 - OK pauses in one press on TV
@@ -53,8 +53,8 @@ The macOS build bundles Homebrew's libraries, so its corresponding source is a s
 `mediamp-corresponding-source-<mediamp>-macos.tar.gz` from `scripts/build-mediamp-source.sh --macos`.
 It is attached by hand, beside the Linux and Windows archive, to the first release that carries
 that mediamp version, after which `MAC_TAG` in `release.yml` names that release, exactly as `TAG`
-does for the Linux and Windows archive. mediamp 0.5.2 is first carried by 1.27.0, so both tags are
-empty until its archives are up.
+does for the Linux and Windows archive. mediamp 0.5.2 is first carried by 1.27.0, and both archives
+are on that release, so `TAG` and `MAC_TAG` are `v1.27.0`.
 
 Nothing else is attached. GitHub adds the source archives of the tagged tree by itself and shows
 each file's SHA-256 beside it, so there is no checksum file. The release notes link to the
@@ -63,8 +63,10 @@ That source archive, `nextlib-corresponding-source-<nextlib>.tar.gz` from
 `scripts/build-nextlib-source.sh`, goes up by hand once, to the first release that carries that
 nextlib version, and is the same for every release while nextlib stays there. The nextlib step in
 `release.yml` works as the mediamp one: an empty `TAG` links the release's own copy and warns until
-it is attached, then `TAG` names that release. nextlib 1.11.1-0.16.0 is first carried by 1.27.0
-(1.21.0 to 1.26.0 linked the 1.10.1-0.13.0 archive on 1.21.0). The publish job fails if
+it is attached, then `TAG` names that release. `LINKED` is `1.11.1-0.16.0-tm1` (nextlib built
+from source with TMPlayer's patch), first carried by 1.27.0, and its `TAG` is still empty: each
+release links its own copy of the archive and the job warns until one is attached and `TAG` is
+set (1.21.0 to 1.26.0 linked the 1.10.1-0.13.0 archive on 1.21.0). The publish job fails if
 `gradle/libs.versions.toml` moves nextlib or mediamp on without a matching `LINKED` or `COVERED`,
 so a bump comes with a new archive.
 
@@ -105,6 +107,35 @@ because it finds that passing CI run on an ancestor of the tag with nothing sinc
 site, Markdown, the store listing text or the PKGBUILD. Tagging code CI has not seen still works,
 it just runs the tests itself, which adds about 20 minutes. The desktop jobs always run their
 own tests, because they also check the installers.
+
+## After the release job
+
+`<v>` is the new version, `v<v>` its tag.
+
+1. **The run and the release.** `gh run list --workflow release.yml --limit 1`, then
+   `gh run watch <run-id>` and `gh release view v<v>`: every file is attached and the notes link
+   the nextlib and mediamp sources. A warning about a missing source archive means the archive
+   still has to be attached (see the source archives above).
+2. **Provenance.** Check that the APK carries the build's attestation:
+
+   ```sh
+   cd "$(mktemp -d)"
+   gh release download v<v> -p 'TMPlayer-<v>-universal.apk'
+   gh attestation verify TMPlayer-<v>-universal.apk --repo dracu-lah/TMPlayer
+   ```
+
+3. **The feed and the site.** `git pull`, then `jq . site/public/latest.json`: the new version, its
+   changes and each file's SHA-256.
+4. **The Telegram post** on t.me/tmplayerapp went out (the run's summary has a "Telegram:" line).
+5. **AUR.** `desktop/packaging/aur/PKGBUILD` on `main` names `pkgver=<v>` (the feed step runs
+   `scripts/aur-bump.py`). Once the `AUR_SSH_PRIVATE_KEY` secret is set, the next step pushes it,
+   and aur.archlinux.org/packages/tmplayer-bin shows the new version. For a release that went out
+   some other way: `python3 scripts/aur-bump.py <v>`. One-time setup: `docs/distribution/aur.md`.
+6. **winget.** Once `TMPlayer.TMPlayer` is on winget and the `WINGET_TOKEN` secret is set, the
+   `winget` job opens a PR in microsoft/winget-pkgs:
+   `gh search prs --repo microsoft/winget-pkgs --author dracu-lah --state open`, and answer a
+   Needs-Author-Feedback label within 5 days. Until the first manual submission it skips or
+   fails without failing the release (`docs/distribution/winget.md`).
 
 ## Repository secrets
 

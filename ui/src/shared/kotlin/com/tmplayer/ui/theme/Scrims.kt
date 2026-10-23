@@ -2,6 +2,8 @@ package com.tmplayer.ui.theme
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -129,6 +131,7 @@ object Scrims {
         colorStops = FootCurve.map { (at, alpha) -> at to Color.Black.copy(alpha = alpha) }.toTypedArray(),
     )
 
+
     /** How far across a backdrop [startLong] reaches by default: past the text column. */
     const val START_REACH = 0.6f
 
@@ -162,4 +165,18 @@ object Scrims {
 
         override fun hashCode(): Int = (color.hashCode() * 31 + reach.hashCode()) * 31 + edge.hashCode()
     }
+}
+
+/**
+ * [Scrims.tileFoot] drawn over only the part of the tile where it is not clear: the same picture,
+ * but the top 45 per cent of every tile is no longer filled with a transparent gradient. A
+ * TV stick's GPU paid for every pixel of the old full-tile rectangle on every frame.
+ */
+fun Modifier.tileFootScrim(): Modifier = drawWithCache {
+    val clear = Scrims.FootCurve[1].first
+    val top = size.height * clear
+    // The curve's stops past the clear part, measured from where the drawn band starts.
+    val stops = Scrims.FootCurve.drop(1).map { (at, alpha) -> (at - clear) / (1f - clear) to Color.Black.copy(alpha = alpha) }.toTypedArray()
+    val brush = Brush.verticalGradient(colorStops = stops, startY = top, endY = size.height)
+    onDrawBehind { drawRect(brush, topLeft = Offset(0f, top), size = Size(size.width, size.height - top)) }
 }

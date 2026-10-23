@@ -214,6 +214,7 @@ internal fun SeriesPage(
             // The Play pill plays, always: it names the episode it starts, and one that opened
             // the pane instead was pressed again and again for the same pane.
             onPlay = { state.openPlayer(it, startFromBeginning = false) },
+            onStartOver = { state.openPlayer(it, startFromBeginning = true) },
             // An episode's card is a tile: its page first, as a poster opens it (Settings, "Open a
             // video's page first"), and the card has the keyboard again when the pane closes.
             onOpenEpisode = if (state.detailFirst) {
@@ -242,6 +243,8 @@ internal fun SeriesPage(
                     )
                 }
             },
+            // The season's buttons say Downloaded once every episode is, from the same index.
+            downloadedIds = index.keys,
             chatTitle = state.chatTitleOf(series.cover.chatId),
             // Over the backdrop on a dark disc, in a band that fills in as the page scrolls.
             onBack = onClose,

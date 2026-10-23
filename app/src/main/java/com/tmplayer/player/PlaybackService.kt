@@ -211,7 +211,7 @@ class PlaybackService : MediaSessionService() {
                 return
             }
             ensureChannel(context)
-            val notification = Notification.Builder(context, CHANNEL_ID)
+            val notification = com.tmplayer.data.notificationBuilder(context, CHANNEL_ID, com.tmplayer.data.OldAndroid.IMPORTANCE_LOW)
                 .setSmallIcon(R.drawable.ic_notify_resume)
                 .setContentTitle(L.notifyPlaybackStopped)
                 .setContentText(L.notifyTapToResume)
@@ -239,6 +239,8 @@ class PlaybackService : MediaSessionService() {
 
         /** One channel, quiet: a media notification is a control, not news. */
         fun ensureChannel(context: Context) {
+            // Android 7 and older have no channels: each notification carries its own priority there.
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
             val channel = NotificationChannel(CHANNEL_ID, L.notifyChannelPlayback, NotificationManager.IMPORTANCE_LOW).apply {
                 description = L.notifyChannelPlaybackDescription
                 setShowBadge(false)

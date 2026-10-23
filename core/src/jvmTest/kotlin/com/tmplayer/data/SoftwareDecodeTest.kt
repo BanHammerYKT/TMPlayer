@@ -51,4 +51,14 @@ class SoftwareDecodeTest {
         SoftwareDecode.rememberHeavy(92, 1)
         assertTrue(SoftwareDecode.knownHeavy(92, 1))
     }
+
+    @Test
+    fun `4k in software on a weak device is unwatchable, 1080p is only heavy`() {
+        assertTrue(SoftwareDecode.unwatchable(SoftwareDecode.MIME_HEVC, 3840, 2160, hardware = false, weak = true))
+        assertTrue(SoftwareDecode.unwatchable(SoftwareDecode.MIME_HEVC, 3840, 1600, hardware = false, weak = true))
+        assertTrue(SoftwareDecode.unwatchable(SoftwareDecode.MIME_AV1, 3840, 2076, hardware = false, weak = true))
+        assertFalse(SoftwareDecode.unwatchable(SoftwareDecode.MIME_HEVC, 1920, 1080, hardware = false, weak = true))
+        assertFalse(SoftwareDecode.unwatchable(SoftwareDecode.MIME_HEVC, 3840, 2160, hardware = true, weak = true))
+        assertFalse(SoftwareDecode.unwatchable(SoftwareDecode.MIME_HEVC, 3840, 2160, hardware = false, weak = false))
+    }
 }

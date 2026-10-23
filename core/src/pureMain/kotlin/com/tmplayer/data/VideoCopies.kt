@@ -172,6 +172,14 @@ object VideoCopies {
         name.lowercase().split(NOT_WORD).mapNotNullTo(LinkedHashSet()) { LANGUAGES[it] }
 
     /**
+     * The picture a copy is, as a badge names it ("4K", "1080p"), read as the copies list reads it
+     * ([heightOf]: the name's marker first, then the size Telegram states), so a video's facts line
+     * and the copy named under Play never give one file two qualities (a "720p" badge over
+     * "1080p  ·  HEVC" on a TV, 2026-10-23). Null when neither says.
+     */
+    fun qualityLabel(item: MediaItem): String? = heightOf(item)?.let { if (it >= 2160) "4K" else "${it}p" }
+
+    /**
      * The picture's height a copy was made at, 2160 for 4K: from the name where it says ("1080p",
      * "4K"), else from the size Telegram states, the shorter side. Null when neither says.
      */
@@ -282,14 +290,7 @@ data class QualityHabit(val counts: Map<Int, Int> = emptyMap()) {
 }
 
 /** The short name a copy goes by on a button: "1080p", "4K", else its size. */
-fun MediaItem.copyQuality(): String {
-    val height = VideoCopies.heightOf(this)
-    return when {
-        height == null -> MediaText.formatSize(sizeBytes)
-        height >= 2160 -> "4K"
-        else -> "${height}p"
-    }
-}
+fun MediaItem.copyQuality(): String = VideoCopies.qualityLabel(this) ?: MediaText.formatSize(sizeBytes)
 
 /**
  * The copies a page knew of, handed to the player it opens: a film's [MediaItem.versions], which

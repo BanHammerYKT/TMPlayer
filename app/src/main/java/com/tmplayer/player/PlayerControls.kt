@@ -478,7 +478,7 @@ class PlayerControls(
     }
 
     private fun hintMoves(): Boolean =
-        !com.tmplayer.ui.theme.Motion.reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
+        !com.tmplayer.ui.theme.Motion.reduced && com.tmplayer.ui.theme.systemAnimatorsEnabled(container.context)
 
     /** [rate] the finger is scrubbing at, or null once it lifts. */
     fun showScrubRate(rate: Float?) {
@@ -705,7 +705,7 @@ class PlayerControls(
 
     private fun nameButtons(view: View) {
         if (view.isClickable && !view.contentDescription.isNullOrEmpty()) {
-            view.tooltipText = view.contentDescription
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) view.tooltipText = view.contentDescription
         }
         if (view is android.view.ViewGroup) {
             for (i in 0 until view.childCount) nameButtons(view.getChildAt(i))
@@ -745,7 +745,7 @@ class PlayerControls(
     private fun describe(view: View?, text: String) {
         if (view == null || view.contentDescription == text) return
         view.contentDescription = text
-        if (!isTv) view.tooltipText = text
+        if (!isTv && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) view.tooltipText = text
         // Play turning into Pause under the remote: the tip says the new name.
         if (tipFor === view) focusTip?.text = text
     }
@@ -886,7 +886,7 @@ class PlayerControls(
         )
         describe(shapeButton, L.playerPictureShapeNow(scale.label))
         if (!animate || !visible || com.tmplayer.ui.theme.Motion.reduced ||
-            !android.animation.ValueAnimator.areAnimatorsEnabled()
+            !com.tmplayer.ui.theme.systemAnimatorsEnabled(container.context)
         ) return
         shapeButton.animate().cancel()
         shapeButton.scaleX = SHAPE_POP
@@ -970,7 +970,7 @@ class PlayerControls(
      * and the system's animations off keep the plain fade.
      */
     private fun slideEdges(showing: Boolean) {
-        if (isTv || com.tmplayer.ui.theme.Motion.reduced || !android.animation.ValueAnimator.areAnimatorsEnabled()) return
+        if (isTv || com.tmplayer.ui.theme.Motion.reduced || !com.tmplayer.ui.theme.systemAnimatorsEnabled(container.context)) return
         val travel = SLIDE_DP * container.resources.displayMetrics.density
         // Motion.Standard's curve, as the Compose screens ease.
         val ease = android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)

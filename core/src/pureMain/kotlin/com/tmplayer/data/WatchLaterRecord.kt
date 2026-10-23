@@ -1,5 +1,7 @@
 package com.tmplayer.data
 
+import kotlin.concurrent.Volatile
+
 /**
  * A video the viewer put aside to watch later, without starring the chat it came from.
  *
@@ -23,7 +25,15 @@ data class WatchLaterRecord(
 ) {
     val key: String get() = ProgressKeys.of(chatId, messageId)
 
-    fun toMediaItem(): MediaItem = MediaItem(
+    /**
+     * The video this record stands for, made once and kept: what is read off its name (the copy
+     * and film keys Continue watching folds by) is kept on that item, so it is read once too.
+     */
+    fun toMediaItem(): MediaItem = item ?: makeItem().also { item = it }
+
+    @Volatile private var item: MediaItem? = null
+
+    private fun makeItem(): MediaItem = MediaItem(
         chatId = chatId,
         messageId = messageId,
         fileId = fileId,

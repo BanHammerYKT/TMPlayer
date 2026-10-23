@@ -108,10 +108,12 @@ object SameVideo {
         dated: Boolean,
         durationOf: (MediaItem) -> Int = statedLength,
     ): List<Video> {
+        // A file alone is the one video, whatever it is: most keys in a chat have one file.
+        if (files.size == 1) return files.first().first.let { listOf(Video(listOf(it), it)) }
         val newestFirst = files.sortedWith(compareBy(NEWEST_FIRST) { it.first })
         val (pieces, wholes) = newestFirst.partition { it.second.part != null }
         val pieceIds = pieces.mapTo(HashSet()) { it.first.id }
-        val sets = pieces.groupBy { EpisodeCopies.markers(it.first.nameForParsing) }.values.flatMap { set ->
+        val sets = pieces.groupBy { it.first.nameMarkers }.values.flatMap { set ->
             // The newest file of each number, in order; pieces far apart in size are not one cut.
             val ordered = set.groupBy { it.second.part!! }.sortedByKey().values.map { it.first().first }
             if (ordered.size > 1 && alikeInSize(ordered)) {
@@ -132,15 +134,15 @@ object SameVideo {
             if (home != null) home += candidate else clusters += mutableListOf(candidate)
         }
         return clusters.map { cluster ->
-            val leads = cluster.map { if (it.split) it.lead.copy(parts = it.members) else it.lead }
-            val lead = if (leads.size > 1) leads.first().copy(versions = leads) else leads.first()
+            val leads = cluster.map { if (it.split) it.lead.copy(parts = it.members).keptReads(it.lead) else it.lead }
+            val lead = if (leads.size > 1) leads.first().copy(versions = leads).keptReads(leads.first()) else leads.first()
             Video(cluster.flatMap { it.members }, lead)
         }
     }
 
     /** Whether [item]'s own file name says what it is, rather than only its (possibly borrowed) caption. */
     private fun namedByFile(item: MediaItem): Boolean =
-        item.fileName.isNotBlank() && !MediaText.isGenericName(item.fileName)
+        item.fileName.isNotBlank() && !item.genericFileName
 
     /** Pieces of one cut are about the same size: none more than twice another. Unknown sizes pass. */
     private fun alikeInSize(pieces: List<MediaItem>): Boolean {
@@ -155,11 +157,14 @@ object SameVideo {
         // reason to keep files apart. What is: a file named only by the caption it borrowed from
         // the album's first post ([MediaMapper.shareAlbumCaptions]), since every such file reads
         // as the same title and episode whatever it holds.
-        val albums = a.members.mapNotNullTo(HashSet()) { it.albumId.takeIf { id -> id != 0L } }
-        if (b.members.any { it.albumId != 0L && it.albumId in albums } &&
-            (a.members + b.members).any { !namedByFile(it) }
-        ) {
-            return false
+        // Most files were posted on their own: no set of albums made for them on every comparison.
+        if (a.members.any { it.albumId != 0L } && b.members.any { it.albumId != 0L }) {
+            val albums = a.members.mapNotNullTo(HashSet()) { it.albumId.takeIf { id -> id != 0L } }
+            if (b.members.any { it.albumId != 0L && it.albumId in albums } &&
+                (a.members + b.members).any { !namedByFile(it) }
+            ) {
+                return false
+            }
         }
         if (!a.split && !b.split && a.lead.fileId != 0 && a.lead.fileId == b.lead.fileId) return true
         val x = a.durationSec

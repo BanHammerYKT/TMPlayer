@@ -30,7 +30,7 @@ class SheetActions @JvmOverloads constructor(
     /** Above a row: one gap between the words and the buttons, whichever button comes first. */
     private val rowTop = (20 * resources.displayMetrics.density).toInt()
 
-    /** Side by side when true; stacked and centred, each button's top margin kept, when false. */
+    /** Side by side when true; stacked, each button's top margin kept, when false. */
     var inRow: Boolean = false
         set(value) {
             if (field == value) return
@@ -38,7 +38,7 @@ class SheetActions @JvmOverloads constructor(
             requestLayout()
         }
 
-    /** In a row, each line centred across the width rather than starting from the start edge. */
+    /** Each line (in a row) or button (stacked) centred across the width rather than from the start edge. */
     var centred: Boolean = false
         set(value) {
             if (field == value) return
@@ -86,16 +86,22 @@ class SheetActions @JvmOverloads constructor(
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val inner = r - l - paddingLeft - paddingRight
         var y = paddingTop
+        val rtl = layoutDirection == View.LAYOUT_DIRECTION_RTL
         if (!inRow) {
             for (child in shown()) {
                 y += topMargin(child)
-                val x = paddingLeft + (inner - child.measuredWidth) / 2
+                // From the start edge, as the words above read on a television, unless asked to
+                // centre: a quieter, narrower pill such as Save logs then lines up with the rest.
+                val x = when {
+                    centred -> paddingLeft + (inner - child.measuredWidth) / 2
+                    rtl -> paddingLeft + inner - child.measuredWidth
+                    else -> paddingLeft
+                }
                 child.layout(x, y, x + child.measuredWidth, y + child.measuredHeight)
                 y += child.measuredHeight
             }
             return
         }
-        val rtl = layoutDirection == View.LAYOUT_DIRECTION_RTL
         y += rowTop
         for (line in lines(shown(), inner)) {
             val height = lineHeight(line)

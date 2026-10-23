@@ -41,9 +41,12 @@ import java.time.Duration
  * `build/device-test/review/`: out after a scroll, held under a finger (the accent fill), and
  * dragged with its bubble, and the list moved by the drag.
  */
+// One case per class: Gradle gives each class its own process (forkEvery), and after one render
+// test in a process Robolectric's frame clock stops delivering frames, so a second case in the
+// same class never saw the handle come out.
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-class FastScrollerRenderTest {
+abstract class FastScrollerRenderTest {
 
     @org.junit.After
     fun tearDown() {
@@ -52,7 +55,7 @@ class FastScrollerRenderTest {
 
     private fun idle(ms: Long) = repeat((ms / 50).toInt()) { shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(50)) }
 
-    private fun render(out: String) {
+    protected fun render(out: String) {
         // The answer is kept for the process, and a television test before this one leaves it set.
         FormFactor.override(false)
         // The handle's slide and fade land at once: what is checked is where it stands, and in a
@@ -126,15 +129,21 @@ class FastScrollerRenderTest {
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         return bitmap
     }
+}
 
+class FastScrollerRenderDarkTest : FastScrollerRenderTest() {
     @Test
     @Config(sdk = [35], qualifiers = "w411dp-h891dp-port-night-xhdpi")
     fun `phone, dark`() = render("dark")
+}
 
+class FastScrollerRenderLightTest : FastScrollerRenderTest() {
     @Test
     @Config(sdk = [35], qualifiers = "w411dp-h891dp-port-notnight-xhdpi")
     fun `phone, light`() = render("light")
+}
 
+class FastScrollerRenderRtlTest : FastScrollerRenderTest() {
     @Test
     @Config(sdk = [35], qualifiers = "ar-w411dp-h891dp-port-notnight-xhdpi")
     fun `phone, right to left`() = render("rtl")

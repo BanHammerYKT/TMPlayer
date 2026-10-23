@@ -20,8 +20,12 @@ object HardwareDecoders {
 
     fun has(context: Context, format: Format): Boolean = runCatching {
         val mime = format.sampleMimeType ?: return false
+        // The level the picture's size needs, as the player's renderer asks ([CodecLevel]): a
+        // 1080p file stamped level 5.1 plays on a level 4.1 chip, so it is not software here.
+        val relaxed = CodecLevel.relaxed(format)
         MediaCodecUtil.getDecoderInfos(mime, false, false).any { info ->
-            info.hardwareAccelerated && !info.softwareOnly && info.isFormatSupported(context, format)
+            info.hardwareAccelerated && !info.softwareOnly &&
+                (info.isFormatSupported(context, format) || (relaxed != null && info.isFormatSupported(context, relaxed)))
         }
     }.getOrDefault(false)
 

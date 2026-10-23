@@ -512,7 +512,8 @@ private fun PopoverRow(
             .fillMaxWidth()
             .padding(horizontal = 6.dp)
             .height(POPOVER_ROW)
-            .clip(RoundedCornerShape(12.dp))
+            // The card's 20 dp corner less the 6 dp inset, so a lit row runs parallel to it.
+            .clip(RoundedCornerShape(14.dp))
             .background(if (focused) Tone.surfaceHigh else Color.Transparent)
             .clickable(interactionSource = interactions, indication = androidx.compose.foundation.LocalIndication.current, role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),

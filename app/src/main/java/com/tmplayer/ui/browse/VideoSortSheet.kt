@@ -14,7 +14,7 @@ import com.tmplayer.ui.components.isTouch
 import com.tmplayer.ui.i18n.LocalStrings
 
 /**
- * A chat's Sort menu under a remote: the panel every picker uses, with the same three groups as
+ * A chat's Sort menu under a remote: the panel every picker uses, with the same two groups as
  * the phone's popover ([videoMenuGroups]): Sort videos by, Show and, while limits are set, Size
  * limits, each a subheader over its lines with the one in force marked. A pick applies it and
  * closes the panel, so the grid is seen to change behind it.

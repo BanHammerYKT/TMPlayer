@@ -9,6 +9,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 
 // Android's half of [Thumbnails]: BitmapFactory, as before the split.
 
+/** An opaque picture from [argb], one Int per pixel, row by row ([MiniBlur]). */
+internal fun imageFromPixels(argb: IntArray, width: Int, height: Int): ImageBitmap =
+    Bitmap.createBitmap(argb, width, height, Bitmap.Config.ARGB_8888).asImageBitmap()
+
 internal fun decodeImage(data: ByteArray): ImageBitmap? =
     runCatching { BitmapFactory.decodeByteArray(data, 0, data.size) }.getOrNull()?.asImageBitmap()
 
@@ -30,13 +34,24 @@ internal fun decodeImageFile(path: String, maxWidth: Int, alpha: Boolean = false
             inTargetDensity = maxWidth
         }
     }
-    return BitmapFactory.decodeFile(path, options)?.asImageBitmap()
+    // prepareToDraw lets the render thread upload the texture while it is idle, ahead of the frame
+    // that first shows the tile, rather than inside it: Coil and Glide do the same.
+    return BitmapFactory.decodeFile(path, options)?.also { it.prepareToDraw() }?.asImageBitmap()
 }
 
 internal fun ImageBitmap.byteCount(): Int = asAndroidBitmap().byteCount
 
-/** Hands the pictures back when the system says it needs the memory. */
-fun Thumbnails.trim(level: Int) = trim(everything = level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE)
+/**
+ * Hands the pictures back when the system says it needs the memory: all of them when it is
+ * critical, in front (the player playing over Home on a 1 GB stick) or behind (about to be
+ * killed), half of them otherwise. Only TRIM_MEMORY_COMPLETE emptied the cache before, so a
+ * stick playing a video kept Home's whole poster cache while the system was already
+ * killing other apps to feed the player.
+ */
+fun Thumbnails.trim(level: Int) = trim(
+    everything = level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+        level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE,
+)
 
 /** Android samples a picture down to the width asked for, so the cache keys it by that width. */
 internal const val decodesFullSize: Boolean = false

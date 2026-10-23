@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -588,7 +589,9 @@ fun MoreLikeThisRow(
     val online = OnlineMetadata.current ?: return
     val s = LocalStrings.current
     val tv = !isTouch()
-    var seen by remember { mutableStateOf(false) }
+    // Back from a video opened here: the row is wanted at once, to put the focus back on its tile.
+    val back = com.tmplayer.ui.browse.LocalDetailReturn.current
+    var seen by remember { mutableStateOf(back != null) }
     val titles by produceState(emptyList<KnownTitle>(), self.id, extras, seen) {
         if (seen) value = withContext(Dispatchers.IO) { online.moreLikeThis(self, extras, KnownMedia.all()) }
     }
@@ -597,9 +600,31 @@ fun MoreLikeThisRow(
         if (!seen) Spacer(modifier.fillMaxWidth().height(1.dp).onceOnScreen(seen) { seen = true })
         return
     }
+    val rowState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val returnFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val returnView = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+    val returnId = back?.toId?.takeIf { id -> titles.any { it.item.id == id } }
+    if (back != null && returnId != null) {
+        // The tile Back came from: scrolled to in the row, then given the remote's focus (which
+        // brings the row into view on the page), or on a touch screen just brought into view.
+        LaunchedEffect(back, returnId) {
+            if (back.done) return@LaunchedEffect
+            rowState.scrollToItem(titles.indexOfFirst { it.item.id == returnId })
+            repeat(RETURN_FOCUS_TRIES) {
+                androidx.compose.runtime.withFrameNanos { }
+                if (back.done) return@LaunchedEffect
+                val placed = if (tv) runCatching { returnFocus.requestFocus() }.isSuccess else true
+                if (placed && back.claim()) {
+                    runCatching { returnView.bringIntoView() }
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(s.metadataMoreLikeThis, style = MaterialTheme.typography.titleSmall, color = Tone.text, modifier = Modifier.padding(contentPadding.startOnly()))
         LazyRow(
+            state = rowState,
             horizontalArrangement = Arrangement.spacedBy(if (tv) 12.dp else 8.dp),
             contentPadding = PaddingValues(
                 start = contentPadding.startOnly().calculateLeftPadding(androidx.compose.ui.unit.LayoutDirection.Ltr) + if (tv) 6.dp else 0.dp,
@@ -608,19 +633,29 @@ fun MoreLikeThisRow(
                 bottom = if (tv) 6.dp else 0.dp,
             ),
         ) {
-            items(titles, key = { it.item.id }) { known -> KnownPoster(known, onClick = { onOpen(known.item) }) }
+            items(titles, key = { it.item.id }) { known ->
+                KnownPoster(
+                    known,
+                    onClick = { onOpen(known.item) },
+                    modifier = if (known.item.id == returnId) {
+                        Modifier.focusRequester(returnFocus).bringIntoViewRequester(returnView)
+                    } else {
+                        Modifier
+                    },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun KnownPoster(known: KnownTitle, onClick: () -> Unit) {
+private fun KnownPoster(known: KnownTitle, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val tv = !isTouch()
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusVisibleAsState()
     val width = if (tv) POSTER_TV else POSTER
     val shape = RoundedCornerShape(Corner.Medium)
-    Column(Modifier.width(width), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.width(width).then(modifier), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -654,6 +689,9 @@ private const val FACE_PIXELS = 160
 
 /** The enlarged photo: sharp at its size on a 1080p screen. */
 private const val ENLARGED_PIXELS = 780
+
+/** Frames the tile Back came from is asked for the focus over, once its row is drawn. */
+private const val RETURN_FOCUS_TRIES = 10
 
 private val POSTER: Dp = 112.dp
 private val POSTER_TV: Dp = 140.dp

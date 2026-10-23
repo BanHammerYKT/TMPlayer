@@ -8,7 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.CacheDrawScope
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -27,36 +28,78 @@ import androidx.compose.ui.unit.LayoutDirection
  * row at rest starts on its first card, whole. The start side comes in with the first few pixels
  * of scroll, so it never pops.
  */
-fun Modifier.edgeFade(state: LazyListState, start: Dp, end: Dp): Modifier = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-    .drawWithContent {
+fun Modifier.edgeFade(state: LazyListState, start: Dp, end: Dp, ground: Color? = null): Modifier =
+    if (ground != null) groundFade(state, start, end, ground) else this
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithCache {
+            val edges = Edges(this, start, end, mask = true, ground = Color.Black)
+            onDrawWithContent {
+                drawContent()
+                edges.draw(state) { brush, topLeft, size -> drawRect(brush, topLeft, size, blendMode = BlendMode.DstIn) }
+            }
+        }
+
+/**
+ * [edgeFade] for a row that stands on one plain colour, [ground]: the colour is drawn over the
+ * margins rather than the row cut out of an offscreen layer, which a television redrew whole on
+ * every frame of every scroll.
+ */
+private fun Modifier.groundFade(state: LazyListState, start: Dp, end: Dp, ground: Color): Modifier = drawWithCache {
+    val edges = Edges(this, start, end, mask = false, ground = ground)
+    onDrawWithContent {
         drawContent()
-        val startPx = start.toPx()
-        val endPx = end.toPx()
+        edges.draw(state) { brush, topLeft, size -> drawRect(brush, topLeft, size) }
+    }
+}
+
+/**
+ * The two fades for one size of the row. The scroll is read where it is drawn, and a side's
+ * gradient is made again only when how far that side fades has changed: at rest and through most
+ * of a scroll both stay as they are, where every frame of a scroll used to make two.
+ */
+private class Edges(scope: CacheDrawScope, start: Dp, end: Dp, private val mask: Boolean, private val ground: Color) {
+    private val startPx = with(scope) { start.toPx() }
+    private val endPx = with(scope) { end.toPx() }
+    private val rtl = scope.layoutDirection == LayoutDirection.Rtl
+    private val width = scope.size.width
+    private val leftPx = if (rtl) endPx else startPx
+    private val rightPx = if (rtl) startPx else endPx
+    private val leftSize = Size(leftPx, scope.size.height)
+    private val rightSize = Size(rightPx, scope.size.height)
+    private val rightAt = Offset(width - rightPx, 0f)
+
+    // As a mask, black keeps the row and clear removes it; drawn over, the ground covers it.
+    private val keep = if (mask) Color.Black else ground.copy(alpha = 0f)
+
+    private var leftAmount = -1f
+    private var leftBrush: Brush? = null
+    private var rightAmount = -1f
+    private var rightBrush: Brush? = null
+
+    private fun gone(amount: Float) = if (mask) Color.Black.copy(alpha = 1f - amount) else ground.copy(alpha = amount)
+
+    fun draw(state: LazyListState, draw: (Brush, Offset, Size) -> Unit) {
         val scrolled = if (state.firstVisibleItemIndex > 0) 1f else (state.firstVisibleItemScrollOffset / startPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
         val back = if (state.canScrollBackward) scrolled else 0f
         val on = if (state.canScrollForward) 1f else 0f
-        val rtl = layoutDirection == LayoutDirection.Rtl
         val left = if (rtl) on else back
         val right = if (rtl) back else on
-        val leftPx = if (rtl) endPx else startPx
-        val rightPx = if (rtl) startPx else endPx
         if (left > 0f && leftPx > 0f) {
-            drawRect(
-                Brush.horizontalGradient(0f to Color.Black.copy(alpha = 1f - left), 1f to Color.Black, startX = 0f, endX = leftPx),
-                size = Size(leftPx, size.height),
-                blendMode = BlendMode.DstIn,
-            )
+            if (left != leftAmount || leftBrush == null) {
+                leftAmount = left
+                leftBrush = Brush.horizontalGradient(0f to gone(left), 1f to keep, startX = 0f, endX = leftPx)
+            }
+            draw(leftBrush!!, Offset.Zero, leftSize)
         }
         if (right > 0f && rightPx > 0f) {
-            drawRect(
-                Brush.horizontalGradient(0f to Color.Black, 1f to Color.Black.copy(alpha = 1f - right), startX = size.width - rightPx, endX = size.width),
-                topLeft = Offset(size.width - rightPx, 0f),
-                size = Size(rightPx, size.height),
-                blendMode = BlendMode.DstIn,
-            )
+            if (right != rightAmount || rightBrush == null) {
+                rightAmount = right
+                rightBrush = Brush.horizontalGradient(0f to keep, 1f to gone(right), startX = width - rightPx, endX = width)
+            }
+            draw(rightBrush!!, rightAt, rightSize)
         }
     }
+}
 
 /**
  * Keeps a card that takes focus (the remote's or the keyboard's) inside a row's side margins rather

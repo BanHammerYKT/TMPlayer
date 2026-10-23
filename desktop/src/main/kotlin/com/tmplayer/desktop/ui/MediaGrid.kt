@@ -216,9 +216,17 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
         val sortScope = rememberCoroutineScope()
         // Which of its videos are listed (see VideoFilter), remembered per chat beside the order.
         val filter by remember(chat.id) { state.settings.videoFilter(chat.id) }.collectAsState(initial = com.tmplayer.data.VideoFilter.DEFAULT)
-        val allSizes by model.allSizes.collectAsState()
-        val limitsSet = min > com.tmplayer.data.SizeFilter.FLOOR || max < com.tmplayer.data.SizeFilter.CEILING
         val clearFilter: () -> Unit = { sortScope.launch { state.settings.setVideoFilter(chat.id, com.tmplayer.data.VideoFilter.All) } }
+        // Once per opening of the chat, when its listing settles with videos outside the size
+        // limits: a passing message with how many and where the limits are changed (Settings only).
+        val toast = com.tmplayer.ui.components.rememberToast()
+        val hiddenNotice by model.hiddenNotice.collectAsState()
+        LaunchedEffect(model, hiddenNotice) {
+            if (hiddenNotice > 0) {
+                toast(L.browseHiddenBySizeNotice(hiddenNotice))
+                model.hiddenNoticeShown()
+            }
+        }
 
         // The search folds into the bar at the foot: "/", Ctrl+F and the bar's magnifier open it.
         var searching by remember(chat.id) { mutableStateOf(false) }
@@ -379,9 +387,6 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
             }
             // An order other than Newest is of the videos loaded so far while older pages remain.
             val sortedLoaded = com.tmplayer.data.VideoSorting.sortsLoadedOnly(shownSort, content.endReached)
-            // The size limits' count with a way past them for this chat (gone since 7f9c44d).
-            val sizeHidden by model.sizeHidden.collectAsState()
-            val sizeNote = query.isBlank() && sizeHidden > 0
             // A filter in force says so, with Clear filter; when it hides all, it says that instead.
             val filterNote = shownFilter != com.tmplayer.data.VideoFilter.All
             // Self-destructing videos are left out (only Telegram opens them), said in a quiet line.
@@ -402,16 +407,9 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                 onNav = { gridNav = it },
                 // Online metadata is on by default, so the first grid says once where posters come
                 // from; not while searching, when the listing is what was searched for.
-                header = if (ad == null && course == null && !sortedLoaded && !sizeNote && !filterNote && !selfDestructNote) null else {
+                header = if (ad == null && course == null && !sortedLoaded && !filterNote && !selfDestructNote) null else {
                     {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            if (sizeNote) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(L.browseHiddenBySize(sizeHidden), color = Tone.muted)
-                                    Spacer(Modifier.width(12.dp))
-                                    OutlinedButton(onClick = model::showHidden) { Text(s.commonShowHidden) }
-                                }
-                            }
                             if (filterNote) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     val label = com.tmplayer.ui.browse.videoFilterLabel(shownFilter, s)
@@ -473,14 +471,13 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
         }
         // While there is no grid to carry it (loading, empty, an error), the bar stands on its own.
         if (ui !is UiState.Content) Box(Modifier.align(Alignment.BottomCenter)) { chatBar() }
-        // The order, the Show filter and the size limits in one card, as on the phone.
+        // The order and the Show filter in one card, as on the phone.
         com.tmplayer.ui.browse.VideoMenuPopover(
             open = sorting,
             anchor = sortAnchor,
             state = com.tmplayer.ui.browse.VideoMenuState(
                 sort = sort,
                 filter = filter,
-                allSizes = if (limitsSet || allSizes) allSizes else null,
                 onSort = { picked ->
                     sorting = false
                     if (picked != sort) sortScope.launch { state.settings.setVideoSort(chat.id, picked) }
@@ -488,10 +485,6 @@ fun MediaGridPage(state: ShellState, chat: ChatSummary) {
                 onFilter = { picked ->
                     sorting = false
                     if (picked != filter) sortScope.launch { state.settings.setVideoFilter(chat.id, picked) }
-                },
-                onAllSizes = { all ->
-                    sorting = false
-                    if (all) model.showHidden() else model.keepSizeLimits()
                 },
             ),
             onDismiss = { sorting = false },

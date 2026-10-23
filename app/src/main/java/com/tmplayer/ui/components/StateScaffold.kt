@@ -62,6 +62,12 @@ fun <T> StateScaffold(
     loading: (@Composable () -> Unit)? = null,
     /** What the button under an empty state does; see [StateAction]. */
     onAction: ((StateAction) -> Unit)? = null,
+    /**
+     * Whether an empty or failed state puts the remote on its button. Off while the viewer is
+     * typing into a search over the listing: the answer to each pause in the typing would take the
+     * field's focus, and the keyboard with it.
+     */
+    takeFocus: Boolean = true,
     content: @Composable (T) -> Unit,
 ) {
     when (state) {
@@ -84,12 +90,13 @@ fun <T> StateScaffold(
         } else {
             BigLoader(state.label, tip = state.tip, slowKey = state, onRetry = onRetry)
         }
-        is UiState.Error -> BigError(state.message, onRetry)
+        is UiState.Error -> BigError(state.message, onRetry, takeFocus = takeFocus)
         is UiState.Empty -> BigEmpty(
             state.message,
             icon = state.picture,
             actionLabel = state.action?.label,
             onAction = state.action?.let { action -> onAction?.let { { it(action) } } },
+            takeFocus = takeFocus,
         )
         is UiState.Content -> content(state.value)
     }
@@ -298,9 +305,11 @@ private const val MIN_SWEEP = 12f
 fun BigEmpty(
     message: String,
     icon: ImageVector = TmIcons.Search,
-    /** The one button worth offering, such as "Show them" when the size limits emptied a chat. */
+    /** The one button worth offering, such as Keep looking when a chat's walk back gave up. */
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    /** Puts the remote on the button; see [StateScaffold]'s takeFocus. */
+    takeFocus: Boolean = true,
 ) {
     val touch = isTouch()
     val muted = Tone.muted
@@ -337,7 +346,7 @@ fun BigEmpty(
                 TmButton(onClick = onAction, modifier = Modifier.focusRequester(focus)) {
                     Text(actionLabel)
                 }
-                if (!touch) {
+                if (!touch && takeFocus) {
                     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
                 }
             }
@@ -350,7 +359,7 @@ fun BigEmpty(
  * ([SendLogsButton]) for a report. [sendLogs] is off only where a screen offers its own.
  */
 @Composable
-fun BigError(message: String, onRetry: (() -> Unit)?, sendLogs: Boolean = true) {
+fun BigError(message: String, onRetry: (() -> Unit)?, sendLogs: Boolean = true, takeFocus: Boolean = true) {
     val s = LocalStrings.current
     val touch = isTouch()
     val danger = Tone.danger
@@ -414,7 +423,7 @@ fun BigError(message: String, onRetry: (() -> Unit)?, sendLogs: Boolean = true) 
                     }
                     // The remote needs somewhere to land; a finger does not, and taking focus on a
                     // phone only draws a ring around the button.
-                    if (!touch) {
+                    if (!touch && takeFocus) {
                         LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
                     }
                 }

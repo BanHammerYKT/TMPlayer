@@ -123,4 +123,60 @@ class SeasonDownloadTest {
         assertFalse(SeasonDownload.anySavable(show.seasons.single()))
         assertTrue(SeasonDownload.anySavable(twoSizes().seasons.first()))
     }
+
+    private fun state(
+        series: Series,
+        which: SeasonDownload.Which = SeasonDownload.Which.Season,
+        finished: (MediaItem) -> Boolean = { false },
+        downloaded: (MediaItem) -> Boolean = { false },
+        queued: (MediaItem) -> Boolean = { false },
+    ) = SeasonDownload.state(series, series.seasons.first(), which, finished, { 0f }, downloaded, queued)
+
+    @Test
+    fun `a season with nothing kept offers to fetch it`() {
+        assertEquals(SeasonDownload.State.Fetch, state(twoSizes()))
+    }
+
+    @Test
+    fun `one episode left still offers to fetch, in any copy kept for the rest`() {
+        val show = twoSizes()
+        // The large copies of three episodes kept: the fourth is still to fetch.
+        val kept: (MediaItem) -> Boolean = { it.sizeBytes == 1_800_000_000L && it.fileName.code() != "S01E04" }
+        assertEquals(SeasonDownload.State.Fetch, state(show, downloaded = kept))
+    }
+
+    @Test
+    fun `every episode kept in some copy is downloaded`() {
+        val show = twoSizes()
+        val kept: (MediaItem) -> Boolean = { (it.sizeBytes == 350_000_000L) == (it.fileName.code() != "S01E02") }
+        assertEquals(SeasonDownload.State.Done, state(show, downloaded = kept))
+    }
+
+    @Test
+    fun `nothing left but some still on the queue is downloading`() {
+        val show = twoSizes()
+        val small: (MediaItem) -> Boolean = { it.sizeBytes == 350_000_000L }
+        assertEquals(
+            SeasonDownload.State.Coming,
+            state(show, downloaded = { small(it) && it.fileName.code() != "S01E03" }, queued = { small(it) && it.fileName.code() == "S01E03" }),
+        )
+        assertEquals(SeasonDownload.State.Coming, state(show, queued = small))
+    }
+
+    @Test
+    fun `unwatched looks only at the episodes not watched`() {
+        val show = twoSizes()
+        val watched: (MediaItem) -> Boolean = { it.fileName.code() == "S01E01" }
+        val keptRest: (MediaItem) -> Boolean = { it.fileName.code() != "S01E01" && it.sizeBytes == 350_000_000L }
+        assertEquals(SeasonDownload.State.Done, state(show, SeasonDownload.Which.Unwatched, finished = watched, downloaded = keptRest))
+        // The whole season still has the watched episode to fetch.
+        assertEquals(SeasonDownload.State.Fetch, state(show, finished = watched, downloaded = keptRest))
+    }
+
+    @Test
+    fun `a restricted season with nothing kept has nothing to offer`() {
+        val show = showOf((1..2).map { video("Closed.Room.S01E0$it.mkv", canBeSaved = false) })
+        assertEquals(SeasonDownload.State.Nothing, state(show))
+        assertEquals(SeasonDownload.State.Done, state(show, downloaded = { true }))
+    }
 }

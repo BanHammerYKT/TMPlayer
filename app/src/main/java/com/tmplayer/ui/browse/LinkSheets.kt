@@ -200,7 +200,8 @@ private fun JoinSheet(
 
 /**
  * Videos listed from somewhere other than the chat's grid (CP81): a chat's round videos or the
- * comments under a post. A press plays one; a failed or slow page says so with Try again.
+ * comments under a post. A press plays one and leaves the list open under the player; a failed or
+ * slow page says so with Try again.
  */
 @Composable
 internal fun MoreVideosSheet(
@@ -236,7 +237,8 @@ internal fun MoreVideosSheet(
                         detail = detail.ifBlank { null },
                         icon = TmIcons.Play,
                     ) {
-                        onDismiss()
+                        // The list stays open under the player, so Back from the video comes
+                        // back to the line it was played from; [onPlay] closes it where it should go.
                         onPlay(item)
                     }
                 }

@@ -2,6 +2,6 @@
 
 ## How it was tested
 
-- [ ] Platforms tried (phone, TV, Windows, Linux):
+- [ ] Platforms tried (phone, TV, Windows, Linux, macOS):
 - [ ] `./gradlew test` passes
 - [ ] No em or en dashes added (see CONTRIBUTING.md)

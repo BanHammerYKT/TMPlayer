@@ -1,10 +1,6 @@
 package com.tmplayer.data
 
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Canvas
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.Paint
 import kotlin.math.roundToInt
 
 /**
@@ -62,21 +58,15 @@ object MiniBlur {
                 boxPass(channel, outW, outH, radius, horizontal = false, scratch)
             }
         }
-        val out = ImageBitmap(outW, outH)
-        val canvas = Canvas(out)
-        val paint = Paint()
-        for (y in 0 until outH) {
-            for (x in 0 until outW) {
-                val i = y * outW + x
-                paint.color = Color(
-                    red = channels[0][i].roundToInt().coerceIn(0, 255),
-                    green = channels[1][i].roundToInt().coerceIn(0, 255),
-                    blue = channels[2][i].roundToInt().coerceIn(0, 255),
-                )
-                canvas.drawRect(Rect(x.toFloat(), y.toFloat(), x + 1f, y + 1f), paint)
-            }
+        // Handed over as one array: drawn a pixel at a time, as 1.28.0 did, the copy took five
+        // thousand draw calls per card, which a television stick felt across a whole Home.
+        val argb = IntArray(outW * outH) { i ->
+            val r = channels[0][i].roundToInt().coerceIn(0, 255)
+            val g = channels[1][i].roundToInt().coerceIn(0, 255)
+            val b = channels[2][i].roundToInt().coerceIn(0, 255)
+            (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
-        return out
+        return imageFromPixels(argb, outW, outH)
     }
 
     /** One box blur pass along rows or columns, the edges held at their own colour. */

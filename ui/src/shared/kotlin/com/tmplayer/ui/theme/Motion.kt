@@ -4,6 +4,9 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 /**
  * How long things take to move, and how they ease, as one set of figures every screen reads.
@@ -49,9 +52,20 @@ object Motion {
      * The "Reduce motion" setting (CP68), set by the app from the stored choice: every tween made
      * by [standard] (pictures fading in, panels opening) lands at once, and the loading shimmer
      * stands still. Focus and press scaling stay, since they are how a remote shows where it is.
+     *
+     * Snapshot state, so a screen already open reads the switch again when it changes: as a plain
+     * field, the carousel, the page transitions and the tiles on screen kept moving until
+     * something else happened to redraw them.
+     */
+    var reduced: Boolean by mutableStateOf(false)
+
+    /**
+     * Set by the app on a television: the picture effects that cost a TV stick's GPU or a second
+     * download each (the poster's small blurred copy, the carousel's slow push-in) stay off there.
+     * The TV sticks and boxes lagged and stopped loading pictures under them in 1.28.0.
      */
     @Volatile
-    var reduced: Boolean = false
+    var television: Boolean = false
 
     /** A tween of [durationMillis] on [Standard], or none at all under [reduced]. */
     fun <T> standard(durationMillis: Int = Normal): TweenSpec<T> =

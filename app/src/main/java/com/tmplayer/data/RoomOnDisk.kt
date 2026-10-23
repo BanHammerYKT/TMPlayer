@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
@@ -90,10 +91,39 @@ object RoomOnDisk {
             .filterNotNull()
         val held = owned.map { it.first }
 
-        // The viewer's own downloads, which are never given up to make room. Measured only so a
-        // refusal can say where the space went and point at the screen that manages them.
-        // Those in the Downloads folder are measured there; the rest are still TDLib's to answer.
-        val keptBytes = LocalDownloads.indexedBytes(settings) + runCatching {
+        // A video the viewer downloaded on purpose is kept whole whatever the mode, so it needs
+        // room for all of it; anything else is a stream, which Low storage mode lets start on room
+        // for its rolling window alone, and which is offered the mode when that is all it lacks.
+        val kept = runCatching { settings.isKeptDownload(item.chatId, item.messageId) }.getOrDefault(false)
+        val lowStorage = !kept && runCatching { settings.lowStorageModeNow() }.getOrDefault(false)
+        val plan = CacheShelf.plan(
+            targetFileId = item.fileId,
+            targetSizeBytes = item.sizeBytes,
+            targetPartialBytes = partialBytes,
+            alreadyCached = alreadyCached,
+            cached = held,
+            freeBytes = free,
+            lowStorage = lowStorage,
+            streaming = !kept,
+        )
+        // The viewer's own downloads only ever feed the figure a refusal quotes, so they are
+        // measured only when the answer is a refusal. Measuring them walks every download and can
+        // ask Telegram about each message, which on a weak TV stick held up every press of Play.
+        val answer = quoteKept(plan) { keptBytes(settings) }
+        Decision(answer, owned.associate { it.first.fileId to it.second })
+    }
+
+    /** Fills in a refusal's [CacheShelf.Plan.NotEnoughSpace.reclaimBytes], calling [measure] only then. */
+    internal suspend fun quoteKept(plan: CacheShelf.Plan, measure: suspend () -> Long): CacheShelf.Plan =
+        if (plan is CacheShelf.Plan.NotEnoughSpace) plan.copy(reclaimBytes = measure()) else plan
+
+    /**
+     * What the viewer's own downloads take, which are never given up to make room. Measured only
+     * so a refusal can say where the space went and point at the screen that manages them. Those
+     * in the Downloads folder are measured there; the rest are still TDLib's to answer.
+     */
+    private suspend fun keptBytes(settings: SettingsStore): Long = coroutineScope {
+        LocalDownloads.indexedBytes(settings) + runCatching {
             settings.downloadHistory.first()
                 .filter { it.localPath == null }
                 .distinctBy { it.fileId }
@@ -108,23 +138,5 @@ object RoomOnDisk {
                 .awaitAll()
                 .sum()
         }.getOrDefault(0L)
-
-        // A video the viewer downloaded on purpose is kept whole whatever the mode, so it needs
-        // room for all of it; anything else is a stream, which Low storage mode lets start on room
-        // for its rolling window alone, and which is offered the mode when that is all it lacks.
-        val kept = runCatching { settings.isKeptDownload(item.chatId, item.messageId) }.getOrDefault(false)
-        val lowStorage = !kept && runCatching { settings.lowStorageModeNow() }.getOrDefault(false)
-        val plan = CacheShelf.plan(
-            targetFileId = item.fileId,
-            targetSizeBytes = item.sizeBytes,
-            targetPartialBytes = partialBytes,
-            alreadyCached = alreadyCached,
-            cached = held,
-            keptBytes = keptBytes,
-            freeBytes = free,
-            lowStorage = lowStorage,
-            streaming = !kept,
-        )
-        Decision(plan, owned.associate { it.first.fileId to it.second })
     }
 }

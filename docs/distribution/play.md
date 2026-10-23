@@ -45,7 +45,7 @@ What keeps TMPlayer clear of the same:
   [telegram-apps.md](telegram-apps.md)).
 - **What it is for.** A player for the videos already in your own chats. The listing, the
   screenshots and the reviewer's demo show only demo or openly licensed content, never a real
-  title, and the wording rules in `CLAUDE.md` (video, not film or movie) apply to every field.
+  title, and the wording rules in `AGENTS.md` (video, not film or movie) apply to every field.
 - **Telegram's own restrictions.** TDLib hides posts restricted for the platform unless
   `ignore_platform_restrictions` is set, and `MediaMapper` skips any message with a restriction
   reason. Never set that option in a store build.

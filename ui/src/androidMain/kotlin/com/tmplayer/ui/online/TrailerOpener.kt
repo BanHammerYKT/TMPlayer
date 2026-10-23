@@ -26,7 +26,7 @@ internal fun rememberTrailerOpener(): (MetaTrailer) -> Boolean {
             } catch (e: SecurityException) {
                 false
             }
-            open(trailer.appUri) || open(trailer.watchUrl)
+            openInYouTubeApp(context, trailer) || open(trailer.watchUrl)
         }
     }
 }
@@ -42,15 +42,42 @@ internal fun rememberTrailerOpener(): (MetaTrailer) -> Boolean {
 internal fun rememberTrailerAppFirst(): ((MetaTrailer) -> Boolean)? {
     val context = LocalContext.current
     return remember(context) {
-        { trailer: MetaTrailer ->
-            try {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(trailer.appUri)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                true
-            } catch (e: ActivityNotFoundException) {
-                false
-            } catch (e: SecurityException) {
-                false
-            }
-        }
+        { trailer: MetaTrailer -> openInYouTubeApp(context, trailer) }
     }
 }
+
+/**
+ * The trailer in whichever YouTube app answers `vnd.youtube:` links. Google's own apps take the
+ * video id in that link; a third party client set as the default for them does not always:
+ * SmartTube on a Mi TV opened its home screen and left the trailer unplayed, which looked like a
+ * crash (user, 2026-10-23), while it plays the same video from its `https` watch link. So any app
+ * but Google's is handed the watch link, sent to that app alone, so it never falls to a browser.
+ */
+private fun openInYouTubeApp(context: android.content.Context, trailer: MetaTrailer): Boolean {
+    val app = Intent(Intent.ACTION_VIEW, Uri.parse(trailer.appUri))
+    val handler = runCatching {
+        context.packageManager.resolveActivity(app, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+    }.getOrNull() ?: return false
+    // The chooser itself answers when several apps can and none is the default: let it ask.
+    val intent = when {
+        handler == "android" || handler in GOOGLE_YOUTUBE -> app
+        else -> Intent(Intent.ACTION_VIEW, Uri.parse(trailer.watchUrl)).setPackage(handler)
+    }
+    return try {
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        true
+    } catch (e: ActivityNotFoundException) {
+        // The client does not take watch links after all: its own link, as before.
+        runCatching { context.startActivity(app.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+    } catch (e: SecurityException) {
+        false
+    }
+}
+
+/** Google's YouTube apps, which open the video named in a `vnd.youtube:` link. */
+private val GOOGLE_YOUTUBE = setOf(
+    "com.google.android.youtube",
+    "com.google.android.youtube.tv",
+    "com.google.android.youtube.googletv",
+    "com.amazon.firetv.youtube",
+)

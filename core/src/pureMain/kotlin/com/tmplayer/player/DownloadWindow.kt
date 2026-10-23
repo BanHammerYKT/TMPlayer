@@ -54,6 +54,17 @@ object DownloadWindow {
     }
 
     /**
+     * How much of a probe of `[start, end)` (a small fetch of its own for a read far from the
+     * stream, see `TdByteWindow`) has to be on the disk, counted from [start], before the read at
+     * [target] it was fetched for is handed its bytes: [readyBytes] at [target], or all that is
+     * left of the probe from there when that is less.
+     */
+    fun probeReady(start: Long, end: Long, target: Long, readyBytes: Long): Long {
+        val at = target.coerceIn(start, end)
+        return minOf(end, at + readyBytes) - start
+    }
+
+    /**
      * A seek within this many bytes ahead of what is already downloaded is left alone: the
      * running download will reach it sooner than a restart would.
      */
@@ -194,6 +205,78 @@ object LowStorageWindow {
         if (size > 0 && here.end >= size) return false
         return position >= here.end - ROLL_MARGIN_BYTES
     }
+
+    /**
+     * What to do with a stretch of [run] bytes at [offset] that TDLib already has on the disk,
+     * outside the download it is running: an index a warm-up or an earlier play brought down, the
+     * head of a video played before, a stretch watched before a seek back.
+     *
+     * Reading it costs no disk at all, so it is always worth reading when it reaches the end of
+     * the file (an index: nothing follows it) or when the download can carry on from its end
+     * within the window. Otherwise it is recorded and read as long as it is long enough to be
+     * worth it, and the window rolls on near its end as for any stretch the mode asked for, which
+     * is where whatever more than the window is on the disk goes. Too short for that, it is
+     * fetched the ordinary way, as before.
+     *
+     * [ranges] are what the mode holds so far; the stretch is added to them in the answer, since
+     * it is on the disk whatever is done with it. One in the index's part of the file
+     * ([nearTheEnd]) is recorded as reaching the end of it ([indexRange]), so reading it never
+     * rolls the window.
+     */
+    fun onDisk(ranges: List<Range>, offset: Long, run: Long, size: Long, window: Long): OnDisk {
+        if (run <= 0) return OnDisk(OnDisk.Use.Fetch, ranges)
+        val end = if (size > 0) minOf(size, offset + run) else offset + run
+        if (nearTheEnd(offset, size)) return OnDisk(OnDisk.Use.Read, merge(ranges + indexRange(offset, end, size)))
+        val held = merge(ranges + Range(offset, end))
+        if (size > 0 && end >= size) return OnDisk(OnDisk.Use.Read, held)
+        if (!plan(held, end, size, window).deleteFirst) return OnDisk(OnDisk.Use.ReadAndFollow, held)
+        if (end - offset > ROLL_MARGIN_BYTES + ALIGN_BYTES) return OnDisk(OnDisk.Use.ReadThenRoll, held)
+        return OnDisk(OnDisk.Use.Fetch, ranges)
+    }
+
+    /** The answer of [onDisk]: how the stretch is used, and the ranges held once it is. */
+    data class OnDisk(val use: Use, val ranges: List<Range>) {
+        enum class Use {
+            /** Read it; it runs to the end of the file or lies in its index, so nothing follows it. */
+            Read,
+
+            /** Read it, and ask for the download from its end now: that fits the window. */
+            ReadAndFollow,
+
+            /** Read it, ask nothing now, and roll the window on near its end. */
+            ReadThenRoll,
+
+            /** Leave it: fetch from [offset] the ordinary way. */
+            Fetch,
+        }
+    }
+
+    /**
+     * Whether a probe of `[start, end)` (a small fetch of its own, see `TdByteWindow`) still keeps
+     * what [ranges] hold within the window and its slack.
+     */
+    fun probeFits(ranges: List<Range>, start: Long, end: Long, size: Long, window: Long): Boolean =
+        bytes(ranges + indexRange(start, end, size)) <= window + SLACK_BYTES
+
+    /**
+     * The range held for `[start, end)` read as an index: up to the end of the file when it lies
+     * in the index's part of it ([nearTheEnd]). This overstates the disk by a few megabytes at
+     * most, which the slack covers, and keeps [shouldRoll] from rolling the window on at an
+     * index read, which would delete the film's start for its last megabyte.
+     */
+    fun indexRange(start: Long, end: Long, size: Long): Range =
+        Range(start, if (nearTheEnd(start, size)) size else end)
+
+    /**
+     * Whether a read at [position] is close enough to the end of a file of [size] bytes to be its
+     * index (an MKV's Cues and Tags, an MP4's moov) rather than a seek: such a read is fetched as
+     * a probe and the download goes back to where the picture is, instead of moving there.
+     */
+    fun nearTheEnd(position: Long, size: Long): Boolean =
+        size > 0 && position < size && size - position <= INDEX_TAIL_BYTES
+
+    /** How much of the end of a file [nearTheEnd] counts as its index; within [SLACK_BYTES]. */
+    const val INDEX_TAIL_BYTES = 8L * 1024 * 1024
 
     /** Where a roll at [position] asks TDLib to start: a little behind it, on a part boundary. */
     fun rollStart(position: Long): Long {

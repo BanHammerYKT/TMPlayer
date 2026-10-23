@@ -1,7 +1,6 @@
 package com.tmplayer.ui.connect
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -40,6 +39,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -107,9 +107,12 @@ fun networkLine(network: NetworkFacts, s: Messages): String? {
  */
 @Composable
 fun LiveStatus(text: String, modifier: Modifier = Modifier) {
-    Crossfade(text, animationSpec = tween(FADE_MS), label = "connectStep", modifier = modifier.semantics { liveRegion = LiveRegionMode.Polite }) {
-        Text(it, style = MaterialTheme.typography.bodyMedium, color = Tone.muted, textAlign = TextAlign.Center)
-    }
+    // Not drawn: the loader is one quiet spinner (user, 2026-10-23), but a screen reader still
+    // hears each step as it changes.
+    Box(modifier.semantics {
+        liveRegion = LiveRegionMode.Polite
+        contentDescription = text
+    })
 }
 
 /**
@@ -151,7 +154,6 @@ fun ConnectingHelpView(
     sendLogs: @Composable () -> Unit,
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.height(10.dp))
         LiveStatus(status)
         AnimatedVisibility(stalled, enter = fadeIn(tween(FADE_MS)), exit = fadeOut(tween(FADE_MS))) {
             HelpBody(hint, network, proxyOn, onRetry, onOpenProxies, sendLogs)

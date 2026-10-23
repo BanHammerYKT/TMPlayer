@@ -46,6 +46,9 @@ class App : Application() {
         super.onCreate()
         // First of all, so a crash anywhere below is written down for the next start to offer.
         CrashReports.watch(this)
+        // Before anything reads them: a television trades looks for speed (see [Motion.television]).
+        com.tmplayer.ui.theme.Motion.television = com.tmplayer.data.FormFactor.isTv(this)
+        com.tmplayer.data.SettingsDefaults.evenVolume = !com.tmplayer.data.FormFactor.isTv(this)
         // The shared code logs through a facade; on Android it goes to logcat as it always has.
         Logger.sink = AndroidLogSink
         // The clock Home's first paint is timed against (adb logcat -s tm-perf).
@@ -68,9 +71,15 @@ class App : Application() {
             }
         }
         // A card in focus or under the finger warms its stream, unless the file is whole here
-        // already (a download, the watch cache) or is pieces played joined.
+        // already (a download, the watch cache) or is pieces played joined. Not on a television:
+        // moving the focus along a row there started two video downloads ahead of every poster
+        // and thumbnail, and on the TV sticks and boxes the pictures stopped arriving (1.28.0).
+        // Pressing Play still warms its own video at once ([MainActivity]'s playNow).
+        val focusWarms = !com.tmplayer.data.FormFactor.isTv(this)
+        // The cards then leave out their focus watcher and timer altogether (warmUpOnIntent).
+        com.tmplayer.data.PlaybackWarmup.onIntent = focusWarms
         com.tmplayer.data.PlaybackWarmup.warmer = com.tmplayer.data.PlaybackWarmup.Warmer { item ->
-            if (item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
+            if (!focusWarms || item.isJoined || item.fileId <= 0 || item.locality == com.tmplayer.data.MediaItem.Locality.Downloaded) return@Warmer
             backgroundScope.launch {
                 val local = runCatching { com.tmplayer.data.Td.localFileAvailability(item.fileId) }.getOrNull()
                 // From its saved place, if it has one: where Continue watching opens it.
@@ -79,21 +88,25 @@ class App : Application() {
                 }
             }
         }
-        // The stream warm-up stays out of Low storage mode and of "Save mobile data" on a metered
-        // line, whatever asks for it ([com.tmplayer.player.StreamWarmup]).
+        // The stream warm-up stays out of "Save mobile data" on a metered line, whatever asks for
+        // it, and in Low storage mode brings the head and the index only
+        // ([com.tmplayer.player.StreamWarmup]).
         backgroundScope.launch {
             val store = SettingsStore(this@App)
             val tv = com.tmplayer.data.FormFactor.isTv(this@App)
             kotlinx.coroutines.flow.combine(store.lowStorageMode, store.saveMobileData) { low, save -> low to save }
                 .collect { (low, save) ->
                     val saving = com.tmplayer.data.MeteredPolicy.saveMobileDataInForce(save, tv)
-                    com.tmplayer.player.StreamWarmup.allowed = { !low && !(saving && NetworkMonitor.metered.value) }
+                    com.tmplayer.player.StreamWarmup.lowStorage = { low }
+                    com.tmplayer.player.StreamWarmup.allowed = { !(saving && NetworkMonitor.metered.value) }
                 }
         }
         // Lighter pictures and Reduce motion (CP68), from the stored choice and whenever it changes.
         // Before the promo return, so the fixture shows a screen as a low-end device draws it.
         backgroundScope.launch {
             val store = SettingsStore(this@App)
+            // First, so the first frame finds the interface size without reading the file itself.
+            launch { runCatching { com.tmplayer.ui.theme.primeUiScale(store.uiScale.first()) } }
             launch { store.lighterPictures.collect { Thumbnails.light = it } }
             launch { store.reduceMotion.collect { com.tmplayer.ui.theme.Motion.reduced = it } }
             // "Vibrate on tap" covers the app's toggles as well as the player's.

@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -91,17 +92,29 @@ fun rememberMatched(item: MediaItem, showOnly: Boolean = false): com.tmplayer.on
  */
 @Composable
 fun rememberMatchedState(item: MediaItem, showOnly: Boolean = false): MetaState<com.tmplayer.online.MatchedMeta> {
-    val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
-    val correction = corrections[item.id]
+    // This video's own correction only: a rename of another video does not recompose this tile.
+    val correction = com.tmplayer.ui.components.rememberCorrection(item.id)
     val renamed = correction?.title
-    val lookup = rememberLookup(renamed ?: item.nameForParsing, if (renamed != null) null else item.caption, showOnly)
+    val lookup = rememberLookup(
+        renamed ?: item.nameForParsing,
+        if (renamed != null) null else item.caption,
+        showOnly,
+        // The item's own question, read once per video and mostly already read off the main
+        // thread by Home's rows: asked afresh per tile as a TV row scrolled, it held the main thread.
+        known = if (renamed == null) item.metaQuery else null,
+    )
     val found = lookup.value
-    val name = remember(item, renamed) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
+    val name = remember(item, renamed) { com.tmplayer.data.SeriesShelf.episodeOf(item, onlyThis(item, correction)) }
     // A verdict on the runtime reached before counts too, so a tile seen before is matched on its
     // first frame rather than drawing its own thumbnail and fading the poster in again.
-    val quick = found?.let { info -> OnlineMetadata.current?.peekMatched(item, name, info) }
+    // Worked out once per answer and name, not on every recomposition of the tile: both checks
+    // compare titles and build a key, which a TV row paid again for each tile on each pass.
+    val online = OnlineMetadata.current
+    val quick = remember(found, name, item.durationSec, online) { found?.let { info -> online?.peekMatched(item, name, info) } }
     // Whether the runtime still has to be asked about before there is a verdict either way.
-    val asks = quick == null && found != null && com.tmplayer.online.MetaConfidence.needsRuntime(name, found, item.durationSec)
+    val asks = remember(quick, found, name, item.durationSec) {
+        quick == null && found != null && com.tmplayer.online.MetaConfidence.needsRuntime(name, found, item.durationSec)
+    }
     val matched by produceState(Verdict(quick, found, !asks), found, name, item.durationSec) {
         // produceState keeps its value across new keys: an answer that arrived after the first
         // frame (always so on the web) would otherwise never be taken.
@@ -116,6 +129,10 @@ fun rememberMatchedState(item: MediaItem, showOnly: Boolean = false): MetaState<
     if (correction?.wrongMatch == true) return MetaState(null, lookup.settled)
     return MetaState(current?.matched?.takeIf { it.info == found }, settled)
 }
+
+/** [correction] as the one entry of a corrections map, for what reads [item]'s alone. */
+private fun onlyThis(item: MediaItem, correction: com.tmplayer.data.VideoCorrection?): Map<String, com.tmplayer.data.VideoCorrection> =
+    if (correction == null) emptyMap() else mapOf(item.id to correction)
 
 /** [rememberMatchedState]'s verdict, the answer it is for, and whether it is final. */
 private class Verdict(val matched: com.tmplayer.online.MatchedMeta?, val of: MetaInfo?, val done: Boolean)
@@ -132,13 +149,14 @@ class MetaState<out T>(val value: T?, val settled: Boolean) {
 
 /** The provider's answer for a name, before anything checks that it is the right one. */
 @Composable
-private fun rememberLookup(fileName: String, caption: String?, showOnly: Boolean): MetaState<MetaInfo> {
+private fun rememberLookup(fileName: String, caption: String?, showOnly: Boolean, known: MetaQuery? = null): MetaState<MetaInfo> {
     val online = OnlineMetadata.current ?: return MetaState(null, true)
-    val settings by online.settings.collectAsState()
+    // The screen's own collectors where it provides them ([com.tmplayer.ui.components.LocalTileShared]).
+    val settings by com.tmplayer.ui.components.rememberMetaSettings(online)
     if (!settings.enabled) return MetaState(null, true)
-    val language by Translator.active.collectAsState()
+    val language by com.tmplayer.ui.components.rememberLanguage()
     val query = remember(fileName, caption, showOnly) {
-        MetaQuery.of(fileName, caption)?.let { if (showOnly) it.showOnly() else it }
+        (known ?: MetaQuery.of(fileName, caption))?.let { if (showOnly) it.showOnly() else it }
     } ?: return MetaState(null, true)
     // Any answer in memory, "nothing matched" included, is a settled one.
     val peeked = remember(query, language.tag, settings) { online.peek(query) }
@@ -229,6 +247,10 @@ fun MetaPicture(
     alignment: Alignment = Alignment.Center,
     maxWidth: Int = 480,
     contentDescription: String? = null,
+    /** Told once the picture is fully drawn, so a caller may stop drawing what stands under it. */
+    onShown: (() -> Unit)? = null,
+    /** Told when the picture could not be had, so a caller holding something back for it may show that. */
+    onFailed: (() -> Unit)? = null,
 ) {
     if (url == null) return
     val online = OnlineMetadata.current ?: return
@@ -238,14 +260,19 @@ fun MetaPicture(
     var bitmap by remember(url) { mutableStateOf(Thumbnails.peekSharp(url, wanted, maxWidth)) }
     // TMDB's small copy, blurred, while the sharp one comes: the picture is there in one short
     // round trip and comes into focus rather than popping in late (user, 2026-10-21).
-    val tinyUrl = remember(url) { MetaImageSize.tiny(url) }
+    // Not on a television, where the second download and decode per poster held back the rest.
+    val tinyUrl = remember(url) { if (com.tmplayer.ui.theme.Motion.television) null else MetaImageSize.tiny(url) }
     var tiny by remember(url) { mutableStateOf(if (bitmap == null && tinyUrl != null) Thumbnails.peekOnline(tinyUrl, TINY_PICTURE_WIDTH) else null) }
     // Already decoded when the tile was composed: shown sharp at once, no fade.
     val reveal = remember(url) { Animatable(if (bitmap != null) 1f else 0f) }
-    val still = com.tmplayer.ui.theme.rememberReducedMotion() || com.tmplayer.ui.theme.Motion.reduced
+    // No fades on a television, where speed comes before looks.
+    val still = com.tmplayer.ui.theme.Motion.television || com.tmplayer.ui.theme.rememberReducedMotion() || com.tmplayer.ui.theme.Motion.reduced
     LaunchedEffect(url, wanted) {
         val have = bitmap
-        if (have != null && have.width >= wanted) return@LaunchedEffect
+        // Against the width it would be decoded at: on a television (or under Lighter pictures)
+        // that is three fifths of [wanted], so comparing with [wanted] itself sent every cached
+        // poster back through the loader each time its tile was composed.
+        if (have != null && have.width >= Thumbnails.lighter(wanted)) return@LaunchedEffect
         val started = System.nanoTime()
         coroutineScope {
             val early = if (have == null && tiny == null && tinyUrl != null) {
@@ -263,11 +290,13 @@ fun MetaPicture(
             } else {
                 null
             }
-            Thumbnails.sharp(url, wanted, maxWidth) { online.image(it) }?.let {
+            val sharp = Thumbnails.sharp(url, wanted, maxWidth) { online.image(it) }
+            sharp?.let {
                 early?.cancel()
                 bitmap = it
                 if (have == null) PicturePerf.note(if (tiny != null) "poster sharp after small" else "poster sharp", started)
             }
+            if (sharp == null && bitmap == null) onFailed?.invoke()
         }
     }
     // The small copy fades in over what stands under it (the video's own picture) rather than
@@ -282,9 +311,15 @@ fun MetaPicture(
         if (shown == null || reveal.value >= 1f) return@LaunchedEffect
         if (still) reveal.snapTo(1f) else reveal.animateTo(1f, androidx.compose.animation.core.tween(REVEAL_MS))
     }
+    // The animations are read where they are drawn, so a fade redraws the poster rather than
+    // composing it again every frame; only its end is read here, once.
+    val revealed by remember(url) { derivedStateOf { reveal.value >= 1f } }
+    if (onShown != null) {
+        LaunchedEffect(url, revealed, shown != null) { if (revealed && shown != null) onShown() }
+    }
     Box(modifier.onSizeChanged { drawn = it.width }) {
         val small = tiny
-        if (small != null && reveal.value < 1f) {
+        if (small != null && !revealed) {
             Image(
                 small,
                 contentDescription = null,
@@ -295,15 +330,14 @@ fun MetaPicture(
             )
         }
         if (shown != null) {
-            val focus = reveal.value
+            // The sharp copy fades in over the blurred small one, which reads as coming into
+            // focus. An eased blur on the sharp copy as well made a new blur per poster per frame.
             Image(
                 shown,
                 contentDescription = contentDescription,
                 modifier = Modifier
                     .matchParentSize()
-                    .graphicsLayer { alpha = focus }
-                    // The blur eases out as the sharp copy fades in, so it comes into focus.
-                    .then(if (focus < 1f && small != null) Modifier.blur(TINY_BLUR * (1f - focus)) else Modifier),
+                    .graphicsLayer { alpha = reveal.value },
                 contentScale = contentScale,
                 alignment = alignment,
                 filterQuality = Thumbnails.drawFilter,
@@ -349,10 +383,15 @@ private object PicturePerf {
 fun OnlineArt(item: MediaItem, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val home = LocalOnlineArt.current
     val meta = rememberMeta(item, showOnly = true)
-    val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
-    val name = remember(item, corrections) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
-    val number = name.episode
-    val season = name.season ?: 1
+    // The episode's number only matters off Home, where an episode wears its own still; Home's
+    // tiles skip the parse (and the extra correction reader) altogether. [home] is fixed for a
+    // screen, so the branch never changes under a tile.
+    val name = if (home) null else {
+        val correction = com.tmplayer.ui.components.rememberCorrection(item.id)
+        remember(item, correction) { com.tmplayer.data.SeriesShelf.episodeOf(item, onlyThis(item, correction)) }
+    }
+    val number = name?.episode
+    val season = name?.season ?: 1
     val listed = if (!home && number != null) rememberSeasonEpisodes(meta, season) else null
     val url = when {
         meta == null -> null
@@ -360,11 +399,21 @@ fun OnlineArt(item: MediaItem, modifier: Modifier = Modifier, content: @Composab
         meta.kind == MetaKind.Show -> number?.let { com.tmplayer.online.EpisodeNames.listed(season, it, listed)?.stillUrl }
         else -> meta.backdropUrl
     }
+    // On a television the video's own picture is dropped once the online one is fully drawn over
+    // it: an opaque picture covers it, and every tile drawing (and keeping decoded) both was the
+    // cost of two pictures for the look of one. Already known when the online one is in memory.
+    val tv = com.tmplayer.ui.theme.Motion.television
+    var covered by remember(url) {
+        mutableStateOf(tv && url != null && Thumbnails.peekSharp(url, ONLINE_ART_WIDTH, ONLINE_ART_WIDTH) != null)
+    }
     Box(modifier) {
-        content()
-        MetaPicture(url, Modifier.fillMaxSize())
+        if (!covered) content()
+        MetaPicture(url, Modifier.fillMaxSize(), maxWidth = ONLINE_ART_WIDTH, onShown = if (tv) ({ covered = true }) else null)
     }
 }
+
+/** The decode width of a tile's online picture: [MetaPicture]'s own default. */
+private const val ONLINE_ART_WIDTH = 480
 
 /** "From TMDB" (or TVmaze, with its licence) under the words it credits. */
 @Composable
@@ -513,7 +562,10 @@ fun PrefetchTitleLogos(items: List<Pair<MediaItem, Boolean>>, from: Int = 0) {
 private fun PrefetchBackdrops(items: List<Pair<MediaItem, Boolean>>, current: Int) {
     if (items.size < 2) return
     LaunchedEffect(items, current) {
-        val ahead = minOf(if (com.tmplayer.data.Thumbnails.light) 1 else BACKDROPS_AHEAD, items.size - 1)
+        // One on a television, whose picture cache is small enough that two wide pictures ahead
+        // pushed the cards' thumbnails out of it.
+        val lean = com.tmplayer.data.Thumbnails.light || com.tmplayer.ui.theme.Motion.television
+        val ahead = minOf(if (lean) 1 else BACKDROPS_AHEAD, items.size - 1)
         for (step in 1..ahead) {
             val (item, show) = items[(current.coerceAtLeast(0) + step) % items.size]
             val info = metaFor(item, show)
@@ -522,7 +574,7 @@ private fun PrefetchBackdrops(items: List<Pair<MediaItem, Boolean>>, current: In
     }
 }
 
-/** Carousel pages past the one shown whose pictures are decoded ahead; one under Lighter pictures. */
+/** Carousel pages past the one shown whose pictures are decoded ahead; one under Lighter pictures and on a TV. */
 private const val BACKDROPS_AHEAD = 2
 
 /**

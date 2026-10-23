@@ -119,6 +119,7 @@ import com.tmplayer.data.MediaItem
 import com.tmplayer.online.SkipKind
 import com.tmplayer.data.EpisodeNeighbours
 import com.tmplayer.player.PlaybackSpeed
+import com.tmplayer.player.Stereo3d
 import com.tmplayer.player.SleepTimer
 import com.tmplayer.player.SubtitlePosition
 import com.tmplayer.player.SubtitleSize
@@ -168,6 +169,9 @@ internal sealed interface MenuAction {
     data object ToggleDownmix : MenuAction
     data object ToggleVolumeBoost : MenuAction
     data object ToggleNightMode : MenuAction
+
+    /** A new 3D video choice, applied with the page left open for the next. */
+    data class Stereo(val stereo: Stereo3d) : MenuAction
 
     /** Minutes from now, [SleepTimer.END_OF_VIDEO], or null to turn the timer off. */
     data class Sleep(val minutes: Int?) : MenuAction
@@ -502,7 +506,7 @@ internal fun BoxScope.PlayerOverlay(
                         Box {
                             Tip(s.playerSpeedHint) {
                                 Box(
-                                    Modifier.height(36.dp).widthIn(min = 48.dp).clip(RoundedCornerShape(18.dp))
+                                    Modifier.height(40.dp).widthIn(min = 48.dp).clip(CircleShape)
                                         .clickable { onOpenMenu(MenuAt(MenuPage.Speed, MenuAt.Anchor.Speed)) }.padding(horizontal = 10.dp),
                                     contentAlignment = Alignment.Center,
                                 ) { Text(SeekMath.speedLabel(status.speed), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
@@ -857,11 +861,20 @@ internal fun PlayerMenu(
     fun page(to: MenuPage) = onOpenMenu(menu.copy(page = to))
 
     @Composable
-    fun Entry(text: String, checked: Boolean = false, trailing: String? = null, icon: ImageVector? = null, onClick: () -> Unit) {
+    fun Entry(text: String, checked: Boolean = false, trailing: String? = null, icon: ImageVector? = null, detail: String? = null, onClick: () -> Unit) {
         DropdownMenuItem(
             // Two lines rather than an ellipsis: Material caps a menu item at 280 dp, which a
             // Malayalam or German line outgrows, and shrinking the type would go under the floor.
-            text = { Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                if (detail == null) {
+                    Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                } else {
+                    Column(Modifier.padding(vertical = 6.dp)) {
+                        Text(text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(detail, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            },
             onClick = onClick,
             leadingIcon = {
                 Box(Modifier.size(18.dp)) {
@@ -916,6 +929,7 @@ internal fun PlayerMenu(
                 Entry(s.playerPlaybackOptions) { page(MenuPage.Options) }
                 // On the first page, as the phone's pinch is one move away: W cycles it too.
                 Entry(s.playerPictureShape, trailing = status.scale.label) { page(MenuPage.Shape) }
+                Entry(s.playerStereo, trailing = stereoSummary(status.stereo)) { page(MenuPage.Stereo) }
                 Entry(s.playerSubtitleStyleAndTiming) { page(MenuPage.SubtitleStyle) }
                 if (fromTelegram || watchedLabel != null) HorizontalDivider()
                 if (fromTelegram) {
@@ -1045,6 +1059,41 @@ internal fun PlayerMenu(
                     }
                 }
             }
+            MenuPage.Stereo -> {
+                // Every pick applies at once and the page stays open: the picture behind it is
+                // the answer to whether the layout and the glasses are right.
+                val now = status.stereo
+                fun choose(next: Stereo3d) = onAction(MenuAction.Stereo(next))
+                StereoHeading(s.playerStereoLayout)
+                Entry(s.commonOff, checked = !now.on, detail = s.playerStereoOffDetail) { choose(now.copy(layout = Stereo3d.Layout.Off)) }
+                Entry(s.playerStereoSideBySide, checked = now.layout == Stereo3d.Layout.SideBySide, detail = s.playerStereoSideBySideDetail) {
+                    choose(now.copy(layout = Stereo3d.Layout.SideBySide))
+                }
+                Entry(s.playerStereoTopBottom, checked = now.layout == Stereo3d.Layout.TopBottom, detail = s.playerStereoTopBottomDetail) {
+                    choose(now.copy(layout = Stereo3d.Layout.TopBottom))
+                }
+                Entry(s.playerStereoRows, checked = now.layout == Stereo3d.Layout.RowInterleaved, detail = s.playerStereoRowsDetail) {
+                    choose(now.copy(layout = Stereo3d.Layout.RowInterleaved))
+                }
+                Entry(s.playerStereoColumns, checked = now.layout == Stereo3d.Layout.ColumnInterleaved, detail = s.playerStereoColumnsDetail) {
+                    choose(now.copy(layout = Stereo3d.Layout.ColumnInterleaved))
+                }
+                HorizontalDivider()
+                StereoHeading(s.playerStereoGlasses)
+                Stereo3d.View.entries.forEach { view ->
+                    Entry(
+                        stereoGlassesLabel(view),
+                        checked = now.view == view,
+                        detail = when (view) {
+                            Stereo3d.View.OneEye -> s.playerStereoOneEyeDetail
+                            Stereo3d.View.Vr -> s.playerStereoVrDetail
+                            else -> null
+                        },
+                    ) { choose(now.copy(view = view)) }
+                }
+                HorizontalDivider()
+                Entry(s.playerStereoSwap, checked = now.swapEyes, detail = s.playerStereoSwapDetail) { choose(now.copy(swapEyes = !now.swapEyes)) }
+            }
             MenuPage.Shape -> VideoScale.entries.forEach { shape ->
                 Entry(shape.label, checked = shape == status.scale) { pick(MenuAction.Shape(shape)) }
             }
@@ -1148,7 +1197,7 @@ internal fun BoxScope.ResumeNotice(from: Long, lifted: Boolean, onStartOver: () 
     }
     Row(
         Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = if (lifted) 120.dp else 24.dp)
-            .clip(RoundedCornerShape(20.dp)).background(Color(0xCC1C1C1E)).padding(start = 16.dp, end = 4.dp),
+            .clip(CircleShape).background(Color(0xCC1C1C1E)).padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(s.playerResumingFrom(SeekMath.clock(from)), color = Color.White, fontSize = 14.sp)
@@ -1594,4 +1643,33 @@ private fun PlayPauseButton(status: PlaybackStatus, onTogglePlay: () -> Unit) {
             }
         }
     }
+}
+
+/** A group's title inside the 3D video page. */
+@Composable
+private fun StereoHeading(text: String) {
+    Text(
+        text,
+        color = Color.White.copy(alpha = 0.7f),
+        fontSize = 12.sp,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+    )
+}
+
+/** The glasses a [view] is for, as the 3D page and its flash name them. */
+internal fun stereoGlassesLabel(view: Stereo3d.View): String = when (view) {
+    Stereo3d.View.RedCyan -> L.playerStereoRedCyan
+    Stereo3d.View.GreenMagenta -> L.playerStereoGreenMagenta
+    Stereo3d.View.YellowBlue -> L.playerStereoYellowBlue
+    Stereo3d.View.OneEye -> L.playerStereoOneEye
+    Stereo3d.View.Vr -> L.playerStereoVr
+}
+
+/** The 3D line's detail on the menu's first page: Off, or the layout and the glasses. */
+internal fun stereoSummary(stereo: Stereo3d): String = when (stereo.layout) {
+    Stereo3d.Layout.Off -> L.commonOff
+    Stereo3d.Layout.SideBySide -> L.playerStereoDetail(L.playerStereoSideBySide, stereoGlassesLabel(stereo.view))
+    Stereo3d.Layout.TopBottom -> L.playerStereoDetail(L.playerStereoTopBottom, stereoGlassesLabel(stereo.view))
+    Stereo3d.Layout.RowInterleaved -> L.playerStereoDetail(L.playerStereoRows, stereoGlassesLabel(stereo.view))
+    Stereo3d.Layout.ColumnInterleaved -> L.playerStereoDetail(L.playerStereoColumns, stereoGlassesLabel(stereo.view))
 }

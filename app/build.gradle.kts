@@ -74,7 +74,12 @@ android {
 
     defaultConfig {
         applicationId = "com.tmplayer"
-        minSdk = 26
+        // Android 6. The floor is the highest minSdk among the libraries (TDLib's tdl-coroutines,
+        // Media3, nextlib, Compose, AndroidX and the Cast framework all declare 23), so older TVs
+        // such as the Fire TV Stick 4K on Fire OS 6 (Android 7.1) and the Android 6 and 7 boxes
+        // install it. What only Android 8 and later have is guarded where it is called
+        // (LegacyApiCompat.kt); `:app:lintRelease` reports a new one in :app as NewApi.
+        minSdk = 23
         targetSdk = 35
         // A release is cut by pushing a git tag, and the workflow passes the version through as
         // Gradle properties. The literals below are what a local build gets, and they track the
@@ -218,6 +223,20 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
         }
+        // A preview build for testers in the community group: the release build (minified,
+        // signed, the same speed) under its own package, so it installs beside the real app and
+        // leaves it, its sign in and its downloads alone. No updater, since the only thing it could
+        // offer is the release it is ahead of, and no crash reports, since its traces would land
+        // among the release's with no mapping uploaded for them.
+        // `./gradlew :app:assemblePreview -PtmRequireMedia3ext=true -PtmVersionName=<next release>`
+        create("preview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+            buildConfigField("boolean", "UPDATE_CHECK", "false")
+            buildConfigField("String", "SENTRY_DSN", "\"\"")
+            matchingFallbacks += listOf("release")
+        }
         create("promo") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".promo"
@@ -235,6 +254,8 @@ android {
     sourceSets.getByName("promo").kotlin.directories += "src/promo/shared"
     // The promo build's own name, so it is told apart from the real one on a launcher; with
     // `-PpromoShots` the real name, since the home screen channel shots carry it over the row.
+    // The preview build's name and marked TV banner, so it is told apart from the real one.
+    sourceSets.getByName("preview").res.directories += "src/preview/label"
     sourceSets.getByName("promo").res.directories += if (project.hasProperty("promoShots")) "src/promo/shots-label" else "src/promo/label"
 
     if (fdroidBuild) {
@@ -247,6 +268,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // The shared core uses java.time and java.nio.file (File.toPath(), Files.move,
+        // FileChannel.open), which Android only has from 8.0. Desugaring rewrites those calls at
+        // build time to a bundled copy, so nothing is looked up or loaded at start-up: the classes
+        // load lazily on first use, the same as the platform's would.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -287,6 +313,7 @@ kotlin {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     // TDLib, the repositories, settings, the download queue and the streaming window: everything
     // that is not Android's, shared with the desktop app. It brings tdl-coroutines, coroutines and
     // DataStore's preferences core with it.
@@ -316,6 +343,8 @@ dependencies {
     // own; leanback stays only for the TV player's theme (values-television/themes.xml).
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    // Only for 3D video: the anaglyph shader ([Stereo3dEffect]). Nothing goes through it otherwise.
+    implementation(libs.androidx.media3.effect)
     // The transport controls the system draws for us: notification, lock screen, headset
     // buttons and the Assistant, none of which the app has to lay out itself.
     implementation(libs.androidx.media3.session)
@@ -356,6 +385,11 @@ dependencies {
     testImplementation(libs.json)
 }
 
+// The :core models that are immutable in fact though the compiler cannot see it; the file says which.
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose-stability.conf"))
+}
+
 // The R8 mapping for crash reports, and nothing else of Sentry's plugin. A release build is
 // minified, so without its mapping a report's stack trace is a list of renamed classes. The
 // plugin writes a UUID into the APK and the matching mapping is uploaded under it, but only when
@@ -379,7 +413,7 @@ sentry {
     includeDependenciesReport.set(false)
     telemetry.set(false)
     // Release only: the debug and promo builds are not minified, and never report anything.
-    ignoredVariants.set(listOf("debug", "promoDebug", "promoRelease", "promo"))
+    ignoredVariants.set(listOf("debug", "promoDebug", "promoRelease", "promo", "preview"))
 
     tracingInstrumentation {
         enabled.set(false)

@@ -6,6 +6,8 @@ import com.tmplayer.platform.charCountOf
 import com.tmplayer.platform.codePointAtIndex
 import com.tmplayer.platform.currentYear
 import com.tmplayer.platform.isOtherSymbol
+import com.tmplayer.platform.monotonicMillis
+import kotlin.concurrent.Volatile
 
 /** A video title and year recovered from a descriptive file name. */
 data class ParsedName(
@@ -32,6 +34,15 @@ data class ParsedName(
      */
     val lastEpisode: Int? = null,
 ) {
+    /**
+     * [SeriesShelf.keyOf] of [title], worked out once: a parse is kept on its [MediaItem], and the
+     * shelf groups, keys and folds by this for every file on every build of Home.
+     */
+    internal val titleKey: String
+        get() = titleKeyRead ?: SeriesShelf.keyOf(title).also { titleKeyRead = it }
+
+    @Volatile private var titleKeyRead: String? = null
+
     /** Episodic media rather than a standalone video. */
     val isSeries: Boolean get() = season != null || episode != null || airDate != null
 
@@ -108,7 +119,7 @@ object MediaName {
     fun looseEpisode(text: String, maxYear: Int = thisYear() + 1): ParsedName? {
         val strict = parse(text, maxYear)
         if (strict.isEpisode) return strict
-        val normalised = stripDecoration(stripExtension(text)).replace(SEPARATORS, " ").replace(WHITESPACE, " ").trim()
+        val normalised = spaced(stripDecoration(stripExtension(text))).trim()
         val match = BARE_EPISODE.find(normalised)?.takeIf { it.range.first > 0 } ?: return null
         val title = clean(read(normalised.substring(0, match.range.first), maxYear).parsed.title)
         if (title.isEmpty()) return null
@@ -122,7 +133,7 @@ object MediaName {
      * tags, a year or a bracket follows the code.
      */
     fun episodeName(text: String): String? {
-        val normalised = stripDecoration(stripExtension(text)).replace(SEPARATORS, " ").replace(WHITESPACE, " ").trim()
+        val normalised = spaced(stripDecoration(stripExtension(text))).trim()
         val code = (PAIRED_EPISODE + EPISODE_ONLY + BARE_EPISODE)
             .mapNotNull { it.find(normalised) }
             .plus(listOfNotNull(DASHED_EPISODE.find(normalised)?.takeUnless { notAnEpisode(it, normalised) }))
@@ -153,7 +164,7 @@ object MediaName {
      */
     fun tileTitle(fileName: String, caption: String? = null, maxYear: Int = thisYear() + 1): String? {
         if (fileName.isBlank()) return null
-        val tidy = clean(stripDecoration(stripExtension(fileName)).replace(SEPARATORS, " ").replace(WHITESPACE, " "))
+        val tidy = clean(spaced(stripDecoration(stripExtension(fileName))))
         val parsed = parse(fileName, caption, maxYear)
         val release = parsed.year != null || parsed.isEpisode || EpisodeCopies.markers(fileName).isNotEmpty() ||
             endsInTags(tidy) || parsed.part != null || parsed.extra != null ||
@@ -187,7 +198,7 @@ object MediaName {
         val stripped = stripDecoration(text)
         // Separators are interchangeable: the same release shows up dot-separated on one tracker
         // and space-separated on another.
-        var normalised = stripped.replace(SEPARATORS, " ").replace(WHITESPACE, " ").trim()
+        var normalised = spaced(stripped).trim()
         if (normalised.isEmpty()) return Read(ParsedName("", null), "")
 
         // "Trailer - Night Train (2024)": the word in front says what the file is, the rest names it.
@@ -273,7 +284,7 @@ object MediaName {
      * title's own ("Tamil Lessons"), and is not counted.
      */
     fun languages(text: String): List<String> {
-        val normalised = stripDecoration(stripExtension(text)).replace(SEPARATORS, " ").replace(WHITESPACE, " ").trim()
+        val normalised = spaced(stripDecoration(stripExtension(text))).trim()
         return LANGUAGE.findAll(normalised)
             .filter { it.range.first > 0 }
             .mapNotNull { LANGUAGE_CODES[it.value.lowercase()] }
@@ -472,7 +483,8 @@ object MediaName {
      * a title written in Tamil or Malayalam is a title.
      */
     private fun stripDecoration(name: String): String {
-        val withoutSymbols = buildString {
+        // Most names carry no symbol at all, and are not copied out a character at a time.
+        val withoutSymbols = if (!hasOtherSymbol(name)) name else buildString(name.length) {
             var i = 0
             while (i < name.length) {
                 val code = name.codePointAtIndex(i)
@@ -489,6 +501,16 @@ object MediaName {
             .trimStart { it.isWhitespace() || it in TRIM_CHARS }
     }
 
+    private fun hasOtherSymbol(name: String): Boolean {
+        var i = 0
+        while (i < name.length) {
+            val code = name.codePointAtIndex(i)
+            if (isOtherSymbol(code)) return true
+            i += charCountOf(code)
+        }
+        return false
+    }
+
     /**
      * What a [HANDLE] match leaves behind. A handle can hold underscores, and so can the name it is
      * stapled to: "@TamilMob_LinkZz_BEAST_2022_Tamil_HQ_HDRip.mkv" matches as one word. When the
@@ -502,11 +524,47 @@ object MediaName {
         return if (runsOn && words.size > 2) " " + words.drop(2).joinToString(" ") else " "
     }
 
-    private fun clean(raw: String): String = raw
+    private fun clean(raw: String): String =
         // An unterminated "(" is what is left when the title is cut at a bracketed year.
-        .trim { it.isWhitespace() || it in TRIM_CHARS }
-        .replace(WHITESPACE, " ")
-        .trim()
+        collapsedSpaces(raw.trim { it.isWhitespace() || it in TRIM_CHARS }).trim()
+
+    /**
+     * [text] with each run of dots and underscores a space and each run of whitespace one space,
+     * as replacing `[._]+` and then `\s+` with a space gives it. Every name is read through
+     * this, so the separators go in one scan and the expression only runs on a name that still has
+     * a run of spaces or a tab, a line break or a wide space in it.
+     */
+    private fun spaced(text: String): String = collapsedSpaces(separatorsAsSpaces(text))
+
+    private fun separatorsAsSpaces(text: String): String {
+        val first = text.indexOfFirst { it == '.' || it == '_' }
+        if (first < 0) return text
+        val out = StringBuilder(text.length).append(text, 0, first)
+        var index = first
+        while (index < text.length) {
+            if (text[index] == '.' || text[index] == '_') {
+                out.append(' ')
+                while (index < text.length && (text[index] == '.' || text[index] == '_')) index++
+            } else {
+                out.append(text[index++])
+            }
+        }
+        return out.toString()
+    }
+
+    /**
+     * `replace(WHITESPACE, " ")`, run only where it would change something. What counts as
+     * whitespace differs by platform (Android's expressions take every Unicode space), so the
+     * check takes the widest reading and leaves the answer to the expression.
+     */
+    private fun collapsedSpaces(text: String): String {
+        for (index in text.indices) {
+            val char = text[index]
+            val run = char == ' ' && index > 0 && text[index - 1] == ' '
+            if (run || (char != ' ' && (char.isWhitespace() || char == '\u0085' || char == '\uFEFF'))) return text.replace(WHITESPACE, " ")
+        }
+        return text
+    }
 
     private fun stripExtension(whole: String): String {
         // A byte piece's suffix first ("Name.mkv.001", "Name.part007"): the name is its base's,
@@ -531,7 +589,22 @@ object MediaName {
         }
     }
 
-    private fun thisYear(): Int = currentYear()
+    /**
+     * The year now, read again once a minute rather than on every name: a calendar is a dozen
+     * objects on Android, and a chat's listing parses hundreds of names.
+     */
+    private fun thisYear(): Int {
+        val now = monotonicMillis()
+        val read = yearRead
+        if (read != null && now - read.at in 0 until YEAR_RECHECK_MS) return read.year
+        return currentYear().also { yearRead = YearRead(it, now) }
+    }
+
+    private class YearRead(val year: Int, val at: Long)
+
+    @Volatile private var yearRead: YearRead? = null
+
+    private const val YEAR_RECHECK_MS = 60_000L
 
     private const val MIN_YEAR = 1900
 
@@ -607,7 +680,6 @@ object MediaName {
 
     private val LANGUAGE = Regex("""\b(""" + LANGUAGE_CODES.keys.joinToString("|") + """)\b""", RegexOption.IGNORE_CASE)
 
-    private val SEPARATORS = Regex("""[._]+""")
     private val WHITESPACE = Regex("""\s+""")
     /** Includes the long dashes, written as escapes: "Show \u2014 E5" ends in one once cut. */
     private val TRIM_CHARS = charArrayOf('-', '\u2013', '\u2014', '(', ')', '[', ']', '{', '}', ',', ':', '_', '.', '|')

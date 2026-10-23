@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.media.tv.TvContract
+import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tmplayer.MainActivity
@@ -37,7 +39,7 @@ import java.security.MessageDigest
  * signed in TDLib, and TDLib lives in this process. A periodic background job would have to start
  * the process and open the Telegram session just to refresh a row of pictures, which a 1 GB stick
  * should not pay for. So the channels are refreshed when the app opens, whenever Home's rows change
- * while it runs (a post in a starred chat, a video saved for later), and after playback, which
+ * while it runs (a new post in one of Home's chats, a video saved for later), and after playback, which
  * changes Continue watching and with it Recently added.
  *
  * **Pictures.** A card's picture must be a URI the launcher's process can read. With the online
@@ -58,11 +60,23 @@ object TvChannelsPublisher {
     private const val EXTRA_SERIES = "ch_series"
     private const val EXTRA_TITLE = "ch_title"
 
-    /** Appended to the stored fingerprint of a card written without its picture, so the next pass tries again. */
-    private const val NO_ART = "\u001fnoart"
-
     private const val LOGO_SIZE = 256
     private const val ART_TIMEOUT_MS = 20_000L
+
+    /**
+     * Online lookups not already answered from the cache, and wide pictures fetched, that one
+     * publish may make. A 1 GB stick paid for a lookup and a backdrop per card, a row of them at
+     * a time, while the viewer was trying to start a video. The cards past it wear Telegram's
+     * thumbnail for now and are tried again, a few at a time, on the next refreshes.
+     */
+    private const val ONLINE_PER_RUN = 4
+
+    /**
+     * How long after the process starts a publish asks nothing of the network for pictures:
+     * the first half minute is when the app is opened and a video started, and both are slower
+     * with the launcher's cards fetching beside them. Only answers already cached are used then.
+     */
+    private const val START_QUIET_MS = 30_000L
 
     private val lock = Mutex()
 
@@ -81,9 +95,13 @@ object TvChannelsPublisher {
      * Whether this device has a home screen that shows channels: a television with the TV
      * provider, and not a Fire TV, whose launcher reads neither channels nor "Play next".
      */
+    @androidx.annotation.ChecksSdkIntAtLeast(api = android.os.Build.VERSION_CODES.O)
     fun supported(context: Context): Boolean = supportedCache ?: runCatching {
         val pm = context.packageManager
-        pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) &&
+        // Channels and Play next are the TV provider of Android 8 and later. Android 7's launcher
+        // had only the recommendations row, so an older television simply gets no channels.
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+            pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) &&
             DeviceQuirks.remote(context).watchNextSupported &&
             pm.resolveContentProvider(TvContract.AUTHORITY, 0) != null
     }.getOrDefault(false).also { supportedCache = it }
@@ -133,6 +151,7 @@ object TvChannelsPublisher {
 
     private class ChannelRow(val id: Long, val name: String?)
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ownChannels(context: Context): Map<Channel, ChannelRow> = runCatching {
         val projection = arrayOf(
             TvContract.Channels._ID,
@@ -149,6 +168,7 @@ object TvChannelsPublisher {
         }.orEmpty()
     }.getOrDefault(emptyMap())
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ensureChannel(context: Context, channel: Channel, name: String, existing: ChannelRow?): Long? {
         if (existing != null) {
             if (existing.name != name) {
@@ -202,6 +222,7 @@ object TvChannelsPublisher {
 
     private class ProgramRow(val existing: TvChannels.Existing, val art: String?)
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ownPrograms(context: Context, channelId: Long): Map<String, ProgramRow> = runCatching {
         val projection = arrayOf(
             TvContract.PreviewPrograms._ID,
@@ -225,8 +246,24 @@ object TvChannelsPublisher {
             }.orEmpty()
     }.getOrDefault(emptyMap())
 
+    /**
+     * What one publish may still ask of the network for pictures ([ONLINE_PER_RUN]). A card the
+     * run cannot afford is left out and asked for again on the next run.
+     */
+    private class OnlineBudget(var left: Int) {
+        fun take(): Boolean {
+            if (left <= 0) return false
+            left--
+            return true
+        }
+    }
+
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private suspend fun publishLocked(context: Context, programs: List<TvChannels.Program>, names: (Channel) -> String) {
         val channels = ownChannels(context)
+        val quiet = runCatching { SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() < START_QUIET_MS }
+            .getOrDefault(false)
+        val budget = OnlineBudget(if (quiet) 0 else ONLINE_PER_RUN)
         val byChannel = programs.groupBy { it.channel }
         val keptArt = HashSet<String>()
         for (channel in Channel.entries) {
@@ -244,12 +281,17 @@ object TvChannelsPublisher {
             val deleted = diff.delete.toHashSet()
             existing.values.filter { it.existing.rowId !in deleted }.mapNotNullTo(keptArt) { artName(context, it.art) }
             for (program in diff.insert) {
-                val values = values(context, channelId, program, keptArt)
+                // A card without a real picture is left out, and asked for again on the next run.
+                val values = values(context, channelId, program, keptArt, budget) ?: continue
                 runCatching { context.contentResolver.insert(TvContract.PreviewPrograms.CONTENT_URI, values) }
                     .onFailure { Log.w(TAG, "card not added", it) }
             }
             for ((id, program) in diff.update) {
-                val values = values(context, channelId, program, keptArt)
+                val values = values(context, channelId, program, keptArt, budget)
+                if (values == null) {
+                    runCatching { context.contentResolver.delete(TvContract.buildPreviewProgramUri(id), null, null) }
+                    continue
+                }
                 runCatching { context.contentResolver.update(TvContract.buildPreviewProgramUri(id), values, null, null) }
                     .onFailure { Log.w(TAG, "card not updated", it) }
             }
@@ -260,15 +302,20 @@ object TvChannelsPublisher {
         pruneArt(context, keptArt)
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private suspend fun values(
         context: Context,
         channelId: Long,
         program: TvChannels.Program,
         keptArt: MutableSet<String>,
-    ): ContentValues {
-        val art = withTimeoutOrNull(ART_TIMEOUT_MS) { resolveArt(context, program.art) }
-        art?.let { keptArt += it.first }
-        val fingerprint = program.fingerprint + if (art == null) NO_ART else ""
+        budget: OnlineBudget,
+    ): ContentValues? {
+        // Only cards with the film's or show's own artwork go on the home screen (user,
+        // 2026-10-23): a frame from the file or the app's stand-in picture looked unfinished
+        // beside them. One whose picture is not known yet stays off until a later run finds it.
+        val art = withTimeoutOrNull(ART_TIMEOUT_MS) { resolveArt(context, program.art, budget) } ?: return null
+        keptArt += art.first
+        val fingerprint = program.fingerprint
         return ContentValues().apply {
             put(TvContract.PreviewPrograms.COLUMN_CHANNEL_ID, channelId)
             put(TvContract.PreviewPrograms.COLUMN_INTERNAL_PROVIDER_ID, program.internalId)
@@ -289,13 +336,8 @@ object TvChannelsPublisher {
                     program.positionMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 )
             }
-            if (art != null) {
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI, TvArtProvider.uriFor(context, art.first).toString())
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, art.second)
-            } else {
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI, WatchNextPublisher.poster(context).toString())
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, TvContract.PreviewPrograms.ASPECT_RATIO_16_9)
-            }
+            put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI, TvArtProvider.uriFor(context, art.first).toString())
+            put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, art.second)
             put(TvContract.PreviewPrograms.COLUMN_INTENT_URI, intentFor(context, program.target).toUri(Intent.URI_INTENT_SCHEME))
         }
     }
@@ -312,29 +354,33 @@ object TvChannelsPublisher {
 
     // ---- pictures -------------------------------------------------------------------------------
 
-    /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without a picture. */
-    private suspend fun resolveArt(context: Context, art: TvChannels.Art): Pair<String, Int>? {
-        // The wide picture first, a better card than a frame from the file: the row on the
-        // launcher is a row of landscape cards, and a poster stands in only where none is known.
-        found(art)?.let { info ->
-            info.wideUrl?.let { url -> fetched(context, url, "w")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 } }
-            if (art.posterWanted) {
-                info.posterUrl?.let { url -> fetched(context, url, "p")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_2_3 } }
+    /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without the title's own artwork. */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
+    private suspend fun resolveArt(context: Context, art: TvChannels.Art, budget: OnlineBudget): Pair<String, Int>? {
+        found(art, budget)?.let { info ->
+            // The wide picture (a film's or show's backdrop), a better card than a frame from the
+            // file. Only landscape pictures: a 2:3 poster beside them made the launcher's row
+            // uneven. A few downloads each run; one the run cannot afford is left for the next.
+            info.wideUrl?.let { url ->
+                if (budget.take()) fetched(context, url, "w")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
             }
         }
         fixtureArt?.invoke(art)?.let { file ->
             return copyIn(context, file, "f_${sha1(art.key)}.jpg")?.let { it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
         }
-        val path = Thumbnails.file(art.thumbnailFileId) ?: return null
-        val name = "t_${Integer.toHexString(art.thumbnailFileId)}.jpg"
-        return copyIn(context, File(path), name)?.let { it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
+        // No frame from the file: a card without the title's own artwork stays off the home screen.
+        return null
     }
 
     /** What the online lookups know of the film or show, when the viewer turned them on. */
-    private suspend fun found(art: TvChannels.Art): com.tmplayer.online.MetaInfo? {
+    private suspend fun found(art: TvChannels.Art, budget: OnlineBudget): com.tmplayer.online.MetaInfo? {
         val online = OnlineMetadata.current ?: return null
         if (!OnlineMetadata.enabled) return null
         val query = MetaQuery.of(art.name, art.caption.ifBlank { null })?.showOnly() ?: return null
+        // What Home has already learnt costs nothing; only a title not yet looked up spends the run's budget.
+        online.peek(query)?.let { known -> return (known as? MetaResult.Found)?.info }
+        runCatching { online.cachedMatch(query) }.getOrNull()?.let { return it }
+        if (!budget.take()) return null
         return (runCatching { online.lookup(query) }.getOrNull() as? MetaResult.Found)?.info
     }
 

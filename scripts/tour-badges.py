@@ -4,7 +4,7 @@
 Every tour spec in scripts/annotations/ (tour-android-<page>.json for the phone, tour-android-<page>-tv.json
 for the television, tour-desktop-<page>-light.json for the desktop) marks the things its page talks about with
 one "circle" each, in the order of the page's numbered lines. The app draws the numbers itself, over the
-picture, so no number or word is ever drawn into an image (CLAUDE.md). This script turns each circle's box
+picture, so no number or word is ever drawn into an image (AGENTS.md). This script turns each circle's box
 into the badge's place, as fractions of the cropped picture, and writes them into TourBadges.kt, so a
 retaken shot moves its numbers with:
 

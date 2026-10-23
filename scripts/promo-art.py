@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Turns the promo artwork into the promo build's WebP assets.
 
-The source images are the 6 wide, text-free pictures listed in docs/promo-art/PROMPTS.md, saved as
-promo-art-src/<name>.png (git-ignored). From each one this writes, into
+The source images are 6 wide (3:2, 1536x1024), text-free pictures, saved as
+promo-art-src/<name>.png at the repository root (git-ignored):
+
+  films   promo_saltwater_lanterns, promo_quiet_orbit, promo_monsoon_express, promo_paper_kingdoms
+  shows   promo_harbour_lines, promo_skybound_academy
+
+Today they are Unsplash photos, credited in docs/promo-art/CREDITS.md; a replacement only needs
+saving under the same name and running this again. From each one this writes, into
 app/src/promo/res/drawable-nodpi/:
 
   films and shows   <name>_backdrop.webp   16:9 centre crop, 1920x1080
@@ -13,7 +19,7 @@ app/src/promo/res/drawable-nodpi/:
 Lesson thumbnails, channel avatars, clips and the demo titles without art are drawn by the app
 (its generated covers), as a real Telegram file without a picture is, so nothing is made for them.
 Lettering the posters needs fontTools with brotli (`pip install fonttools brotli`) to read the
-site's woff2. Every file is WebP at quality 88 with the settings CLAUDE.md gives for screenshots.
+site's woff2. Every file is WebP at quality 88 with the settings AGENTS.md gives for screenshots.
 Run it from anywhere:
 
   scripts/promo-art.py [--src promo-art-src] [--out app/src/promo/res/drawable-nodpi]

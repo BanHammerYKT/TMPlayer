@@ -6,46 +6,27 @@ those steps use.
 
 | File | Used by |
 | --- | --- |
-| [winget/](winget/) and [winget.md](winget.md) | CP13, CP16, U13 |
+| [winget/](winget/) and [winget.md](winget.md) | U13 first submission; the release job's `winget` step after that |
 | [telegram-apps.md](telegram-apps.md) | U17 AlternativeTo, U18 Uptodown, U19 XDA (a fact list only) |
-| [flathub.md](flathub.md) | U16, Flathub PR #10513 |
+| [flathub.md](flathub.md) | Why there is no Flathub package (PR #10513, closed) |
 | [aur.md](aur.md) | The AUR package `tmplayer-bin`: one-time setup, then published by the release job |
 | [amazon.md](amazon.md) | U23 Amazon Appstore listing (text, images, content rating) |
 | [play.md](play.md) | Phase G Google Play (set aside), and Android developer verification for every APK |
-| [izzyondroid.md](izzyondroid.md) | Set aside (see PLAN), kept in case the policy changes |
+
+IzzyOnDroid was decided against (see PLAN); Obtainium installs straight from the GitHub releases.
 
 ## Already done in the repository
 
-- `fastlane/metadata/android/en-US/`: title, short and full description, `changelogs/12200.txt`
-  and the icon. IzzyOnDroid (and F-Droid clients through it) read this. Add
-  `changelogs/<versionCode>.txt` with every release from now on.
-- **Screenshots are not committed yet.** fdroidserver accepts only png, jpg and jpeg for metadata
-  images (`ALLOWED_EXTENSIONS` in `fdroidserver/update.py`), while the repository keeps every
-  screenshot as WebP (CLAUDE.md), and PNG copies would add about 4 MB to the history for no
-  reader until IzzyOnDroid takes the app. Right before the inclusion request, convert them
-  losslessly (pixel-identical) and commit them in that change:
-
-  ```sh
-  D=fastlane/metadata/android/en-US/images; mkdir -p $D/phoneScreenshots $D/tvScreenshots
-  magick site/public/screenshots/phone-chats.webp $D/phoneScreenshots/1.png
-  magick site/public/screenshots/phone-grid-light.webp $D/phoneScreenshots/2.png
-  magick site/public/screenshots/phone-grid.webp $D/phoneScreenshots/3.png
-  magick site/public/screenshots/tv-grid.webp $D/tvScreenshots/1.png
-  magick site/public/screenshots/tv-chats-light.webp $D/tvScreenshots/2.png
-  magick site/public/screenshots/tv-settings.webp $D/tvScreenshots/3.png
-  ```
+- `fastlane/metadata/android/en-US/`: title, short and full description, the icon and
+  `changelogs/<versionCode>.txt`, one per release. F-Droid style clients read this.
 
 ## Points that cut across channels
 
-- **"Unofficial" everywhere.** Telegram's API terms require stores to say the app uses the
-  Telegram API, and forbid "Telegram" in the title. Every draft here keeps "TMPlayer" as the name
-  and says "unofficial, not affiliated with Telegram, needs your own account".
-- **"No ads" needs one honest caveat.** The app has no ads of its own, but it shows Telegram's
-  sponsored messages in public channels because the API terms (3.3) require it. The drafts say so.
-- **Sentry is in the public APK.** Opt-in and off by default, but the SDK and a DSN are compiled in,
-  and IzzyOnDroid's scanner types it as "Mobile Analytics". Expect a Tracking label there.
-- **No updater in a store build.** Play forbids an app updating itself outside the store, and an
-  Amazon install would fight Amazon's own updates. Any store file is built without the updater and
-  `REQUEST_INSTALL_PACKAGES`, like the F-Droid build (CP34).
-- **Release cadence.** winget and Uptodown add a step per release (winget can be automated).
-  None of this needs a new release.
+- **Telegram's terms.** The rules every listing follows (no "Telegram" in a title, "unofficial" in
+  every description, sponsored messages shown, no updater in a store build) are in `AGENTS.md`,
+  "Telegram's terms and the stores".
+- **Store builds.** A store file is built on the `-PtmFdroid=true` switch (PLAN CP34), which drops
+  the updater, `REQUEST_INSTALL_PACKAGES` and Cast, as the F-Droid build does.
+- **Release cadence.** Uptodown and Amazon add a manual step per release. winget is automatic once
+  the first submission is merged: the release job's `winget` step skips itself until the
+  `WINGET_TOKEN` secret is set.

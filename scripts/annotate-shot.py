@@ -12,7 +12,7 @@ Usage:
   scripts/annotate-shot.py --raw DIR SPEC...                     raw captures from DIR
 
 Raw captures are the full PNGs off the device or emulator (1920x1080 for the TV). They are not
-committed (see CLAUDE.md: only WebP goes into the repository); keep them in build/shots/, the
+committed (see AGENTS.md: only WebP goes into the repository); keep them in build/shots/, the
 default --raw directory, under the file name the spec's "source" gives.
 
 Spec:
@@ -23,7 +23,7 @@ Spec:
     "width": 1200,                            output width; default the crop's own width. Height
                                               follows the crop's aspect ratio. Going past the
                                               crop's width upscales, which a shot should not need.
-    "quality": 88,                            WebP quality; 88 is the settled figure (CLAUDE.md)
+    "quality": 88,                            WebP quality; 88 is the settled figure (AGENTS.md)
     "marks": [ ... ]                          drawn in order, coordinates in raw capture pixels
   }
 
@@ -207,7 +207,7 @@ def render(spec_path: Path, raw_dir: Path) -> Path:
     canvas = canvas.resize((out_w, out_h), Image.LANCZOS)
     output = ROOT / spec["output"]
     output.parent.mkdir(parents=True, exist_ok=True)
-    # Encoded by ImageMagick with the settings CLAUDE.md gives for every screenshot, sharp YUV
+    # Encoded by ImageMagick with the settings AGENTS.md gives for every screenshot, sharp YUV
     # included, which Pillow's encoder does not offer.
     with tempfile.NamedTemporaryFile(suffix=".png") as temp:
         canvas.save(temp.name, "PNG")

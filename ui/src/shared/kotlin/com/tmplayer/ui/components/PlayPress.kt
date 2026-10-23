@@ -18,30 +18,40 @@ object PlayPress {
     var title by mutableStateOf<String?>(null)
         private set
 
-    /** True once the player was asked to open for the current press. */
-    var opened: Boolean = false
-        private set
+    /**
+     * True once the player was asked to open for the current press, for a few seconds at most:
+     * the shell's stop or resume ends it, and should the player never come up (an activity that
+     * would not start), Play is not held shut for good.
+     */
+    val opened: Boolean get() = openedAt != 0L && elapsedSinceOpen() < OPENED_FOR_MS
+
+    private var openedAt = 0L
+    private val origin = kotlin.time.TimeSource.Monotonic.markNow()
+
+    private fun elapsedSinceOpen(): Long = origin.elapsedNow().inWholeMilliseconds - openedAt
 
     private var press = 0
 
     /** A press of Play; returns its number, for [end]. */
     fun begin(title: String): Int {
         this.title = title
-        opened = false
+        openedAt = 0L
         return ++press
     }
 
     /** The player is being opened: the press stays shown until the shell leaves the screen. */
     fun open() {
-        opened = true
+        openedAt = origin.elapsedNow().inWholeMilliseconds.coerceAtLeast(1L)
     }
 
     /** The press is over: the player is on screen, or nothing is going to open. */
     fun end(which: Int = press) {
         if (which != press) return
         title = null
-        opened = false
+        openedAt = 0L
     }
 
     val starting: Boolean get() = title != null
+
+    private const val OPENED_FOR_MS = 10_000L
 }

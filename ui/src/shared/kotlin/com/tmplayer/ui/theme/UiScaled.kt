@@ -52,6 +52,15 @@ fun rememberUiScale(settings: SettingsStore): State<UiScale> {
     return state
 }
 
+/**
+ * The stored size, read by the app off the main thread as it starts, so the first composition
+ * finds it here and does not wait on the settings file: that wait sat inside the first frame of a
+ * cold start, on the 1 GB TV's slow storage among others.
+ */
+fun primeUiScale(scale: UiScale) {
+    if (UiScaleMemory.last == null) UiScaleMemory.last = scale
+}
+
 /** The size last drawn with, for the next window or panel to start from. */
 private object UiScaleMemory {
     @Volatile

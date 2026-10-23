@@ -170,6 +170,13 @@ data class ResultGroup(
 ) {
     val lead: MediaItem get() = copies.first()
 
+    /**
+     * How many files the copies are, the same file posted twice counted once, as the video's page
+     * counts its versions ([VideoCopies.distinctFiles]): the card said "4 copies" over a page of
+     * "3 versions" when one file had been forwarded to a second chat.
+     */
+    val fileCount: Int get() = VideoCopies.distinctFiles(copies).size
+
     /** The chats the copies are in, the lead's first, each once. */
     val chatIds: List<Long> get() = copies.map { it.chatId }.distinct()
 
@@ -191,7 +198,7 @@ data class ResultGroup(
     val newest: Int get() = copies.maxOf { it.date }
 
     /** The lead with every copy as its [MediaItem.versions], for the detail page's copies list. */
-    fun asItem(): MediaItem = if (copies.size < 2) lead else lead.copy(versions = copies)
+    fun asItem(): MediaItem = if (copies.size < 2) lead else lead.copy(versions = copies).keptReads(lead)
 }
 
 /**
@@ -479,17 +486,23 @@ object GlobalSearch {
     fun titleOf(group: ResultGroup): String = group.show?.takeIf { group.isShow } ?: SeriesShelf.tileTitle(group.asItem())
 
     /** On this device first, then the best picture, then the newest. */
-    fun copyOrder(copies: List<MediaItem>): List<MediaItem> =
-        copies.sortedWith(
-            compareByDescending<MediaItem> { it.onDevice }
-                .thenByDescending { qualityOf(it)?.let(::qualityRank) ?: 0 }
-                .thenByDescending { it.date }
-                .thenByDescending { it.messageId },
-        )
+    fun copyOrder(copies: List<MediaItem>): List<MediaItem> {
+        if (copies.size < 2) return copies.toList()
+        // Each copy's quality read once, not on every comparison of the sort.
+        return copies.map { it to (qualityOf(it)?.let(::qualityRank) ?: 0) }
+            .sortedWith(
+                compareByDescending<Pair<MediaItem, Int>> { it.first.onDevice }
+                    .thenByDescending { it.second }
+                    .thenByDescending { it.first.date }
+                    .thenByDescending { it.first.messageId },
+            )
+            .map { it.first }
+    }
 
     /** "4K", "1080p", "720p", "SD", or null when neither the name nor the stated size says. */
     fun qualityOf(item: MediaItem): String? =
-        MediaText.qualityTags(item.fileName.ifBlank { item.title }).firstOrNull()
+        // The file name's tags are read once per item ([MediaItem.qualityTags]).
+        (if (item.fileName.isBlank()) MediaText.qualityTags(item.title) else item.qualityTags).firstOrNull()
             ?: MediaFacts.resolutionOf(item.width, item.height)
 
     fun qualityRank(quality: String): Int = when (quality.uppercase()) {

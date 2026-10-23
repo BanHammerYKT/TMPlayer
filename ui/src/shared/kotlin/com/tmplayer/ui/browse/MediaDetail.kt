@@ -101,6 +101,12 @@ data class DetailRow(
     val progress: Float? = null,
     /** A place held for a button still on its way (the trailer): laid out, unseen, unreachable. */
     val placeholder: Boolean = false,
+    /**
+     * False for a line that only says how things stand (a video already downloaded): drawn
+     * dimmed and does nothing, but a remote can still stand on it, so focus is not thrown
+     * elsewhere when the Download button it was on turns into this.
+     */
+    val enabled: Boolean = true,
 )
 
 /**
@@ -201,7 +207,8 @@ fun MediaDetailPanel(
     actionsAtFoot: Boolean = false,
 ) {
     val s = LocalStrings.current
-    val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
+    // The screen's one collector when it has one, rather than a second of its own.
+    val corrections by com.tmplayer.ui.components.rememberCorrections()
     val parsed = remember(item, corrections) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
     val matched = com.tmplayer.ui.online.rememberMatched(item)
     val meta = matched?.info
@@ -230,7 +237,10 @@ fun MediaDetailPanel(
     val source = remember(item.id, art, cover, meta?.wideUrl) { BackdropSource(art.miniThumbnail, art.thumbnailFileId, cover, meta?.wideUrl) }
     val facts = remember(item) { MediaFacts.of(item) }
     val online = OnlineMetadata.current
-    val metadataOff = online != null && poster == null && overview == null && !online.settings.collectAsState().value.enabled
+    // Collected once here: read behind the conditions below, a collector started and stopped as
+    // the poster or the overview came and went.
+    val metaEnabled = online?.let { com.tmplayer.ui.components.rememberMetaSettings(it) }?.value?.enabled
+    val metadataOff = online != null && poster == null && overview == null && metaEnabled != true
 
     Column(
         modifier
@@ -292,7 +302,7 @@ fun MediaDetailPanel(
                     modifier = Modifier.semantics { heading() },
                 )
                 // Where the name came from: the provider's match and what backed it, or the file.
-                if (online?.settings?.collectAsState()?.value?.enabled == true) {
+                if (metaEnabled == true) {
                     Text(
                         meta?.let { m -> m.year?.let { s.detailMatchedAs(m.title, it.toString()) } ?: s.detailMatchedAsNoYear(m.title) }
                             ?: s.detailFromFileName,
@@ -310,7 +320,8 @@ fun MediaDetailPanel(
                 listOfNotNull(
                     (parsed.year ?: meta?.year)?.let { Fact(it.toString()) },
                     item.durationSec.takeIf { it > 0 }?.let { Fact(s.formatter.duration(it.toLong())) },
-                    facts.resolution?.let { Fact(it, chip = true) },
+                    // As the copy under Play names it ([VideoCopies.qualityLabel]).
+                    (com.tmplayer.data.VideoCopies.qualityLabel(item) ?: facts.resolution)?.let { Fact(it, chip = true) },
                     item.sizeBytes.takeIf { it > 0 }?.let { Fact(com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(it))) },
                     chatTitle.takeIf { it.isNotBlank() }?.let { Fact(it) },
                     Fact(s.detailWatchedLine, accent = true).takeIf { finished },
@@ -354,7 +365,7 @@ fun MediaDetailPanel(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, if (centred) Alignment.CenterHorizontally else Alignment.Start),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s)) }
+                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), progress = it.progress, enabled = it.enabled) }
             }
         }
         extras?.trailer?.let { trailer -> trailers.unopened?.takeIf { it == trailer }?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) } }
@@ -388,7 +399,7 @@ fun MediaDetailPanel(
                     horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s)) }
+                    rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), progress = it.progress, enabled = it.enabled) }
                 }
             }
         }

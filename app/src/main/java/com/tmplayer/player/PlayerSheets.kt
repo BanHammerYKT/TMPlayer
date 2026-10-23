@@ -80,6 +80,9 @@ class PlayerSheets(
             val onFine: (Float) -> Unit,
         ) : Sheet
         class Shape(val current: VideoScale, val onPick: (VideoScale) -> Unit) : Sheet
+
+        /** 3D video; [onChange] answers with what took effect, which a refusal leaves as it was. */
+        class Stereo(val current: Stereo3d, val tagged: Stereo3d.Layout?, val onChange: (Stereo3d) -> Pair<String?, Stereo3d>) : Sheet
         class Sleep(val running: String?, val chosen: Int?, val onPick: (Int?) -> Unit) : Sheet
         class Details(val title: String, val lines: List<String>) : Sheet
         class Bookmarks(val actions: BookmarkSheetActions) : Sheet
@@ -131,6 +134,15 @@ class PlayerSheets(
 
     fun showShape(current: VideoScale, onPick: (VideoScale) -> Unit) {
         sheet.value = Sheet.Shape(current, onPick)
+    }
+
+    /**
+     * 3D video's page: every choice takes effect at once and the page stays up, so the viewer
+     * can try the glasses colours against the picture. [tagged] is what the file's name says.
+     * [onChange] answers with why 3D could not come on (or null) and the state in force.
+     */
+    fun showStereo(current: Stereo3d, tagged: Stereo3d.Layout?, onChange: (Stereo3d) -> Pair<String?, Stereo3d>) {
+        sheet.value = Sheet.Stereo(current, tagged, onChange)
     }
 
     /** [running] is the running timer's detail, [chosen] the length it was started with. */
@@ -200,6 +212,22 @@ class PlayerSheets(
                         skipping = on
                         shown.onSkipSilence(on)
                     },
+                )
+            }
+            is Sheet.Stereo -> {
+                var stereo by remember(shown) { mutableStateOf(shown.current) }
+                var refused by remember(shown) { mutableStateOf<String?>(null) }
+                StereoSheet(
+                    current = stereo,
+                    tagged = shown.tagged,
+                    refused = refused,
+                    onChange = {
+                        val (why, now) = shown.onChange(it)
+                        refused = why
+                        stereo = now
+                    },
+                    onDismiss = ::close,
+                    onClose = ::close,
                 )
             }
             is Sheet.Shape -> ShapeSheet(
@@ -550,6 +578,92 @@ internal fun ShapeSheet(current: VideoScale, onPick: (VideoScale) -> Unit, onDis
             }
         }
         FocusOnOpen(focus)
+    }
+}
+
+/**
+ * 3D video's page: how the file keeps its two pictures (Off first), the glasses, and the eye swap.
+ * Each line acts at once and the page stays up. With nothing chosen yet, the layout the file's
+ * name declares ([tagged]) is the one focus lands on and is marked as found. A glasses colour
+ * picked while 3D is off is kept for when a layout is chosen. [refused] is why the last choice
+ * could not come on (an HDR video, the app's own decoder), said where the note was.
+ */
+@Composable
+internal fun StereoSheet(
+    current: Stereo3d,
+    tagged: Stereo3d.Layout?,
+    refused: String?,
+    onChange: (Stereo3d) -> Unit,
+    onDismiss: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val s = LocalStrings.current
+    val touch = isTouch()
+    val focus = remember { FocusRequester() }
+    val focusOn = if (current.on) current.layout else tagged ?: Stereo3d.Layout.Off
+    ChoiceSheet(title = s.playerStereo, note = refused ?: s.playerStereoNote, onDismiss = onDismiss, onClose = onClose, ignoreRelease = !touch, fullScreen = true) {
+        ChoiceList {
+            com.tmplayer.ui.components.ChoiceSection(s.playerStereoLayout)
+            Stereo3d.Layout.entries.forEach { layout ->
+                val found = layout == tagged && !current.on
+                ChoiceLine(
+                    title = stereoLayoutLabel(layout),
+                    detail = when (layout) {
+                        Stereo3d.Layout.Off -> s.playerStereoOffDetail
+                        Stereo3d.Layout.SideBySide -> s.playerStereoSideBySideDetail
+                        Stereo3d.Layout.TopBottom -> s.playerStereoTopBottomDetail
+                        Stereo3d.Layout.RowInterleaved -> s.playerStereoRowsDetail
+                        Stereo3d.Layout.ColumnInterleaved -> s.playerStereoColumnsDetail
+                    }.let { if (found) s.commonWithDetail(it, s.playerStereoFoundShort) else it },
+                    selected = layout == current.layout,
+                    modifier = if (layout == focusOn) Modifier.focusRequester(focus) else Modifier,
+                ) { onChange(current.copy(layout = layout)) }
+            }
+            com.tmplayer.ui.components.ChoiceSection(s.playerStereoGlasses)
+            Stereo3d.View.entries.forEach { view ->
+                ChoiceLine(
+                    title = stereoViewLabel(view),
+                    detail = when (view) {
+                        Stereo3d.View.OneEye -> s.playerStereoOneEyeDetail
+                        Stereo3d.View.Vr -> s.playerStereoVrDetail
+                        else -> null
+                    },
+                    selected = view == current.view,
+                ) { onChange(current.copy(view = view)) }
+            }
+            // Under the glasses: a file kept right eye first looks inside out through them.
+            ChoiceLine(
+                title = s.playerStereoSwap,
+                detail = s.playerStereoSwapDetail,
+                selected = current.swapEyes,
+                enabled = current.on,
+            ) { onChange(current.copy(swapEyes = !current.swapEyes)) }
+        }
+        FocusOnOpen(focus)
+    }
+}
+
+@Composable
+private fun stereoLayoutLabel(layout: Stereo3d.Layout): String {
+    val s = LocalStrings.current
+    return when (layout) {
+        Stereo3d.Layout.Off -> s.commonOff
+        Stereo3d.Layout.SideBySide -> s.playerStereoSideBySide
+        Stereo3d.Layout.TopBottom -> s.playerStereoTopBottom
+        Stereo3d.Layout.RowInterleaved -> s.playerStereoRows
+        Stereo3d.Layout.ColumnInterleaved -> s.playerStereoColumns
+    }
+}
+
+@Composable
+private fun stereoViewLabel(view: Stereo3d.View): String {
+    val s = LocalStrings.current
+    return when (view) {
+        Stereo3d.View.RedCyan -> s.playerStereoRedCyan
+        Stereo3d.View.GreenMagenta -> s.playerStereoGreenMagenta
+        Stereo3d.View.YellowBlue -> s.playerStereoYellowBlue
+        Stereo3d.View.OneEye -> s.playerStereoOneEye
+        Stereo3d.View.Vr -> s.playerStereoVr
     }
 }
 

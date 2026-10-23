@@ -127,8 +127,8 @@ object MediaText {
         if (items.size < MIN_REPEATS) return emptySet()
         val counts = HashMap<String, Int>()
         for (item in items) {
-            item.caption.lineSequence().map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
-                .forEach { counts[it] = (counts[it] ?: 0) + 1 }
+            // Read once per item ([MediaItem.captionLines]): every listing and build of Home counts them.
+            item.captionLines.forEach { counts[it] = (counts[it] ?: 0) + 1 }
         }
         val needed = maxOf(MIN_REPEATS, (items.size * REPEAT_SHARE).toInt())
         return counts.filterValues { it >= needed }.keys
