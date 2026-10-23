@@ -1330,7 +1330,7 @@ fun SettingsScreen(
                             title = s.settingsWatchNext,
                             modifier = Modifier.focusRequester(landing),
                             subtitle = if (watchNextOn) s.settingsWatchNextOn else s.settingsWatchNextOff,
-                            icon = TmIcons.Home,
+                            icon = TmIcons.History,
                             checked = watchNextOn,
                             onToggle = {
                                 val turningOff = watchNextOn
