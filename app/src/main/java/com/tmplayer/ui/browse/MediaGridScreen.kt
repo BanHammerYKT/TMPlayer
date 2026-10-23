@@ -476,7 +476,7 @@ fun MediaGridScreen(
 
     // The video whose page is open (nothing while none is), over the pages "More like this" was taken from, so Back
     // walks back through them before it closes the page.
-    val details = remember(chatId) { DetailBackStack<MediaItem>({ it }) }
+    val details = rememberDetailBackStack<MediaItem>(chatId, itemOf = { it }, rebuild = { item, _ -> item })
     // The listing as last arranged, shows folded together: where an open show is looked up again
     // after the phone is turned and the activity made anew.
     var shelfShown by remember(chatId) { mutableStateOf<List<ShelfEntry>>(emptyList()) }

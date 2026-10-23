@@ -1,13 +1,19 @@
 package com.tmplayer.ui.browse
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import com.tmplayer.data.MediaItem
+import com.tmplayer.data.Td
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -82,8 +88,8 @@ const val RETURN_FOCUS_WAIT_MS = 1_500L
  * - [turn] changes the page showing in place, for a copy of the same film picked from its list.
  * - [back] takes the top page off; false when that was the last, so the page closes.
  *
- * Plain state, nothing saved: a host that loses its composition (an activity recreated) starts
- * with no page open, as it did before there was a stack.
+ * Plain state; [rememberDetailBackStack] keeps the pages across the host's activity being made
+ * anew.
  */
 @Stable
 class DetailBackStack<T : Any>(
@@ -137,6 +143,11 @@ class DetailBackStack<T : Any>(
         entries = emptyList()
     }
 
+    /** The pages put back as they were, for [rememberDetailBackStack]; ignored once a page is open. */
+    fun restore(pages: List<DetailEntry<T>>) {
+        if (entries.isEmpty()) entries = pages.takeLast(cap)
+    }
+
     companion object {
         /** Pages kept at most: enough to walk back a long way, few enough to hold little. */
         const val MAX_PAGES = 10
@@ -146,3 +157,54 @@ class DetailBackStack<T : Any>(
             a.id == b.id || a.versions.any { it.id == b.id } || b.versions.any { it.id == a.id }
     }
 }
+
+/**
+ * A [DetailBackStack] whose pages come back when the host's activity is made anew while the player
+ * is up: a 1 GB TV reclaims the screen under the player, and so does Android's "Don't keep
+ * activities", and Back from the video then landed on the list instead of the video's page
+ * (2026-10-23). The pages are saved as their messages (with [labelOf], the chat's name where the
+ * host shows one) and read again from Telegram ([Td.refreshMedia]), so a restored page is the
+ * video as Telegram has it now; the copies a list had folded with it come back with the list.
+ *
+ * Nothing is restored over a page opened in the meantime, and a message that is gone is left out.
+ */
+@Composable
+fun <T : Any> rememberDetailBackStack(
+    vararg inputs: Any?,
+    itemOf: (T) -> MediaItem,
+    labelOf: (T) -> String = { "" },
+    rebuild: (MediaItem, String) -> T,
+): DetailBackStack<T> {
+    val saved = rememberSaveable(*inputs) { mutableStateOf("") }
+    val stack = remember(*inputs) { DetailBackStack(itemOf) }
+    val label by rememberUpdatedState(labelOf)
+    val make by rememberUpdatedState(rebuild)
+    LaunchedEffect(stack) {
+        val lines = saved.value.lines().filter { it.isNotBlank() }
+        if (lines.isNotEmpty() && stack.entries.isEmpty()) {
+            withTimeoutOrNull(DETAIL_RESTORE_WAIT_MS) { Td.connected.first { it } }
+            val pages = lines.mapNotNull { line ->
+                val parts = line.split(FIELD)
+                val ids = parts.getOrNull(0)?.split(':') ?: return@mapNotNull null
+                val chatId = ids.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
+                val messageId = ids.getOrNull(1)?.toLongOrNull() ?: return@mapNotNull null
+                val item = runCatching { Td.refreshMedia(chatId, messageId) }.getOrNull() ?: return@mapNotNull null
+                DetailEntry(make(item, parts.getOrNull(2).orEmpty()), parts.getOrNull(1) ?: item.id)
+            }
+            stack.restore(pages)
+        }
+        snapshotFlow { stack.entries }.collect { entries ->
+            saved.value = entries.joinToString("\n") { entry ->
+                listOf(itemOf(entry.page).id, entry.openedAs, label(entry.page))
+                    .joinToString(FIELD) { it.replace('\n', ' ').replace(FIELD, " ") }
+            }
+        }
+    }
+    return stack
+}
+
+/** Between a saved page's message, the tile it was opened as and its label. */
+private const val FIELD = "\t"
+
+/** How long a restored stack waits for Telegram before giving up on its pages. */
+private const val DETAIL_RESTORE_WAIT_MS = 10_000L

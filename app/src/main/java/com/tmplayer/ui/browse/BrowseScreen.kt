@@ -360,7 +360,7 @@ internal fun BrowseScreen(
     var confirmClearFavorites by remember { mutableStateOf(false) }
     // The video whose detail panel is open, with its chat's name, from Home or the search, over
     // the pages "More like this" was taken from, so Back walks back through them.
-    val details = remember { DetailBackStack<Pair<MediaItem, String>>({ it.first }) }
+    val details = rememberDetailBackStack<Pair<MediaItem, String>>(itemOf = { it.first }, labelOf = { it.second }, rebuild = { item, chat -> item to chat })
     // The search across every chat (CP73): the phone's search page and the television's.
     val search: GlobalSearchViewModel = viewModel(
         key = "global-search",
