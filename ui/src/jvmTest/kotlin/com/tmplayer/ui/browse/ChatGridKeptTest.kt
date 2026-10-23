@@ -70,4 +70,14 @@ class ChatGridKeptTest {
         assertTrue(warm.state.value is UiState.Content)
         assertEquals(140 to 12, warm.restoredScroll)
     }
+
+    @Test
+    fun `videos hidden by the size limits are told once per opening of the chat`() {
+        val model = MediaListViewModel(chatId, minSizeBytes = 100, maxSizeBytes = Long.MAX_VALUE)
+        assertEquals("the settled listing's count, for one message", 100, model.hiddenNotice.value)
+        model.hiddenNoticeShown()
+        assertEquals("shown, and not raised again by the same opening", 0, model.hiddenNotice.value)
+        val wide = MediaListViewModel(chatId, minSizeBytes = 0, maxSizeBytes = Long.MAX_VALUE)
+        assertEquals("nothing hidden, nothing to say", 0, wide.hiddenNotice.value)
+    }
 }

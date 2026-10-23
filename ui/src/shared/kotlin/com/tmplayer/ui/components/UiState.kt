@@ -32,7 +32,6 @@ sealed interface UiState<out T> {
     ) : UiState<Nothing> {
         /** The picture to draw: the state's own, or the one its action stands for. */
         val picture: ImageVector get() = icon ?: when (action) {
-            StateAction.ShowHidden -> TmIcons.FilterHorizontal
             StateAction.KeepLooking -> TmIcons.Search
             StateAction.SearchAllChats -> TmIcons.SearchRemove
             StateAction.Refresh -> TmIcons.Refresh
@@ -48,9 +47,6 @@ sealed interface UiState<out T> {
  * compares equal to itself, and each screen decides what the button does.
  */
 enum class StateAction {
-    /** Lift the size limits for this listing, so the videos they hid come into view. */
-    ShowHidden,
-
     /** Ask again: the scaffold's ordinary retry. */
     KeepLooking,
 
@@ -66,7 +62,6 @@ enum class StateAction {
 
     /** The button's words. */
     val label: String get() = when (this) {
-        ShowHidden -> L.commonShowHidden
         KeepLooking -> L.commonKeepLooking
         SearchAllChats -> L.searchAllChats
         Refresh -> L.commonRefresh

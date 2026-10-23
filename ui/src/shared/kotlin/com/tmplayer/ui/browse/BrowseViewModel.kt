@@ -708,24 +708,6 @@ class MediaListViewModel(
      */
     val searching: StateFlow<Boolean> = _searching.asStateFlow()
 
-    /**
-     * Set by [showHidden]: the viewer asked to see what the size limits hid, for this chat and for
-     * as long as it stays open. The limits in Settings are not touched.
-     */
-    private var showAllSizes: Boolean
-        get() = _allSizes.value
-        set(value) {
-            _allSizes.value = value
-        }
-
-    private val _allSizes = MutableStateFlow(false)
-
-    /**
-     * Whether this chat is listed past the size limits for now ([showHidden]), for the Size limits
-     * group of the Sort and filter menu.
-     */
-    val allSizes: StateFlow<Boolean> = _allSizes.asStateFlow()
-
     /** What the viewer typed. Kept whole, because it is what results are ranked against. */
     private var query = ""
 
@@ -739,11 +721,46 @@ class MediaListViewModel(
     private val _sizeHidden = MutableStateFlow(0)
 
     /**
-     * How many videos the size limits have kept out of the pages read so far: the line over the
-     * listing that says so, with Show hidden videos, and the count in the Sort and filter menu.
-     * Always 0 during a search, which ignores the limits.
+     * How many videos the size limits have kept out of the pages read so far, the count behind
+     * [hiddenNotice] and the empty state. Always 0 during a search, which ignores the limits.
      */
     val sizeHidden: StateFlow<Int> = _sizeHidden.asStateFlow()
+
+    /** Set once [hiddenNotice] has had something to say for this opening of the chat. */
+    private var toldHidden = false
+
+    private val _hiddenNotice = MutableStateFlow(0)
+
+    /**
+     * How many videos the size limits hid, for a one-off message that says so and points to
+     * Settings, where the limits are changed. Raised once per opening of the chat, when a listing
+     * without a search first settles with videos hidden, and never again as more pages add to the
+     * count. Kept here rather than in the screen, so turning the phone does not say it twice; the
+     * screen calls [hiddenNoticeShown] once it has. 0 means nothing to say.
+     */
+    val hiddenNotice: StateFlow<Int> = _hiddenNotice.asStateFlow()
+
+    /** The screen has shown [hiddenNotice]. */
+    fun hiddenNoticeShown() {
+        _hiddenNotice.value = 0
+    }
+
+    /**
+     * Raises [hiddenNotice] the first time a listing of the whole chat settles with videos left out
+     * by the size limits. An empty listing already says so in its own words, so it is not told
+     * twice; a search ignores the limits.
+     */
+    private fun watchHidden() {
+        viewModelScope.launch {
+            _state.collect { state ->
+                if (toldHidden || query.isNotBlank() || state !is UiState.Content) return@collect
+                val hidden = hiddenBySize
+                if (hidden <= 0) return@collect
+                toldHidden = true
+                _hiddenNotice.value = hidden
+            }
+        }
+    }
 
     private val _selfDestructing = MutableStateFlow(0)
 
@@ -803,6 +820,7 @@ class MediaListViewModel(
         }
         loadTopics()
         followChanges()
+        watchHidden()
         // Nothing but the videos is listed over a chat's grid any more (user, 2026-10-22: TMPlayer
         // plays videos): its audio, its round video messages and its pinned post (CP81) are not
         // fetched, so no request is spent on them and every platform's grid starts with the videos.
@@ -935,7 +953,7 @@ class MediaListViewModel(
 
     /** The size limits for a live post, as [keep] applies them to a page, without the search ranking. */
     private fun keepLive(items: List<MediaItem>): List<MediaItem> {
-        if (items.isEmpty() || showAllSizes) return items
+        if (items.isEmpty()) return items
         val split = SizeFilter.split(items, minSizeBytes, maxSizeBytes) { it.sizeBytes }
         hiddenBySize += split.hidden
         return split.kept
@@ -984,23 +1002,8 @@ class MediaListViewModel(
         }
     }
 
-    /** The "Show hidden videos" beside "N videos hidden by the size limits", and All sizes in the menu. */
-    fun showHidden() {
-        if (showAllSizes) return
-        showAllSizes = true
-        load(preserveContent = true)
-    }
-
-    /** Within the size limits in the menu: the chat listed by the limits in Settings again. */
-    fun keepSizeLimits() {
-        if (!showAllSizes) return
-        showAllSizes = false
-        load(preserveContent = true)
-    }
-
     /** The button under an empty listing. */
     fun act(action: StateAction) = when (action) {
-        StateAction.ShowHidden -> showHidden()
         StateAction.KeepLooking -> keepLooking()
         StateAction.Refresh -> load()
         // Leaves the chat for the search across all of them: the screen does that, with [query].
@@ -1242,7 +1245,6 @@ class MediaListViewModel(
         // A search names the video the viewer is after, so the size limits stand aside for it: an
         // episode a little smaller than its neighbours is exactly the one a viewer goes looking for.
         if (query.isNotBlank()) return Fuzzy.rank(items, query) { it.searchText }
-        if (showAllSizes) return items
         val split = SizeFilter.split(items, minSizeBytes, maxSizeBytes) { it.sizeBytes }
         hiddenBySize += split.hidden
         return split.kept
@@ -1346,17 +1348,20 @@ class MediaListViewModel(
      * Why this chat is showing nothing, in the terms the viewer can do something about.
      *
      * [reachedEnd] false means the walk back through the chat gave up before its start, so the
-     * honest answer is "nothing yet" with a way to keep going, unless the size limits are what
-     * emptied it, in which case showing what they hid is the better button.
+     * honest answer is "nothing yet" with a way to keep going. When the size limits are what
+     * emptied it, it says so and points to Settings, where they are changed.
      */
     /** [emptyState]: with nothing listed over the videos, an empty chat always says why. */
     private fun nothingFound(reachedEnd: Boolean = true): UiState<MediaListState> = emptyState(reachedEnd)
 
     private fun emptyState(reachedEnd: Boolean = true): UiState.Empty {
         // Say which knob is hiding things, rather than claiming the chat is empty when it is the
-        // filter doing the work, and offer to lift it on the spot rather than send the viewer to
-        // Settings.
-        val hidden = if (query.isBlank() && hiddenBySize > 0) L.browseHiddenBySize(hiddenBySize) else null
+        // filter doing the work, and where that knob is: the size limits live in Settings only.
+        val hidden = if (query.isBlank() && hiddenBySize > 0) {
+            "${L.browseHiddenBySize(hiddenBySize)} ${L.browseSizeLimitsInSettings}"
+        } else {
+            null
+        }
         // Inside a topic, the empty answer names it: "nothing here" in a group of ten sections
         // reads as the whole group being empty.
         val topic = _topics.value?.nameOf(topicId)
@@ -1364,9 +1369,9 @@ class MediaListViewModel(
             // The next step is the same words across every chat, where the video may well be.
             query.isNotBlank() && topic != null -> UiState.Empty(L.gridTopicNoMatch(topic, query), StateAction.SearchAllChats, icon = TmIcons.SearchRemove)
             query.isNotBlank() -> UiState.Empty(L.browseNoMatch(query), StateAction.SearchAllChats, icon = TmIcons.SearchRemove)
-            !reachedEnd && hidden != null -> UiState.Empty("$STILL_MORE_TO_SEARCH\n\n$hidden", StateAction.ShowHidden)
+            !reachedEnd && hidden != null -> UiState.Empty("$STILL_MORE_TO_SEARCH\n\n$hidden", StateAction.KeepLooking, icon = TmIcons.FilterHorizontal)
             !reachedEnd -> UiState.Empty(STILL_MORE_TO_SEARCH, StateAction.KeepLooking)
-            hidden != null -> UiState.Empty("${noVideosWithin(minSizeBytes, maxSizeBytes)}\n\n$hidden", StateAction.ShowHidden)
+            hidden != null -> UiState.Empty("${noVideosWithin(minSizeBytes, maxSizeBytes)}\n\n$hidden", icon = TmIcons.FilterHorizontal)
             topic != null -> UiState.Empty(L.gridTopicEmpty(topic))
             else -> UiState.Empty(L.browseNoPlayableVideos)
         }
