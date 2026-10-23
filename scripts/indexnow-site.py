@@ -6,7 +6,7 @@ Naver (and through Bing, ChatGPT search and Copilot) hear about a changed page w
 instead of on their next crawl. Google does not take part and reads the sitemap.
 
 A page counts as changed when its entry in site/src/data/lastmod.json is new or has a new date
-between the two commits: CLAUDE.md asks for that date to move whenever the page's content does,
+between the two commits: site/AGENTS.md asks for that date to move whenever the page's content does,
 so it is the one signal that already means "this page changed" and nothing else. A translation
 catalog that changed counts every page in that language. Each English page brings its
 translations along, read from the live sitemap's hreflang alternates, so the language list here

@@ -15,7 +15,7 @@ pnpm -C site build      # writes site/dist/
 | Path | What it is |
 |---|---|
 | `src/pages/[...lang]/` | the localized pages; each renders in English at `/` and once per published language (`/es/`, `/zh-tw/`, ...) |
-| `src/pages/<page>/`, `src/pages/404.astro` | the English-only pages (legal, privacy, security, signing, support, changelog) |
+| `src/pages/<page>/`, `src/pages/404.astro` | the English-only pages (legal, privacy, security, signing, support, changelog, and the one-app comparisons in `alternatives/[slug].astro`) |
 | `src/pages/sitemap.xml.ts`, `src/pages/changelog/feed.xml.ts` | the sitemap and the release feed |
 | `integrations/markdown-twins.mjs` | after the build, the Markdown twin of every English page and `llms-full.txt` (below) |
 | `src/layouts/Base.astro` | `<html>`, the whole `<head>` (SEO, Open Graph, hreflang), the notice bar and the scripts |
@@ -91,3 +91,36 @@ the picker, the hreflang alternates and the sitemap once the catalog is complete
 python3 scripts/site-i18n-check.py   # catalogs against the pages and app.js (after a build)
 python3 scripts/site-links.py        # every internal link in dist/ resolves, every English page has its twin
 ```
+
+## Performance
+
+Lighthouse runs locally against headless Chromium, on the home page, `/features/` and
+`/download/`, mobile and desktop, one at a time (in parallel they slow each other down). Against
+the live site, or a local build served by `pnpm -C site preview` (which sends none of
+`vercel.json`'s headers, so the cache audit only means something live):
+
+```sh
+export CHROME_PATH=/usr/bin/chromium-browser
+for page in "" features/ download/; do
+  npx -y lighthouse@12.8.2 "https://tmplayer.org/$page" --quiet \
+    --chrome-flags="--headless=new --no-sandbox --disable-gpu" \
+    --form-factor=mobile --output=json --output-path="lh-${page%/}-mobile.json"
+  # desktop: the same with --preset=desktop
+done
+```
+
+Keep the reports out of the repository. Reading them:
+
+- Each run spends GitHub API calls (60 an hour per address). Once they run out the download page
+  falls back to `latest.json` and logs a 403, so check `curl -s https://api.github.com/rate_limit`
+  first. Locally `/_vercel/insights/script.js` is a 404, which costs Best Practices a few points
+  the live site does not lose.
+- "Improve image delivery" ignores the screen's pixel ratio. A srcset is right when a copy just
+  covers the drawn width times the ratio (Lighthouse's phone is 412 px at 1.75x). Widths are in
+  `src/data/shot-widths.json`, `sizes` in `src/components/shot-sizes.ts`, new copies come from
+  `scripts/site-shot-variants.py`.
+- A layout shift on `/download/` usually means something above the platform list changed after
+  the first paint: a font weight that is not preloaded, or a note app.js shows once GitHub answers.
+
+The audit of 2026-10-18 brought every page to 100 for Performance, Accessibility and SEO on a
+local build, mobile and desktop (the median of three interleaved runs).

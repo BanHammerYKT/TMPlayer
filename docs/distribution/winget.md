@@ -1,123 +1,77 @@
 # winget (Windows Package Manager)
 
-Status: draft manifests for 1.24.0 ready, nothing submitted. The three files are in [winget/](winget/).
+Status: **not on winget yet.** The first version has to be submitted by hand (U13, on Windows).
+After that the release job sends every new version by itself. The hand-written manifests in
+[winget/](winget/) are from 1.24.0 and must be regenerated for the current release at submission.
 
-## What gets submitted
+`winget install TMPlayer.TMPlayer` matters because winget fetches the MSI itself, so the file has no
+browser download mark and SmartScreen does not stop the unsigned installer.
+
+## The package
 
 A pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) that adds:
 
 ```
-manifests/d/dracu-lah/TMPlayer/1.24.0/dracu-lah.TMPlayer.yaml
-manifests/d/dracu-lah/TMPlayer/1.24.0/dracu-lah.TMPlayer.installer.yaml
-manifests/d/dracu-lah/TMPlayer/1.24.0/dracu-lah.TMPlayer.locale.en-US.yaml
+manifests/t/TMPlayer/TMPlayer/<version>/TMPlayer.TMPlayer.yaml
+manifests/t/TMPlayer/TMPlayer/<version>/TMPlayer.TMPlayer.installer.yaml
+manifests/t/TMPlayer/TMPlayer/<version>/TMPlayer.TMPlayer.locale.en-US.yaml
 ```
 
-- **PackageIdentifier `dracu-lah.TMPlayer`.** winget's convention is `Publisher.Package`, and the
-  folder is `manifests/<first letter of the publisher, lower case>/<Publisher>/<Package>/<version>`.
-  Hyphens are allowed in the publisher part. No package by this publisher exists yet (checked
-  `manifests/d/dracu-lah`, 404). The identifier is permanent once merged, so decide now; an
-  alternative is `TMPlayer.TMPlayer`, matching the MSI's Manufacturer, but `dracu-lah.TMPlayer`
-  matches the GitHub account that owns the release URLs, which is what reviewers look at.
-- **Schema 1.12.0**, the current one, which is also what `wingetcreate` writes. The three files
-  validate against the 1.12.0 JSON schemas from `microsoft/winget-cli`.
+- **PackageIdentifier `TMPlayer.TMPlayer`.** winget's convention is `Publisher.Package`, and the
+  publisher matches the MSI's Manufacturer (`vendor = "TMPlayer"`), which is what Apps and Features
+  shows. The identifier is permanent once merged, and the release job already uses it.
+- **Schema 1.12.0**, the current one, which `wingetcreate` also writes.
 - **PrivacyUrl** is `https://tmplayer.org/privacy/`, in the locale file next to the licence.
-- **InstallerType `msi`, Scope `user`.** The MSI is made by jpackage (Compose Desktop's
-  `packageReleaseMsi`) from the WiX template in `desktop/packaging/windows/main.wxs`, with
-  `perUserInstall = true`, so it installs per user and needs no administrator. It has no
-  `ALLUSERS` property, which is what makes it per user. jpackage MSIs take `/quiet` like any WiX
-  MSI, so winget's silent install works.
-- **ProductCode `{3718F8E0-3706-3384-95B0-E511D72F4561}`**, read from the 1.24.0 MSI itself
-  (downloaded 2026-10-09, sha256 matched `site/public/latest.json` and the GitHub asset digest, Property
-  table parsed). jpackage derives a new
-  ProductCode for every version, so it changes each release; the **UpgradeCode
-  `{6F1D3C0E-2B8A-4B7E-9D2C-7A1E5F4C3B21}`** is the fixed one from `desktop/build.gradle.kts`
-  (`upgradeUuid`) and never changes. winget uses the ProductCode to tell which version is
-  installed, so it must be right for each version.
-- **InstallerSha256** is `5D1CD29C...FE7715`, the same hash as `site/public/latest.json`, upper case as
-  winget writes it.
-- **Publisher in Apps and Features is `TMPlayer`** (the MSI's Manufacturer, from `vendor =
-  "TMPlayer"`), while the manifest's `Publisher` is `dracu-lah`. That is allowed; the
-  `AppsAndFeaturesEntries` block tells winget how the installed program names itself.
+- **InstallerType `msi`, Scope `user`.** The MSI is made by jpackage (`packageReleaseMsi`) from the
+  WiX template in `desktop/packaging/windows/main.wxs`, with `perUserInstall = true`, so it needs
+  no administrator. jpackage MSIs take `/quiet`, so winget's silent install works.
+- **ProductCode** changes with every version (jpackage derives a new one), so it is read from the
+  MSI being submitted. The **UpgradeCode `{6F1D3C0E-2B8A-4B7E-9D2C-7A1E5F4C3B21}`** is fixed
+  (`upgradeUuid` in `desktop/build.gradle.kts`).
+- **InstallerSha256** is the hash in `site/public/latest.json`, upper case as winget writes it.
 
-### How to read the ProductCode yourself
+To read the ProductCode yourself: `msiinfo export TMPlayer-<v>-windows-x64.msi Property | grep
+ProductCode` (msitools, Linux), or let `wingetcreate` fill it in.
 
-Any of these, on the MSI of the version being submitted:
+## First submission (U13, by hand)
 
-- Linux, msitools: `msiinfo export TMPlayer-<v>-windows-x64.msi Property | grep ProductCode`
-- Windows PowerShell:
-  ```powershell
-  $i = New-Object -ComObject WindowsInstaller.Installer
-  $db = $i.GetType().InvokeMember('OpenDatabase','InvokeMethod',$null,$i,@((Resolve-Path .\TMPlayer-<v>-windows-x64.msi).Path,0))
-  $v = $db.GetType().InvokeMember('OpenView','InvokeMethod',$null,$db,@("SELECT Value FROM Property WHERE Property='ProductCode'"))
-  $v.GetType().InvokeMember('Execute','InvokeMethod',$null,$v,$null)
-  $r = $v.GetType().InvokeMember('Fetch','InvokeMethod',$null,$v,$null)
-  $r.GetType().InvokeMember('StringData','GetProperty',$null,$r,1)
-  ```
-- Or let `wingetcreate` do it: it opens the MSI and fills in ProductCode, UpgradeCode, Scope and
-  the hash by itself.
-
-## Submitting by hand
-
-1. Fork `microsoft/winget-pkgs`, add the three files from [winget/](winget/) at the path above.
-2. Optional local check on Windows: `winget validate --manifest <folder>` and
-   `winget install --manifest <folder>` (needs `winget settings --enable LocalManifestFiles` from
-   an elevated prompt).
-3. Open the pull request. The bots install the MSI in a sandbox, run it through Defender and
-   SmartScreen style checks, and label the PR. Being unsigned is not a blocker for winget, but a
-   new, unsigned MSI is sometimes held for manual review.
-
-## Submitting with wingetcreate (simpler)
+On Windows, with the MSI of the current release:
 
 ```powershell
 winget install Microsoft.WingetCreate
-wingetcreate new https://github.com/dracu-lah/TMPlayer/releases/download/v1.24.0/TMPlayer-1.24.0-windows-x64.msi
+wingetcreate token --store
+wingetcreate new https://github.com/dracu-lah/TMPlayer/releases/download/v<v>/TMPlayer-<v>-windows-x64.msi
 ```
 
-It downloads the MSI, reads it, and asks for the identifier (`dracu-lah.TMPlayer`), the publisher,
-name, licence and description; the answers are in the locale file here. `wingetcreate new` has
-no `--submit` flag: it asks at the end whether to submit, and on yes it signs in to GitHub (a
-browser prompt, or a token in the `WINGET_CREATE_GITHUB_TOKEN` environment variable), forks
-winget-pkgs and opens the PR itself.
+`wingetcreate new` reads the MSI (ProductCode, UpgradeCode, Scope, hash) and asks for the rest:
+identifier `TMPlayer.TMPlayer`, publisher `TMPlayer`, name, licence and description, whose answers
+are in the locale file in [winget/](winget/). It has no `--submit` flag: it asks at the end, then
+forks winget-pkgs and opens the PR. To submit corrected hand-written files instead:
+`wingetcreate submit --prtitle "New package: TMPlayer.TMPlayer version <v>" <folder>`.
 
-To submit the three hand-written files here as they are, skip `new` and point `submit` at the
-folder that holds them:
+Optional local check first: `winget validate --manifest <folder>` and `winget install --manifest
+<folder>` (needs `winget settings --enable LocalManifestFiles` from an elevated prompt).
 
-```powershell
-wingetcreate submit docs\distribution\winget
-```
+Then sign the CLA on the PR (`@microsoft-github-policy-service agree`) and answer any
+Needs-Author-Feedback label within 5 days. Being unsigned is not a blocker, but a new unsigned MSI
+is sometimes held for manual review. If a "Telegram" trademark question comes up: the name has no
+"Telegram" in it, the icon is TMPlayer's own, the description says it is unofficial and not
+affiliated, and the package installs the MSI from TMPlayer's own GitHub release. Never replace a
+release file after submitting.
 
-`--submit` exists only on `wingetcreate update`, the command the release job below uses.
+## Every release after that
 
-## Later: every release updates winget by itself
+The `winget` job in `.github/workflows/release.yml` runs after the release is published, using
+`vedantmgoyal9/winget-releaser@v2` with `identifier: TMPlayer.TMPlayer`. It reads the new MSI, so
+the ProductCode and hash fill themselves in, and opens the PR from the token owner's fork of
+winget-pkgs.
 
-Once the first PR is merged, a job in `.github/workflows/release.yml` can follow each release.
-It has to run on Windows, after the release is published:
+- It needs the `WINGET_TOKEN` repository secret: a classic personal access token with
+  `public_repo`, and the fork has to exist. Without the secret the job skips itself.
+- It only updates a package that already exists, so it fails until the first submission above is
+  merged. It is `continue-on-error`, so it never fails the release.
+- It skips a tag that is not the latest release, so winget never moves backwards.
 
-```yaml
-  winget:
-    needs: release            # whatever the job that publishes the GitHub release is called
-    runs-on: windows-latest
-    steps:
-      - name: Submit to winget
-        env:
-          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
-          VERSION: ${{ github.ref_name }}
-        run: |
-          $v = $env:VERSION.TrimStart('v')
-          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
-          .\wingetcreate.exe update dracu-lah.TMPlayer `
-            --version $v `
-            --urls "https://github.com/dracu-lah/TMPlayer/releases/download/v$v/TMPlayer-$v-windows-x64.msi" `
-            --submit
-```
-
-wingetcreate reads the token from the `WINGET_CREATE_GITHUB_TOKEN` environment variable, so it
-never appears on the command line or in the job log. It is a classic personal access token with `public_repo` scope (wingetcreate pushes
-to your fork of winget-pkgs and opens the PR from it); the default `GITHUB_TOKEN` cannot do that.
-`wingetcreate update` re-reads the new MSI, so the new ProductCode and hash are filled in without
-anyone looking them up. The community action `vedantmgoyal9/winget-releaser` does the same job
-if a ready-made action is preferred.
-
-One thing to know: winget and the app's own updater would both offer updates. That is harmless
-(the MSI upgrade replaces the old copy whichever one runs it), but winget only sees a new version
-after its PR is merged, usually a day or so behind.
+winget and the app's own updater both offer updates. That is harmless (the MSI upgrade replaces
+the old copy either way), but winget only sees a new version once its PR is merged, usually a day
+or so later.

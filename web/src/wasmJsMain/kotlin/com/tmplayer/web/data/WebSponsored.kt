@@ -33,7 +33,7 @@ data class WebSponsored(
 )
 
 /**
- * Telegram's sponsored messages in channels, kept shown as its terms ask (CLAUDE.md, "Telegram's
+ * Telegram's sponsored messages in channels, kept shown as its terms ask (AGENTS.md, "Telegram's
  * terms"): loaded with the channel, placed among the videos the way Telegram spaces them, counted
  * as viewed when seen, and a press goes through Telegram before the link opens. The same calls as
  * the apps' SponsoredMessageRepository.

@@ -4,7 +4,7 @@
 Every WebP in site/public/screenshots/ gets a copy at each width that site/src/data/shot-widths.json
 lists for its own width, named <name>-<width>w.webp beside it. Shot.astro reads the same table to
 write the srcset, so the two cannot disagree about which files exist. The originals are never
-touched: each copy is made from the original with the house encoding (CLAUDE.md).
+touched: each copy is made from the original with the house encoding (AGENTS.md).
 
 Only missing copies are made by default. File times cannot say which copies are stale, because a
 checkout gives every file the time of the checkout, so a retaken screenshot is named on the command

@@ -34,7 +34,7 @@ Draft, only if you decide to send something (to @PressBot):
 
 ```
 Hello. TMPlayer is a free, GPL-3.0, unofficial Telegram client built on TDLib that does one
-thing: plays the videos in your chats and channels on Android TV, phones, Windows and Linux,
+thing: plays the videos in your chats and channels on Android TV, phones, Windows, macOS and Linux,
 streaming while they download. It follows the API terms (own api_id, unofficial wording, no
 Telegram logo, sponsored messages shown). If there is ever room for it among the unofficial
 apps on telegram.org/apps, it would help TV users find a safe option.
@@ -51,7 +51,7 @@ Status: draft. Submit at <https://alternativeto.net> (log in, "Add new applicati
 - **Description:**
 
   > TMPlayer is a free and open source video player for the videos in your own Telegram chats
-  > and channels. It runs on Android TV, Fire TV, Android phones, Windows and Linux, and starts
+  > and channels. It runs on Android TV, Fire TV, Android phones, Windows, macOS and Linux, and starts
   > playing within seconds while the file is still downloading; seeking re-aims the download
   > instead of waiting. Sign in on a TV by scanning a QR code with your phone. Pick a chat and
   > only its playable videos appear, as a poster grid with what you were watching first. It plays
@@ -65,7 +65,7 @@ Status: draft. Submit at <https://alternativeto.net> (log in, "Add new applicati
 - **Website:** https://tmplayer.org
 - **Source:** https://github.com/dracu-lah/TMPlayer
 - **License:** Open source (GPL-3.0), Free
-- **Platforms:** Android, Android TV, Windows, Linux, Fire TV (if offered), AppImage
+- **Platforms:** Android, Android TV, Windows, macOS, Linux, Fire TV (if offered), AppImage
 - **Category:** Video and Movies (or Audio and Music, Media Player)
 - **Tags / features:** video-player, media-player, telegram, streaming, android-tv,
   subtitle-support, ad-free, open-source, lightweight, remote-control. Do not pick
@@ -73,7 +73,7 @@ Status: draft. Submit at <https://alternativeto.net> (log in, "Add new applicati
 - **Alternative to** (add TMPlayer as an alternative on each page):
   - Kodi: the TV media centre people try first for this
   - VLC Media Player: the general player people otherwise download Telegram files into
-  - Telegram Desktop: plays Telegram videos on Windows and Linux
+  - Telegram Desktop: plays Telegram videos on Windows, macOS and Linux
   - Tevegram: proprietary Telegram client for Android TV, premium tier
     (`cassian.telegram.ooa.pro` on Google Play)
   - Echogram: proprietary Telegram video player for Android and Android TV
@@ -93,29 +93,30 @@ to claim authorship of an app published on Uptodown" in their support centre).
 - "Add new app", upload `TMPlayer-<version>-universal.apk` (the same signed file as GitHub, so
   users can move between sources without reinstalling).
 - Title: `TMPlayer` (no "Telegram" in the title, per Telegram's API terms). Reuse the fastlane
-  short and full description and the screenshots in `fastlane/metadata/android/en-US/images`.
+  short and full description, and the phone and TV screenshots in `site/public/screenshots/`
+  (as PNG copies if WebP is refused).
 - Category: Video, or Multimedia.
 - Updates are a manual upload per release unless their console offers a GitHub import; check
   when signing up. Weigh that against the release cadence: one more manual step per release.
 - Uptodown shows its own ads on its pages, not in the app. That is fine, but it is one reason to
-  keep GitHub, the site and IzzyOnDroid as the recommended sources.
+  keep GitHub, the site and Obtainium as the recommended sources.
 
 ## XDA Forums
 
 Status: draft thread. Post in XDA's Android apps forum (the "Android Apps and Games" area; pick the
 Android TV or Google TV sub-forum if one is current). XDA's editor takes BBCode.
 
-**Title:** [APP][8.0+][Android TV, phone, Windows, Linux] TMPlayer: stream your Telegram videos while they download (free, open source)
+**Title:** [APP][6.0+][Android TV, Fire TV, phone, Windows, Linux, macOS] TMPlayer: stream your Telegram videos while they download (free, open source)
 
 **Body:**
 
 ```
-[CENTER][IMG]https://raw.githubusercontent.com/dracu-lah/TMPlayer/v1.22.0/site/icon-512.png[/IMG]
+[CENTER][IMG]https://raw.githubusercontent.com/dracu-lah/TMPlayer/main/site/public/icon-512.png[/IMG]
 [SIZE=6][B]TMPlayer[/B][/SIZE]
 Your Telegram videos on the TV, in your hand and on your computer.[/CENTER]
 
 [B]What it is[/B]
-TMPlayer plays the videos in your own Telegram chats and channels. It starts within seconds while the file is still downloading, and seeking re-aims the download instead of waiting for it. One APK for Android TV and phones (Android 8.0 and up), plus Windows and Linux builds.
+TMPlayer plays the videos in your own Telegram chats and channels. It starts within seconds while the file is still downloading, and seeking re-aims the download instead of waiting for it. One APK for Android TV, Fire TV and phones (Android 6.0 and up, Fire OS 6 and up), plus Windows, Linux and macOS (Apple Silicon) builds.
 
 It is an unofficial client built on TDLib. It is not made by or affiliated with Telegram, and you sign in with your own Telegram account.
 
@@ -135,18 +136,19 @@ It is an unofficial client built on TDLib. It is not made by or affiliated with 
 No ads of its own, no analytics, no server in between. Crash reports are sent only if you agree. Telegram's own sponsored messages appear in public channels, as Telegram's API terms require.
 
 [B]Screenshots[/B]
-[IMG]https://raw.githubusercontent.com/dracu-lah/TMPlayer/v1.22.0/site/screenshots/tv-grid.webp[/IMG]
-[IMG]https://raw.githubusercontent.com/dracu-lah/TMPlayer/v1.22.0/site/screenshots/phone-grid.webp[/IMG]
+[IMG]https://raw.githubusercontent.com/dracu-lah/TMPlayer/main/site/public/screenshots/tv-grid.webp[/IMG]
+[IMG]https://raw.githubusercontent.com/dracu-lah/TMPlayer/main/site/public/screenshots/phone-grid.webp[/IMG]
 
 [B]Download[/B]
 [LIST]
-[*]Android TV and phones: [URL=https://github.com/dracu-lah/TMPlayer/releases/latest]universal APK on GitHub[/URL] (about 27 MB)
+[*]Android TV and phones: [URL=https://github.com/dracu-lah/TMPlayer/releases/latest]universal APK on GitHub[/URL] (about 33 MB)
 [*]Windows 10 and 11: MSI on the same page (per user, unsigned, so SmartScreen asks once)
+[*]macOS (Apple Silicon): DMG on the same page
 [*]Linux: AppImage on the same page, or the AUR recipe
 [*]All platforms: [URL=https://tmplayer.org/download/]tmplayer.org/download[/URL]
 [/LIST]
 On a TV: enable network debugging, then [CODE]adb connect <tv-ip>:5555
-adb install TMPlayer-1.22.0-universal.apk[/CODE]
+adb install TMPlayer-<version>-universal.apk[/CODE]
 
 [B]Links[/B]
 Source (GPL-3.0): [URL]https://github.com/dracu-lah/TMPlayer[/URL]
@@ -154,33 +156,14 @@ Website: [URL]https://tmplayer.org[/URL]
 News: [URL]https://t.me/tmplayerapp[/URL]
 Bugs: [URL]https://github.com/dracu-lah/TMPlayer/issues[/URL]
 
-[B]Version[/B] 1.22.0: smaller downloads; the APK is about half its old size.
+[B]Version[/B] <version>: <one line from the release notes>
 ```
 
 Check before posting: XDA sometimes strips WebP previews; if the screenshots do not show, attach
-the PNGs from `fastlane/metadata/android/en-US/images/` instead.
+PNG copies of the same files instead.
 
 ## F-Droid main repository
 
-Status: **not recommended; IzzyOnDroid is the route.** F-Droid builds every app itself from
-source on its build server and signs it with its own key (unless reproducible). For TMPlayer:
-
-- **TDLib** comes as prebuilt `.so` files inside the `tdl-coroutines` artifact. F-Droid's scanner
-  rejects prebuilt native code, so TDLib (a large C++ build) would need building from source as a
-  srclib, and `tdl-coroutines` rebuilt against it.
-- **FFmpeg** audio decoders come prebuilt inside NextLib's `media3ext` artifact; same problem.
-- **Telegram API credentials** are injected from CI secrets. F-Droid has no secrets, so the
-  `api_id` and `api_hash` would have to be public in the F-Droid metadata (Telegram FOSS does
-  this), which you may not want for your own app's id.
-- **Sentry** would likely have to be stripped from the F-Droid build or flagged as Tracking.
-- **The in-app updater** must be disabled in F-Droid builds. Done: building with
-  `-PtmFdroid=true` turns off the update check and its UI and drops `REQUEST_INSTALL_PACKAGES`
-  from the manifest. The recipe passes it as `gradleprops: [tmFdroid=true]`, from the first
-  release after 1.24.0 that contains the switch.
-- **Anti-features:** NonFreeNet at least.
-- **Signing:** an F-Droid signed APK cannot update a GitHub one or the other way round, unless
-  reproducible builds are set up so F-Droid ships your signature.
-
-Every one of these is solvable, but together it is weeks of work and ongoing upkeep for an audience
-that IzzyOnDroid (same F-Droid clients, your own APK, no rebuild) already reaches. Revisit only if
-F-Droid users ask in numbers.
+Status: **on hold.** A recipe was filed (fdroiddata MR 51285) and closed for not following the
+template; the open question is publishing the Telegram `api_id` and `api_hash`, which F-Droid
+needs since it has no secrets. The `-PtmFdroid=true` build (no updater, no Cast) is ready.

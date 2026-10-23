@@ -7,7 +7,7 @@ the Home Screen web app, AirPlay or the lock screen. Those need the devices belo
 
 ## Serving the build to a phone
 
-A phone needs HTTPS for a Service Worker, OPFS and installing the app. From the worktree:
+A phone needs HTTPS for a Service Worker, OPFS and installing the app. From the repository root:
 
 ```sh
 ./gradlew :web:wasmJsBrowserDistribution --max-workers=2

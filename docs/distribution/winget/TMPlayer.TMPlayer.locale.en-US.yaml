@@ -1,10 +1,11 @@
-# Created by hand from the 1.24.0 release. Goes to winget-pkgs at manifests/d/dracu-lah/TMPlayer/1.24.0/
+# Created by hand from the 1.24.0 release; regenerate for the current release before submitting.
+# Goes to winget-pkgs at manifests/t/TMPlayer/TMPlayer/<version>/
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
 
-PackageIdentifier: dracu-lah.TMPlayer
+PackageIdentifier: TMPlayer.TMPlayer
 PackageVersion: 1.24.0
 PackageLocale: en-US
-Publisher: dracu-lah
+Publisher: TMPlayer
 PublisherUrl: https://github.com/dracu-lah
 PublisherSupportUrl: https://github.com/dracu-lah/TMPlayer/issues
 Author: dracu-lah

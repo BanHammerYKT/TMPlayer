@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # tmplayer.org is an Astro site in site/ (docs/ASTRO-MIGRATION.md). Vercel builds it from the
+      # tmplayer.org is an Astro site in site/ (site/README.md). Vercel builds it from the
       # same commit; this builds it first, so a page that does not compile, a catalog key nothing
       # uses or a page using a key en.json lacks, a translation that lost a {placeholder}, or a
       # broken internal link fails here rather than on the live site. pnpm and Node come from

@@ -15,10 +15,10 @@ pages do not say it in so many words **(unverified)**, but an app that installs 
 from somewhere other than the Appstore is a likely rejection, and on an Appstore install it would
 also fight Amazon's own updates (different signature after Amazon re-signs, see below).
 
-Recommendation: submit a build without the updater. CP34 already plans a "store flavor without the
-updater" for Google Play; the same flavor (or a variant of it) is the right file for Amazon. Until
-then, the GitHub `universal.apk` is the only candidate and the submission should wait. This is a
-decision for the user.
+Recommendation: submit a build without the updater. The plan (CP34) makes it an `amazon` variant
+on the F-Droid switch (`-PtmFdroid=true`: no update check, no `REQUEST_INSTALL_PACKAGES`) and
+without Cast, since Fire TV has no Google services. Until it exists, the GitHub `universal.apk` is
+the only candidate and the submission should wait. This is a decision for the user.
 
 ## Text
 
@@ -74,7 +74,7 @@ what it plays.
 
 - **Website:** https://tmplayer.org
 - **Support email:** hello@tmplayer.org (U04 is still open; use whatever address the user prefers)
-- **Privacy policy URL:** https://tmplayer.org/privacy/ (the page in `site/privacy/`)
+- **Privacy policy URL:** https://tmplayer.org/privacy/ (the page in `site/src/pages/privacy/`)
 - **Terms (if asked):** https://tmplayer.org/legal/
 
 ## Pricing and availability
@@ -90,12 +90,12 @@ what it plays.
 
 ## Device targeting
 
-- **minSdk 26** (Android 8.0), targetSdk 35 (`app/build.gradle.kts`). On Amazon devices that is
-  **Fire OS 7 and newer** (Fire OS 7 is Android 9, Fire OS 8 is Android 11). Fire OS 6 (Android
-  7.1) is below the minimum, so the console should exclude those devices by itself.
-- **Fire TV:** Fire TV Stick (2nd gen and later on Fire OS 7+), Stick Lite, Stick 4K, 4K Max,
-  Fire TV Cube, Fire TV Edition and Omni televisions on Fire OS 7 or 8. Not Vega OS devices: they
-  do not run Android apps.
+- **minSdk 23** (Android 6.0), targetSdk 35 (`app/build.gradle.kts`). On Amazon devices that is
+  **Fire OS 6 and newer** (Fire OS 6 is Android 7.1, Fire OS 7 is Android 9, Fire OS 8 is Android
+  11). Fire OS 5 (Android 5.1) is below the minimum, so the console should exclude those devices
+  by itself.
+- **Fire TV:** every Fire TV Stick, Stick Lite, Stick 4K, 4K Max, Fire TV Cube, Fire TV Edition
+  and Omni television on Fire OS 6, 7 or 8. Not Vega OS devices: they do not run Android apps.
 - **No phones.** Amazon closed the Appstore on other makers' Android phones on 2025-08-20; only
   Amazon's own devices remain (checked 2026-10-19,
   <https://developer.amazon.com/docs/app-submission/release-notes.html>).
@@ -155,7 +155,7 @@ and unrestricted access; that is normal for messaging and browser style apps **(
 ## Image assets
 
 Amazon accepts **PNG or JPG only**, not WebP, and the file extension must match the real type. The
-repository keeps every screenshot as WebP (CLAUDE.md), so make PNG copies at submission time and do
+repository keeps every screenshot as WebP (AGENTS.md), so make PNG copies at submission time and do
 not commit them. A script that builds every file below is kept outside the repo; the commands are:
 
 | Asset | Size | Rule | Source |
@@ -198,7 +198,7 @@ Android TV layout Fire TV gets.
 
 - Today: `TMPlayer-<v>-universal.apk` from the GitHub release (arm64-v8a and armeabi-v7a, release
   signed). Fire TV sticks are 32 bit ARM or 64 bit ARM, both covered.
-- Recommended: the store flavor without the updater (see the top of this file), once it exists.
+- Recommended: the `amazon` variant without the updater (see the top of this file), once it exists.
 - Every Amazon update is a manual upload per release in the console. Weigh that against the
   release cadence.
 
@@ -208,7 +208,7 @@ Android TV layout Fire TV gets.
 2. Amazon Developer account (U21).
 3. New app, Android, enter the text above.
 4. Upload the APK; Amazon DRM: No; check the signing step.
-5. Device support: confirm Fire OS 6 devices are excluded; decide on tablets.
+5. Device support: confirm Fire OS 5 devices are excluded; decide on tablets.
 6. Images from the scratch folder, content rating as above, privacy URL.
 7. Reviewer testing instructions.
 8. Submit (the user, not Claude).
