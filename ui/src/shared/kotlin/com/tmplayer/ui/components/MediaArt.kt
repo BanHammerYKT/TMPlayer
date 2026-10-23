@@ -9,7 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,17 +63,32 @@ fun MediaArt(
     var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
     // Not at all when the sharp thumbnail is already in memory: a tile scrolling back into view
     // would decode and hash a preview it never shows.
-    val mini by produceState(
-        initialValue = if (miniThumbnail == null || miniThumbnail.isEmpty() || full != null) NoMini else null,
-        miniThumbnail,
-    ) {
-        if (value === NoMini) return@produceState
-        value = Decoded(withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) })
+    var mini by remember {
+        mutableStateOf(if (miniThumbnail == null || miniThumbnail.isEmpty() || full != null) NoMini else null)
+    }
+    // The bytes [mini] was decoded from. TDLib hands an equal but fresh array with every update of
+    // the message, and the effect below restarts on the array itself; the same picture is not
+    // decoded and hashed again for it, nor is one decoded at all under a sharp thumbnail.
+    val miniSource = remember { MiniSource() }
+    LaunchedEffect(miniThumbnail) {
+        val bytes = miniThumbnail
+        if (bytes == null || bytes.isEmpty()) {
+            if (mini == null) mini = NoMini
+            return@LaunchedEffect
+        }
+        val decoded = mini !== NoMini && mini != null
+        if (decoded && miniSource.bytes?.contentEquals(bytes) == true) return@LaunchedEffect
+        if (full != null && !decoded) return@LaunchedEffect
+        val picture = withContext(Dispatchers.Default) { Thumbnails.mini(bytes) }
+        miniSource.bytes = bytes
+        mini = Decoded(picture)
     }
     // Retried when the connection comes back, but only a tile that still has no thumbnail collects
     // [Td.connected]: TDLib on a stick flaps often, and twenty collectors would mean the effect
-    // restarting under every visible tile at once.
+    // restarting under every visible tile at once. A message with no thumbnail at all has nothing
+    // to wait for.
     LaunchedEffect(thumbnailFileId) {
+        if (thumbnailFileId <= 0) return@LaunchedEffect
         if (full == null) full = Thumbnails.full(thumbnailFileId)
         if (full != null) return@LaunchedEffect
         Td.connected.collectLatest { connected ->
@@ -219,6 +233,11 @@ private fun DrawScope.drawFitted(image: ImageBitmap, filter: FilterQuality) {
 
 /** The inline preview once it has been decoded, [bitmap] null when it would not decode. */
 private class Decoded(val bitmap: ImageBitmap?)
+
+/** The preview's bytes last decoded, held outside snapshot state: only compared, never drawn. */
+private class MiniSource {
+    var bytes: ByteArray? = null
+}
 
 /** A message with no inline preview to decode: known at once, with nothing to wait for. */
 private val NoMini = Decoded(null)

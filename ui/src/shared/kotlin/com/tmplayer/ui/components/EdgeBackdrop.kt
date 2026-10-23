@@ -11,8 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.scale
@@ -121,29 +120,38 @@ fun EdgeBackdrop(
                 // A television paints the page's colour over the picture's edges instead: the
                 // same look on the page's plain ground, without an offscreen layer two thirds of
                 // the screen in size, which a TV stick's GPU filled again with every new picture.
-                val fades = if (Motion.television) Modifier.drawWithContent {
-                    drawContent()
-                    if (wide) {
-                        val across = fadeOut(START_FADE)
-                        drawRect(Brush.horizontalGradient(*(if (rtl) across.reversedStops(ground) else across.inStops(ground))))
-                    }
-                    drawRect(Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops(ground)))
+                // The brushes are made once per size here, not on every draw: the stops, their
+                // arrays and three or four gradients each time the picture was drawn again.
+                val fades = if (Motion.television) Modifier.drawWithCache {
+                    val across = if (wide) {
+                        val stops = fadeOut(START_FADE)
+                        Brush.horizontalGradient(*(if (rtl) stops.reversedStops(ground) else stops.inStops(ground)))
+                    } else null
+                    val foot = Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops(ground))
                     val reach = if (small) FOOT_FADE else (topFadePx / size.height).coerceIn(0f, 1f)
-                    if (reach > 0f) drawRect(Brush.verticalGradient(*fadeOut(reach).inStops(ground)))
+                    val top = if (reach > 0f) Brush.verticalGradient(*fadeOut(reach).inStops(ground)) else null
+                    onDrawWithContent {
+                        drawContent()
+                        if (across != null) drawRect(across)
+                        drawRect(foot)
+                        if (top != null) drawRect(top)
+                    }
                 } else Modifier
                     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                    .drawWithContent {
-                        drawContent()
-                        if (wide) {
-                            val across = fadeOut(START_FADE)
-                            drawRect(
-                                Brush.horizontalGradient(*(if (rtl) across.reversedStops() else across.inStops())),
-                                blendMode = BlendMode.DstIn,
-                            )
-                        }
-                        drawRect(Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops()), blendMode = BlendMode.DstIn)
+                    .drawWithCache {
+                        val across = if (wide) {
+                            val stops = fadeOut(START_FADE)
+                            Brush.horizontalGradient(*(if (rtl) stops.reversedStops() else stops.inStops()))
+                        } else null
+                        val foot = Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops())
                         val reach = if (small) FOOT_FADE else (topFadePx / size.height).coerceIn(0f, 1f)
-                        if (reach > 0f) drawRect(Brush.verticalGradient(*fadeOut(reach).inStops()), blendMode = BlendMode.DstIn)
+                        val top = if (reach > 0f) Brush.verticalGradient(*fadeOut(reach).inStops()) else null
+                        onDrawWithContent {
+                            drawContent()
+                            if (across != null) drawRect(across, blendMode = BlendMode.DstIn)
+                            drawRect(foot, blendMode = BlendMode.DstIn)
+                            if (top != null) drawRect(top, blendMode = BlendMode.DstIn)
+                        }
                     }
                 val place = Modifier.align(if (small) Alignment.CenterEnd else Alignment.TopEnd).then(sized).then(fades)
                 if (picture != null) {
@@ -181,21 +189,21 @@ fun EdgeBackdrop(
         if (cornerShade > 0.dp) {
             val ground = Tone.background
             Box(
-                Modifier.fillMaxSize().drawBehind {
+                Modifier.fillMaxSize().drawWithCache {
                     val corner = Offset(if (rtl) 0f else size.width, 0f)
-                    scale(scaleX = CORNER_STRETCH, scaleY = 1f, pivot = corner) {
-                        drawCircle(
-                            Brush.radialGradient(
-                                0f to ground.copy(alpha = 0.9f),
-                                0.5f to ground.copy(alpha = 0.78f),
-                                0.8f to ground.copy(alpha = 0.32f),
-                                1f to Color.Transparent,
-                                center = corner,
-                                radius = cornerShade.toPx(),
-                            ),
-                            radius = cornerShade.toPx(),
-                            center = corner,
-                        )
+                    val radius = cornerShade.toPx()
+                    val glow = Brush.radialGradient(
+                        0f to ground.copy(alpha = 0.9f),
+                        0.5f to ground.copy(alpha = 0.78f),
+                        0.8f to ground.copy(alpha = 0.32f),
+                        1f to Color.Transparent,
+                        center = corner,
+                        radius = radius,
+                    )
+                    onDrawBehind {
+                        scale(scaleX = CORNER_STRETCH, scaleY = 1f, pivot = corner) {
+                            drawCircle(glow, radius = radius, center = corner)
+                        }
                     }
                 },
             )

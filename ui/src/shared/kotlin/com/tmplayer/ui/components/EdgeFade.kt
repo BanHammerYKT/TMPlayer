@@ -8,7 +8,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.CacheDrawScope
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -30,9 +31,12 @@ import androidx.compose.ui.unit.LayoutDirection
 fun Modifier.edgeFade(state: LazyListState, start: Dp, end: Dp, ground: Color? = null): Modifier =
     if (ground != null) groundFade(state, start, end, ground) else this
         .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-        .drawWithContent {
-            drawContent()
-            drawEdges(state, start, end) { brush, topLeft, size -> drawRect(brush, topLeft, size, blendMode = BlendMode.DstIn) }
+        .drawWithCache {
+            val edges = Edges(this, start, end, mask = true, ground = Color.Black)
+            onDrawWithContent {
+                drawContent()
+                edges.draw(state) { brush, topLeft, size -> drawRect(brush, topLeft, size, blendMode = BlendMode.DstIn) }
+            }
         }
 
 /**
@@ -40,45 +44,60 @@ fun Modifier.edgeFade(state: LazyListState, start: Dp, end: Dp, ground: Color? =
  * margins rather than the row cut out of an offscreen layer, which a television redrew whole on
  * every frame of every scroll.
  */
-private fun Modifier.groundFade(state: LazyListState, start: Dp, end: Dp, ground: Color): Modifier = drawWithContent {
-    drawContent()
-    drawEdges(state, start, end, mask = false, ground = ground) { brush, topLeft, size -> drawRect(brush, topLeft, size) }
+private fun Modifier.groundFade(state: LazyListState, start: Dp, end: Dp, ground: Color): Modifier = drawWithCache {
+    val edges = Edges(this, start, end, mask = false, ground = ground)
+    onDrawWithContent {
+        drawContent()
+        edges.draw(state) { brush, topLeft, size -> drawRect(brush, topLeft, size) }
+    }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.ContentDrawScope.drawEdges(
-    state: LazyListState,
-    start: Dp,
-    end: Dp,
-    mask: Boolean = true,
-    ground: Color = Color.Black,
-    draw: (Brush, Offset, Size) -> Unit,
-) {
-    val startPx = start.toPx()
-    val endPx = end.toPx()
-    val scrolled = if (state.firstVisibleItemIndex > 0) 1f else (state.firstVisibleItemScrollOffset / startPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
-    val back = if (state.canScrollBackward) scrolled else 0f
-    val on = if (state.canScrollForward) 1f else 0f
-    val rtl = layoutDirection == LayoutDirection.Rtl
-    val left = if (rtl) on else back
-    val right = if (rtl) back else on
-    val leftPx = if (rtl) endPx else startPx
-    val rightPx = if (rtl) startPx else endPx
+/**
+ * The two fades for one size of the row. The scroll is read where it is drawn, and a side's
+ * gradient is made again only when how far that side fades has changed: at rest and through most
+ * of a scroll both stay as they are, where every frame of a scroll used to make two.
+ */
+private class Edges(scope: CacheDrawScope, start: Dp, end: Dp, private val mask: Boolean, private val ground: Color) {
+    private val startPx = with(scope) { start.toPx() }
+    private val endPx = with(scope) { end.toPx() }
+    private val rtl = scope.layoutDirection == LayoutDirection.Rtl
+    private val width = scope.size.width
+    private val leftPx = if (rtl) endPx else startPx
+    private val rightPx = if (rtl) startPx else endPx
+    private val leftSize = Size(leftPx, scope.size.height)
+    private val rightSize = Size(rightPx, scope.size.height)
+    private val rightAt = Offset(width - rightPx, 0f)
+
     // As a mask, black keeps the row and clear removes it; drawn over, the ground covers it.
-    val keep = if (mask) Color.Black else ground.copy(alpha = 0f)
-    fun gone(amount: Float) = if (mask) Color.Black.copy(alpha = 1f - amount) else ground.copy(alpha = amount)
-    if (left > 0f && leftPx > 0f) {
-        draw(
-            Brush.horizontalGradient(0f to gone(left), 1f to keep, startX = 0f, endX = leftPx),
-            Offset.Zero,
-            Size(leftPx, size.height),
-        )
-    }
-    if (right > 0f && rightPx > 0f) {
-        draw(
-            Brush.horizontalGradient(0f to keep, 1f to gone(right), startX = size.width - rightPx, endX = size.width),
-            Offset(size.width - rightPx, 0f),
-            Size(rightPx, size.height),
-        )
+    private val keep = if (mask) Color.Black else ground.copy(alpha = 0f)
+
+    private var leftAmount = -1f
+    private var leftBrush: Brush? = null
+    private var rightAmount = -1f
+    private var rightBrush: Brush? = null
+
+    private fun gone(amount: Float) = if (mask) Color.Black.copy(alpha = 1f - amount) else ground.copy(alpha = amount)
+
+    fun draw(state: LazyListState, draw: (Brush, Offset, Size) -> Unit) {
+        val scrolled = if (state.firstVisibleItemIndex > 0) 1f else (state.firstVisibleItemScrollOffset / startPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        val back = if (state.canScrollBackward) scrolled else 0f
+        val on = if (state.canScrollForward) 1f else 0f
+        val left = if (rtl) on else back
+        val right = if (rtl) back else on
+        if (left > 0f && leftPx > 0f) {
+            if (left != leftAmount || leftBrush == null) {
+                leftAmount = left
+                leftBrush = Brush.horizontalGradient(0f to gone(left), 1f to keep, startX = 0f, endX = leftPx)
+            }
+            draw(leftBrush!!, Offset.Zero, leftSize)
+        }
+        if (right > 0f && rightPx > 0f) {
+            if (right != rightAmount || rightBrush == null) {
+                rightAmount = right
+                rightBrush = Brush.horizontalGradient(0f to keep, 1f to gone(right), startX = width - rightPx, endX = width)
+            }
+            draw(rightBrush!!, rightAt, rightSize)
+        }
     }
 }
 
