@@ -171,7 +171,9 @@ internal fun MediaDetailOpened(
                     onDismiss()
                 }
             },
-            onDismiss = onDismiss,
+            // Keep it is a change of mind, not a way out: the page comes back, where it was
+            // opened from. Only the hold menu, which is gone by now, closes with it.
+            onDismiss = { if (asMenu) onDismiss() else confirmingRemove = false },
         )
         return
     }
@@ -194,8 +196,9 @@ internal fun MediaDetailOpened(
                 }
                 onDismiss()
             },
-            onDismiss = onDismiss,
-            onClose = onDismiss,
+            // Backing out of the name leaves the page as it was, rather than closing it too.
+            onDismiss = { if (asMenu) onDismiss() else renaming = false },
+            onClose = { if (asMenu) onDismiss() else renaming = false },
             hint = s.gridRenameHint,
             maxLength = com.tmplayer.data.VideoCorrections.TITLE_MAX,
         )
@@ -213,8 +216,10 @@ internal fun MediaDetailOpened(
             list = list,
             empty = s.detailCommentsNone,
             round = false,
-            // The comments live in the discussion group, whose name the window looks up.
-            onPlay = { video -> onDismiss(); LinkRequests.play(video) },
+            // The comments live in the discussion group, whose name the window looks up. The list
+            // stays under the player, so Back from a comment's video comes back to it, and from
+            // there to the page; only the hold menu goes.
+            onPlay = { video -> if (asMenu) onDismiss(); LinkRequests.play(video) },
             onDismiss = { commentsOpen = false },
         )
         return
@@ -262,11 +267,13 @@ internal fun MediaDetailOpened(
                     onPlay()
                 }
             } }
-            DetailAction.MarkWatched -> { { onDismiss(); onSetWatched(true) } }
-            DetailAction.MarkUnwatched -> { { onDismiss(); onSetWatched(false) } }
+            // On the page these turn over in place, as the download button does: closing it sent
+            // the viewer back to the list for a tick they could have seen right here.
+            DetailAction.MarkWatched -> { { if (asMenu) onDismiss(); onSetWatched(true) } }
+            DetailAction.MarkUnwatched -> { { if (asMenu) onDismiss(); onSetWatched(false) } }
             DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> { {
                 val add = action == DetailAction.AddWatchLater
-                // On the app's scope: the panel closes at once and takes its own scope with it.
+                // On the app's scope: the hold menu closes at once and takes its own scope with it.
                 App.backgroundScope.launch {
                     runCatching {
                         if (add) {
@@ -277,7 +284,7 @@ internal fun MediaDetailOpened(
                     }
                 }
                 com.tmplayer.ui.components.showMessage(context, if (add) s.detailWatchLaterAdded(item.title) else s.detailWatchLaterRemoved(item.title))
-                onDismiss()
+                if (asMenu) onDismiss()
             } }
             // The page stays where it is: the button turns into the download's state (the ring,
             // then Downloaded), the message says what happened, and a remote keeps its focus on
@@ -303,9 +310,10 @@ internal fun MediaDetailOpened(
                 if (asMenu) onDismiss()
             } }
             DetailAction.SelectVideos -> { { onDismiss(); onSelectVideos?.invoke() } }
-            DetailAction.Share -> { { scope.launch { shareVideo(context, item, send = true); onDismiss() } } }
-            DetailAction.OpenElsewhere -> { { scope.launch { shareVideo(context, item, send = false); onDismiss() } } }
-            DetailAction.CopyLink -> { { scope.launch { MessageLink.copy(context, item.chatId, item.messageId); onDismiss() } } }
+            // Back from the other app, or after the copy, the page is still there.
+            DetailAction.Share -> { { scope.launch { shareVideo(context, item, send = true); if (asMenu) onDismiss() } } }
+            DetailAction.OpenElsewhere -> { { scope.launch { shareVideo(context, item, send = false); if (asMenu) onDismiss() } } }
+            DetailAction.CopyLink -> { { scope.launch { MessageLink.copy(context, item.chatId, item.messageId); if (asMenu) onDismiss() } } }
             DetailAction.OpenChat -> { { onDismiss(); onOpenChat?.invoke() } }
             DetailAction.SplitCopy, DetailAction.JoinCopies -> { {
                 val apart = action == DetailAction.SplitCopy
@@ -336,7 +344,7 @@ internal fun MediaDetailOpened(
                     }
                     withContext(Dispatchers.Main) { com.tmplayer.ui.components.showMessage(app, said) }
                 }
-                onDismiss()
+                if (asMenu) onDismiss()
             } }
         }
         when {
@@ -368,7 +376,7 @@ internal fun MediaDetailOpened(
         DetailScreen(item, chatTitle, watched, finished, rows, onDismiss, onOpenItem, bookmarks, onPickCopy, started) { mark ->
             // The player takes the position on opening this video, in place of its resume point.
             BookmarkJump.request(item.chatId, item.messageId, mark.positionMs)
-            onDismiss()
+            // The page stays under the player, as it does for Play.
             onPlay()
         }
     }

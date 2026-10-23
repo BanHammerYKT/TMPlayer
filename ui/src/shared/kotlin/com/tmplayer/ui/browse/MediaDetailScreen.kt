@@ -588,7 +588,7 @@ private fun Actions(
         if (tv) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 hero(Modifier)
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+                others.forEach { androidx.compose.runtime.key(slotOf(it)) { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) } }
             }
         } else if (!primaryFullWidth) {
             // A phone on its side: the round buttons in Play's row, after it, wrapping only when
@@ -596,7 +596,7 @@ private fun Actions(
             // first at the start, so a trailer arriving later never moves it.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 hero(Modifier)
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+                others.forEach { androidx.compose.runtime.key(slotOf(it)) { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) } }
             }
         } else {
             hero(Modifier.fillMaxWidth())
@@ -605,11 +605,27 @@ private fun Actions(
                 horizontalArrangement = Arrangement.spacedBy(4.dp, if (headlineOnly) Alignment.CenterHorizontally else Alignment.Start),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                others.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) }
+                others.forEach { androidx.compose.runtime.key(slotOf(it)) { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled, ghost = it.placeholder, waiting = it.placeholder && !page.extrasState.settled) } }
             }
         }
         trailers.unopened?.let { TrailerQr(it, Modifier.padding(vertical = 8.dp)) }
     }
+}
+
+/**
+ * Which button [row] is, across its turns: Mark watched and Mark as unwatched are one button, as
+ * are the two Watch later lines and Download with what it becomes (its ring, Cancel, Downloaded).
+ * The buttons are keyed by it, so a remote's focus stays on the button pressed when the row
+ * changes around it (Mark watched also takes Start over and Watch later away); placed by position,
+ * focus stayed where the pressed button had been, on whichever button moved into its place.
+ */
+private fun slotOf(row: DetailRow): Any = when (row.action) {
+    DetailAction.MarkWatched, DetailAction.MarkUnwatched -> DetailAction.MarkWatched
+    DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> DetailAction.AddWatchLater
+    DetailAction.Download, DetailAction.SaveToDownloads, DetailAction.InDownloads, DetailAction.CancelDownload -> DetailAction.Download
+    // Episodes, the trailer and the posters switch all borrow Play; their names tell them apart.
+    DetailAction.Play -> row.label
+    else -> row.action
 }
 
 /** Whether [action] turns something on (true), off (false), or is not a switch (null). */
@@ -657,7 +673,7 @@ private fun MoreActions(page: DetailPage) {
         horizontalArrangement = Arrangement.spacedBy(if (tv) 12.dp else 4.dp, if (tv) Alignment.Start else Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(if (tv) 12.dp else 8.dp),
     ) {
-        rest.forEach { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled) }
+        rest.forEach { androidx.compose.runtime.key(slotOf(it)) { RoundAction(it.label, it.icon, it.onSelect, destructive = it.destructive, detail = it.detail, short = roundLabel(it, s), toggles = togglesOn(it.action), progress = it.progress, enabled = it.enabled) } }
     }
 }
 

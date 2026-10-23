@@ -79,7 +79,8 @@ internal fun SeriesCard(
 
 /**
  * A show, opened: a page of its own over everything, on a phone and a television alike. Choosing
- * an episode plays it and closes this, so Back from the player lands on the chat, not on the page.
+ * an episode plays it with the page left open under the player, so Back from the player lands on
+ * the show again, on the episode that was pressed.
  */
 @Composable
 internal fun SeriesOpened(

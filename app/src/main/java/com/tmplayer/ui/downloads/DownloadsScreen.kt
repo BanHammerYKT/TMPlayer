@@ -879,7 +879,8 @@ fun DownloadsScreen(
                         place = queuePlaces[progress.fileId] ?: -1,
                         onPause = { OfflineDownloads.pause(context, progress.fileId) },
                         onResume = { OfflineDownloads.resume(context, progress.fileId) },
-                        onCancel = { scope.launch { dropUnfinished(progress.fileId) } },
+                        // The row goes with the remote on it: back to the tab, as after a delete.
+                        onCancel = { scope.launch { dropUnfinished(progress.fileId); deleted++ } },
                         onFreeUp = { freeingUp = true },
                     )
                 }
@@ -995,7 +996,8 @@ fun DownloadsScreen(
                     place = queuePlaces[progress.fileId] ?: -1,
                     onPause = { OfflineDownloads.pause(context, progress.fileId) },
                     onResume = { OfflineDownloads.resume(context, progress.fileId) },
-                    onCancel = { scope.launch { dropUnfinished(progress.fileId) } },
+                    // The row goes with the remote on it: back to the tab, as after a delete.
+                    onCancel = { scope.launch { dropUnfinished(progress.fileId); deleted++ } },
                     onFreeUp = { freeingUp = true },
                 )
             }

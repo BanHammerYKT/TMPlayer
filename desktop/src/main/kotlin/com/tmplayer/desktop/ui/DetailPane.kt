@@ -282,16 +282,19 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                 OfflineDownloads.cancel(state.downloads, coming?.fileId ?: item.fileId)
                 return
             }
-            else -> Unit
-        }
-        close()
-        when (action) {
-            DetailAction.Resume, DetailAction.Play -> state.openPlayer(item, startFromBeginning = false)
-            DetailAction.StartOver -> state.openPlayer(item, startFromBeginning = true)
+            // The player puts the pane away and brings it back when it closes (see
+            // ShellState.openPlayer), so leaving the video lands here, not on the page behind.
+            DetailAction.Resume, DetailAction.Play, DetailAction.StartOver -> {
+                state.openPlayer(item, startFromBeginning = action == DetailAction.StartOver)
+                return
+            }
+            // These turn over in place: closing the pane for them sent the viewer back to the page
+            // for a change they could have seen right here.
             DetailAction.MarkWatched, DetailAction.MarkUnwatched -> {
                 val mark = action == DetailAction.MarkWatched
-                // Not said: the tick on the card shows it.
+                // Not said: the button and the tick on the card show it.
                 outlives.launch { runCatching { setWatched(state.watched, state.settings, item, title, mark) } }
+                return
             }
             DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> {
                 val add = action == DetailAction.AddWatchLater
@@ -299,8 +302,19 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                     runCatching { setWatchLater(state.watched, item, title, add) }
                     toast(if (add) s.detailWatchLaterAdded(item.title) else s.detailWatchLaterRemoved(item.title))
                 }
+                return
             }
+            else -> Unit
+        }
+        // The link, the hand off and the copy say how they went in a toast over the pane, which
+        // stays; the rest are done with it, or take the viewer somewhere else.
+        val staysOpen = action == DetailAction.OpenElsewhere || action == DetailAction.CopyLink || action == DetailAction.ExportCopy
+        if (!staysOpen) close()
+        when (action) {
             // Handled above, with the pane left open.
+            DetailAction.Resume, DetailAction.Play, DetailAction.StartOver -> Unit
+            DetailAction.MarkWatched, DetailAction.MarkUnwatched -> Unit
+            DetailAction.AddWatchLater, DetailAction.RemoveWatchLater -> Unit
             DetailAction.Download, DetailAction.SaveToDownloads, DetailAction.CancelDownload -> Unit
             DetailAction.InDownloads -> state.go(Destination.Downloads)
             DetailAction.RemoveDownload -> Unit
@@ -401,7 +415,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                 bookmarks = bookmarks,
                 // The player takes the position on opening this video, in place of its resume point.
                 onOpenBookmark = { mark ->
-                    close()
+                    // The pane comes back when the player closes, as it does for Play.
                     BookmarkJump.request(item.chatId, item.messageId, mark.positionMs)
                     state.openPlayer(item, startFromBeginning = false)
                 },
@@ -433,7 +447,9 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             list = list,
             empty = s.detailCommentsNone,
             round = false,
-            onPlay = { video -> close(); com.tmplayer.ui.browse.LinkRequests.play(video) },
+            // The pane stays open until the player takes it away, so it comes back when the video
+            // closes (or stays, should the video be refused).
+            onPlay = { video -> com.tmplayer.ui.browse.LinkRequests.play(video) },
             onDismiss = { commentsOpen = false },
         )
     }

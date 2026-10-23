@@ -295,6 +295,7 @@ class ShellState(
         openChat = null
         chatToRefocus = null
         detail = null
+        detailUnderPlayer = null
         if (to != Destination.Settings) settingsUnlocked = false
         destination = to
     }
@@ -303,6 +304,7 @@ class ShellState(
         chatTitles[chat.id] = chat.title
         knownChats[chat.id] = chat
         detail = null
+        detailUnderPlayer = null
         openChat = chat
     }
 
@@ -332,12 +334,14 @@ class ShellState(
 
     /**
      * The one way anything in the window starts a video. The browse pages stay composed under
-     * the player, so closing it returns to the same page and scroll position.
+     * the player, so closing it returns to the same page and scroll position, and a detail pane
+     * open at the press comes back with it ([detailUnderPlayer]).
      *
      * @param startFromBeginning true for "Play from start"; false resumes where the viewer left
      *   off, if anywhere.
      */
     fun openPlayer(item: MediaItem, startFromBeginning: Boolean) {
+        detail?.let { detailUnderPlayer = it; detail = null }
         warmStream(item, fromStart = startFromBeginning)
         if (item.versions.size <= 1) {
             nowPlaying = PlayRequest(item, startFromBeginning, chatTitleOf(item.chatId))
@@ -370,7 +374,18 @@ class ShellState(
     fun closePlayer() {
         nowPlaying = null
         fullscreen = false
+        detailUnderPlayer?.let { detail = it }
+        detailUnderPlayer = null
     }
+
+    /**
+     * The detail pane a video was started from (its Play, a bookmark, a comment's video), put away
+     * while the player is up and opened again when it closes, so leaving the video, or a video that
+     * would not play, lands on the pane Play was pressed on rather than on the page behind it. Kept
+     * out of the window while the player is up: the pane holds the keyboard's focus and draws over
+     * a picture shown under the window. Going anywhere else lets it go.
+     */
+    private var detailUnderPlayer: DetailRequest? = null
 
     /** Puts the cursor in the page's search field. Quietly nothing when the page has none. */
     fun focusSearch() {

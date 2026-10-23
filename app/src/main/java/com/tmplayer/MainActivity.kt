@@ -1192,8 +1192,11 @@ private fun Root() {
         // A press on a video is not instant: before the player can open, this asks TDLib whether
         // the file is on disk, measures the disk, and reads the download history back one record
         // at a time. On a stick that is long enough for the viewer to conclude the press missed
-        // and press again, so a second press while one is in flight is ignored.
-        if (preparing && !confirmed) return
+        // and press again, so a second press while one is in flight is ignored. So is one after the
+        // player was asked to open and before it covers the screen: a video's page stays open
+        // under the player now, and its Play pressed twice opened two (PlayPress.opened lasts
+        // until this activity stops or comes back).
+        if ((preparing || com.tmplayer.ui.components.PlayPress.opened) && !confirmed) return
         preparing = true
         // Answered at once: the page's Play pill spins and, past a beat, a "Starting" pill says
         // which video is on its way (PlayPress, StartingStatus). It stays until the shell leaves
@@ -1284,7 +1287,7 @@ private fun Root() {
         // The same guard [play] keeps, over the wait for Telegram in [openStoredNow]: [play] only starts
         // counting once that answer is back, so two quick presses on a Continue watching card
         // both got through and opened the player twice.
-        if (openingStored || preparing) return
+        if (openingStored || preparing || com.tmplayer.ui.components.PlayPress.opened) return
         openingStored = true
         // The wait for Telegram's fresh copy is part of the press too.
         val press = com.tmplayer.ui.components.PlayPress.begin(stored.title)
