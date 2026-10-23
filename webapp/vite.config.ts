@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import solid from 'vite-plugin-solid'
 
 // The app's own api_id and hash: from the environment in CI, else from the repo's local.properties
@@ -17,8 +17,31 @@ function secret(name: string): string {
     }
 }
 
+const CATALOG = new URL('../core/src/commonMain/resources/i18n/en.json', import.meta.url)
+
+/**
+ * The catalog sections the page itself shows (src/i18n.ts), as `virtual:strings`: a few KB in
+ * place of the whole 180 KB file. The worker still fetches the whole catalog for the rules.
+ * Add a section here and to `PageStrings` in env.d.ts when a page needs one.
+ */
+const PAGE_SECTIONS = ['auth', 'errors', 'login']
+
+function pageStrings(): Plugin {
+    const id = 'virtual:strings'
+    return {
+        name: 'tmplayer-page-strings',
+        resolveId: (source) => (source === id ? `\0${id}` : null),
+        load(source) {
+            if (source !== `\0${id}`) return null
+            this.addWatchFile(CATALOG.pathname)
+            const all = JSON.parse(readFileSync(CATALOG, 'utf8'))
+            return `export default ${JSON.stringify(Object.fromEntries(PAGE_SECTIONS.map((k) => [k, all[k]])))}`
+        },
+    }
+}
+
 export default defineConfig({
-    plugins: [solid()],
+    plugins: [solid(), pageStrings()],
     define: {
         __TG_API_ID__: JSON.stringify(Number(secret('TG_API_ID')) || 0),
         __TG_API_HASH__: JSON.stringify(secret('TG_API_HASH')),

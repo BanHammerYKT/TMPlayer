@@ -20,6 +20,9 @@ importers:
       '@mtcute/web':
         specifier: 0.32.6
         version: 0.32.6
+      '@solid-primitives/i18n':
+        specifier: 2.2.1
+        version: 2.2.1(solid-js@1.9.17)
       '@solidjs/router':
         specifier: 1.0.0
         version: 1.0.0(solid-js@1.9.17)
@@ -298,6 +301,11 @@ packages:
 
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
+
+  '@solid-primitives/i18n@2.2.1':
+    resolution: {integrity: sha512-TnTnE2Ku11MGYZ1JzhJ8pYscwg1fr9MteoYxPwsfxWfh9Jp5K7RRJncJn9BhOHvNLwROjqOHZ46PT7sPHqbcXw==}
+    peerDependencies:
+      solid-js: ^1.6.12
 
   '@solidjs/router@1.0.0':
     resolution: {integrity: sha512-cCSk1hvgCowiMa9bzzYWHiLu1U4E22+DfJe6/rOwAyECKrxc3jrd5QnoW3sDDJtW+e077cz/M67bPl3DqOBw1Q==}
@@ -987,6 +995,10 @@ snapshots:
     optional: true
 
   '@rolldown/pluginutils@1.0.1': {}
+
+  '@solid-primitives/i18n@2.2.1(solid-js@1.9.17)':
+    dependencies:
+      solid-js: 1.9.17
 
   '@solidjs/router@1.0.0(solid-js@1.9.17)':
     dependencies:

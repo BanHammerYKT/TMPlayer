@@ -1,15 +1,20 @@
 // The Telegram connection: MTProto, crypto, the session and every file location live here, off the
 // main thread. The page talks to it through `api` below by message (./rpc.ts), and never loads
 // mtcute itself.
-import { BaseTelegramClient, TelegramClient, type Message, type User } from '@mtcute/web'
+import { BaseTelegramClient, SentCode as MtSentCode, TelegramClient, User, type Message, type tl } from '@mtcute/web'
 import { rules } from '../rules'
 import { files, merge, thumbnails, toItem } from './media'
-import type { ChatItem, Me, QrEvent, RpcError, VideoItem } from './types'
+import type { ChatItem, Country, Me, QrEvent, RpcError, SentCode, VideoItem } from './types'
+
+// `VITE_TG_TEST=1 pnpm dev` signs in on Telegram's test servers (numbers 99966XYYYY, the code
+// is X five times), with its own storage, to try the sign in steps without a real account.
+const testMode = import.meta.env.DEV && import.meta.env.VITE_TG_TEST === '1'
 
 const base = new BaseTelegramClient({
     apiId: __TG_API_ID__,
     apiHash: __TG_API_HASH__,
-    storage: 'tmplayer',
+    storage: testMode ? 'tmplayer-test' : 'tmplayer',
+    testMode,
     initConnectionOptions: {
         deviceModel: 'TMPlayer Web',
         appVersion: '2.0',
@@ -57,6 +62,44 @@ function isUnauthorized(e: unknown): boolean {
 
 const me = (u: User): Me => ({ id: u.id, name: u.displayName })
 
+/** An error the page can tell apart by its text, as Telegram's own are. */
+const rpcLike = (text: string) => Object.assign(new Error(text), { text })
+
+/** Digits only: the raw auth calls take the number without "+" or spaces. */
+const digitsOf = (phone: string) => phone.replace(/\D/g, '')
+
+function sentCode(raw: tl.auth.TypeSentCode): SentCode | 'success' {
+    if (raw._ === 'auth.sentCodeSuccess') return 'success'
+    // Telegram wants a paid sign in here; a QR code from the app on the phone still works.
+    if (raw._ === 'auth.sentCodePaymentRequired') throw rpcLike('PAYMENT_REQUIRED')
+    const code = new MtSentCode(raw)
+    const type = raw.type
+    return {
+        hash: code.phoneCodeHash,
+        type: code.type,
+        next: code.nextType,
+        timeout: code.timeout,
+        length: code.length,
+        email: type._ === 'auth.sentCodeTypeEmailCode' ? type.emailPattern : null,
+        beginning: code.beginning ?? null,
+    }
+}
+
+/** A sent code, or the user when Telegram signed in without one. */
+async function sentOrMe(raw: tl.auth.TypeSentCode): Promise<{ sent: SentCode } | { me: Me }> {
+    const sent = sentCode(raw)
+    if (sent !== 'success') return { sent }
+    return { me: me(new User(await tg.notifyLoggedIn((raw as tl.auth.RawSentCodeSuccess).authorization))) }
+}
+
+const loginSetup = (phone: string, hash: string): tl.RawEmailVerifyPurposeLoginSetup => ({
+    _: 'emailVerifyPurposeLoginSetup',
+    phoneNumber: digitsOf(phone),
+    phoneCodeHash: hash,
+})
+
+let countryList: Country[] | null = null
+
 const VIDEO_FILTER = { _: 'inputMessagesFilterVideo' } as const
 const DOC_FILTER = { _: 'inputMessagesFilterDocument' } as const
 const warmedDcs = new Set<number>()
@@ -98,13 +141,75 @@ export const api = {
         )
     },
 
-    async sendCode(_: Ctx, phone: string): Promise<{ hash: string } | { me: Me }> {
-        const sent = await tg.sendCode({ phone })
-        return 'phoneCodeHash' in sent ? { hash: sent.phoneCodeHash } : { me: me(sent as User) }
+    /** Telegram's country list for the number, kept for the session. */
+    async countries(_: Ctx): Promise<Country[]> {
+        if (!countryList) {
+            const res = await tg.call({ _: 'help.getCountriesList', langCode: 'en', hash: 0 })
+            countryList =
+                res._ === 'help.countriesList'
+                    ? res.countries
+                          .filter((c) => !c.hidden && c.countryCodes.length)
+                          .map((c) => ({
+                              iso: c.iso2,
+                              name: c.name ?? c.defaultName,
+                              codes: c.countryCodes.map((k) => ({ code: k.countryCode, prefixes: k.prefixes ?? [], patterns: k.patterns ?? [] })),
+                          }))
+                          .sort((a, b) => a.name.localeCompare(b.name, 'en'))
+                    : []
+        }
+        return countryList
     },
 
-    async signIn(_: Ctx, phone: string, hash: string, code: string): Promise<Me> {
-        return me(await tg.signIn({ phone, phoneCodeHash: hash, phoneCode: code }))
+    /** The country of the address the connection comes from: Telegram's guess, as the apps start on. */
+    async guessCountry(_: Ctx): Promise<string | null> {
+        return (await tg.call({ _: 'help.getNearestDc' })).country || null
+    },
+
+    async sendCode(_: Ctx, phone: string): Promise<{ sent: SentCode } | { me: Me }> {
+        const { id, hash } = await tg.getApiCredentials()
+        return sentOrMe(
+            await tg.call({ _: 'auth.sendCode', phoneNumber: digitsOf(phone), apiId: id, apiHash: hash, settings: { _: 'codeSettings' } }),
+        )
+    },
+
+    /** The code again, the way `next` said (a text after the app, a call after a text). */
+    async resendCode(_: Ctx, phone: string, hash: string): Promise<{ sent: SentCode } | { me: Me }> {
+        return sentOrMe(await tg.call({ _: 'auth.resendCode', phoneNumber: digitsOf(phone), phoneCodeHash: hash }))
+    },
+
+    /** Lets Telegram drop a code nobody will type (a changed number, Start over). */
+    async cancelCode(_: Ctx, phone: string, hash: string): Promise<void> {
+        await tg.call({ _: 'auth.cancelCode', phoneNumber: digitsOf(phone), phoneCodeHash: hash }).catch(() => {})
+    },
+
+    /** The code from the app, a text or a call, or one sent by email when `email` is set. */
+    async signIn(_: Ctx, phone: string, hash: string, code: string, email: boolean): Promise<Me> {
+        const res = await tg.call({
+            _: 'auth.signIn',
+            phoneNumber: digitsOf(phone),
+            phoneCodeHash: hash,
+            ...(email ? { emailVerification: { _: 'emailVerificationCode', code } } : { phoneCode: code }),
+        } as tl.auth.RawSignInRequest)
+        // A number with no account: TMPlayer does not create one.
+        if (res._ === 'auth.authorizationSignUpRequired') throw rpcLike('PHONE_NUMBER_UNOCCUPIED')
+        return me(new User(await tg.notifyLoggedIn(res)))
+    },
+
+    /** An account Telegram signs in by email only, with no address yet: a code to the one given. */
+    async sendEmailCode(_: Ctx, phone: string, hash: string, email: string): Promise<{ email: string; length: number }> {
+        const res = await tg.call({ _: 'account.sendVerifyEmailCode', purpose: loginSetup(phone, hash), email })
+        return { email: res.emailPattern, length: res.length }
+    },
+
+    /** That address's code; Telegram then sends the sign in code itself, or signs in. */
+    async verifyEmail(_: Ctx, phone: string, hash: string, code: string): Promise<{ sent: SentCode } | { me: Me }> {
+        const res = await tg.call({
+            _: 'account.verifyEmail',
+            purpose: loginSetup(phone, hash),
+            verification: { _: 'emailVerificationCode', code },
+        })
+        if (res._ !== 'account.emailVerifiedLogin') throw rpcLike('AUTH_RESTART')
+        return sentOrMe(res.sentCode)
     },
 
     async passwordHint(_: Ctx): Promise<string | null> {
@@ -177,9 +282,10 @@ export const api = {
                 const want = Math.min(limit, f.size - offset)
                 return own(res.bytes.length > want ? res.bytes.subarray(0, want) : res.bytes)
             } catch (e) {
-                const migrate = /^FILE_MIGRATE_(\d+)$/.exec((e as { text?: string }).text ?? '')
-                if (!migrate) throw e
-                f.dcId = Number(migrate[1])
+                // mtcute names it FILE_MIGRATE_%d and keeps the number apart.
+                const err = e as { text?: string; newDc?: number }
+                if (err.text !== 'FILE_MIGRATE_%d' || !err.newDc) throw e
+                f.dcId = err.newDc
             }
         }
     },
@@ -231,10 +337,13 @@ self.onmessage = async (ev: MessageEvent<In>) => {
     const ctx: Ctx = {
         signal: abort.signal,
         emit: (data) => postMessage({ id, event: data }),
+        // A question still open when the call is aborted (the page left the QR code waiting for a
+        // password) fails, so the call ends instead of waiting for ever.
         ask: <T>(data: unknown) =>
-            new Promise<T>((resolve) => {
+            new Promise<T>((resolve, reject) => {
                 const n = ++askId
                 asks.set(n, resolve as (v: unknown) => void)
+                abort.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
                 postMessage({ id, event: data, ask: n })
             }),
     }
