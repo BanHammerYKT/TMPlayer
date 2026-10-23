@@ -71,11 +71,12 @@ class HomeAutoFillTest {
 
     @Test
     fun `movies and shows never share a row`() {
-        val a = video(1, "Big Buck Bunny (2008).mkv")
+        val a = video(1, "Big Buck Bunny (2008).mkv").copy(durationSec = 100 * 60)
         val b = video(1, "Harbour Notes S01E01.mkv")
         val c = video(1, "Harbour Notes S01E02.mkv")
-        val d = video(2, "Sintel (2010).mkv")
-        val e = video(2, "Lecture one.mp4")
+        val d = video(2, "Sintel (2010).mkv").copy(durationSec = 100 * 60)
+        // A feature-length video without a film's name: a movie still, after the films.
+        val e = video(2, "Family evening.mp4").copy(durationSec = 95 * 60)
         val chats = listOf(chat(1), chat(2))
         val loaded = mapOf(1L to listOf(a, b, c), 2L to listOf(d, e))
         val rows = HomeRows.build(
@@ -92,7 +93,45 @@ class HomeAutoFillTest {
         assertEquals(listOf("recent", "across-videos", "across-shows"), rows.map { it.key })
         // Films come first among the videos.
         val videos = across.first { it.kind == HomeRow.Across.Kind.Videos }.entries.map { (it as ShelfEntry.File).item.messageId }
-        assertEquals(e.messageId, videos.last())
+        assertEquals(listOf(d.messageId, a.messageId, e.messageId), videos)
+    }
+
+    @Test
+    fun `clips and trailers stay out of Movies, season packs and dated episodes go to Shows`() {
+        val film = video(1, "Sintel (2010).mkv").copy(durationSec = 0)
+        val longVideo = video(1, "Family evening.mp4").copy(durationSec = 90 * 60)
+        val bigUnknown = video(1, "Recording.mp4").copy(durationSec = 0, sizeBytes = 900L * 1024 * 1024)
+        val clip = video(1, "Holiday clip.mp4")
+        val shortYear = video(1, "Wedding 2019.mp4").copy(durationSec = 4 * 60)
+        val trailer = video(1, "Sintel (2010) Trailer.mp4")
+        val pack = video(2, "Harbour Notes S02 1080p.mkv")
+        val dated = video(2, "Evening News 2024.10.14.mp4")
+        val episode = video(2, "Harbour Notes S01E03.mkv")
+        val movies = HomeRow.Across.Kind.Videos
+        val shows = HomeRow.Across.Kind.Shows
+        assertEquals(movies, HomeRows.kindOf(film))
+        assertEquals(movies, HomeRows.kindOf(longVideo))
+        assertEquals(movies, HomeRows.kindOf(bigUnknown))
+        assertNull("a short clip", HomeRows.kindOf(clip))
+        assertNull("a clip named with a year", HomeRows.kindOf(shortYear))
+        assertNull("a trailer", HomeRows.kindOf(trailer))
+        assertEquals(shows, HomeRows.kindOf(pack))
+        assertEquals(shows, HomeRows.kindOf(dated))
+        assertEquals(shows, HomeRows.kindOf(episode))
+
+        val all = listOf(film, longVideo, bigUnknown, clip, shortYear, trailer, pack, dated, episode)
+        val rows = HomeRows.build(
+            emptyList(), listOf(chat(1), chat(2)), mapOf(1L to all.filter { it.chatId == 1L }, 2L to all.filter { it.chatId == 2L }),
+            recent = all, recentMinStarred = 1, starred = emptySet(), autoFill = true,
+        )
+        val across = rows.filterIsInstance<HomeRow.Across>()
+        val shown = across.flatMap { row -> row.entries.map { row.kind to it } }
+        assertTrue(shown.all { (kind, entry) -> HomeRows.kindOf(entry) == kind })
+        val ids = across.flatMap { row -> row.entries.filterIsInstance<ShelfEntry.File>().map { it.item.messageId } }.toSet()
+        assertFalse(clip.messageId in ids || shortYear.messageId in ids || trailer.messageId in ids)
+        // See all lists the same kind as its row.
+        val moviesRow = across.first { it.kind == movies }
+        assertTrue(HomeRows.seeAll(moviesRow, all)!!.all { HomeRows.kindOf(it) == movies })
     }
 
     @Test

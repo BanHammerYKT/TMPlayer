@@ -95,9 +95,9 @@ class FeedMergeTest {
 
     @Test
     fun `See all keeps the row's tiles first and adds the rest of its kind, newest first`() {
-        val film = video(1, 1, 100, "Night Train (1999) 1080p.mkv")
-        val older = video(1, 2, 50, "Harbour Lights (2004) 720p.mkv")
-        val newer = video(2, 3, 120, "Paper Moon (1973) 1080p.mkv")
+        val film = video(1, 1, 100, "Night Train (1999) 1080p.mkv").copy(durationSec = 100 * 60)
+        val older = video(1, 2, 50, "Harbour Lights (2004) 720p.mkv").copy(durationSec = 100 * 60)
+        val newer = video(2, 3, 120, "Paper Moon (1973) 1080p.mkv").copy(durationSec = 100 * 60)
         val episode = video(2, 4, 110, "Quiet Hills S01E02 1080p.mkv")
         val row = HomeRow.Across(HomeRow.Across.Kind.Videos, listOf(ShelfEntry.File(film)), chatIds = listOf(1, 2))
         val page = HomeRows.seeAll(row, listOf(older, newer, episode, film))!!
@@ -113,7 +113,7 @@ class FeedMergeTest {
             ChatSummary(1, "One", null, 0, ChatKind.Channel),
             ChatSummary(2, "Two", null, 0, ChatKind.Channel),
         )
-        val film = video(1, 1, 100, "Night Train (1999) 1080p.mkv")
+        val film = video(1, 1, 100, "Night Train (1999) 1080p.mkv").copy(durationSec = 100 * 60)
         val rows = HomeRows.build(emptyList(), chats, mapOf(1L to listOf(film), 2L to emptyList()), recent = emptyList(), autoFill = true)
         val across = rows.filterIsInstance<HomeRow.Across>().single()
         assertEquals(listOf(1L, 2L), across.chatIds)

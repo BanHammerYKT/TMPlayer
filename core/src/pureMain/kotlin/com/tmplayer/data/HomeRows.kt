@@ -98,8 +98,9 @@ sealed interface HomeRow {
     }
 
     /**
-     * The shows, or the films and other videos, across all of Home's chats in one row, newest
-     * first: Home's "Shows" and "Videos" (user, 2026-10-21: "carousel, movies and shows"). Like
+     * The shows, or the films and other feature-length videos ([HomeRows.kindOf]), across all of
+     * Home's chats in one row, newest first: Home's "Shows" and "Movies" (user, 2026-10-21:
+     * "carousel, movies and shows"). Like
      * Recently added it repeats what the chat rows under it hold, merged; it leaves out only what
      * Continue watching and Watch later already have.
      */
@@ -290,7 +291,7 @@ object HomeRows {
             val pool = recent.orEmpty().filter { it.chatId in homeIds } + homeIds.flatMap { loaded[it].orEmpty() }
             // A copy of what is seen: the chat rows below still show these in their own chats.
             val across = arranged(pool, HashSet(seen), shownCopies, inContinue)
-            // Films first among the videos, then the other videos, each newest first as they came.
+            // Films first among the movies, then the other feature-length videos, each newest first.
             // The film check once per tile, not once per comparison of the sort.
             val videos = across.filter { kindOf(it) == HomeRow.Across.Kind.Videos }
                 .map { it to (it is ShelfEntry.File && SeriesShelf.isFilm(it.item)) }
@@ -434,18 +435,37 @@ object HomeRows {
     }
 
     /**
-     * Whether a tile is a show's or a single video's (user, 2026-10-21): a show is a folded
-     * series, or a lone file whose name or caption gives a season or an episode; everything else,
-     * a film, a clip, a lecture, is a video.
+     * Which of Home's rows a tile belongs in, or null for neither (user, 2026-10-21; tightened
+     * 2026-10-23 after viewers found clips and trailers under Movies and season packs beside them):
+     * - Shows: a folded series, or a lone file whose name or caption reads as a show's: an
+     *   episode, a season pack ("Show S02") or an episode named by the day it aired.
+     * - Movies: a film or a feature-length video. A film by its name ([SeriesShelf.isFilm]) needs
+     *   no stated length, but one that says it is shorter than [SameVideo.SHORT_SEC] is a clip.
+     *   A video without a film's name has to be [SeriesShelf.FEATURE_SEC] long, or, with no
+     *   length stated, as big as a feature ([SameVideo.FEATURE_BYTES]).
+     * - Neither: a trailer, a teaser or a sample, and the short clips, lectures and recordings
+     *   that are not a film. They stay in their chats, in Search and in Recently added.
      */
-    fun kindOf(entry: ShelfEntry): HomeRow.Across.Kind = when (entry) {
+    fun kindOf(entry: ShelfEntry): HomeRow.Across.Kind? = when (entry) {
         is ShelfEntry.Show -> HomeRow.Across.Kind.Shows
         is ShelfEntry.File -> kindOf(entry.item)
     }
 
     /** [kindOf] for one file. */
-    fun kindOf(item: MediaItem): HomeRow.Across.Kind =
-        if (SeriesShelf.episodeOf(item).isEpisode) HomeRow.Across.Kind.Shows else HomeRow.Across.Kind.Videos
+    fun kindOf(item: MediaItem): HomeRow.Across.Kind? {
+        val name = SeriesShelf.episodeOf(item)
+        if (name.isSeries) return HomeRow.Across.Kind.Shows
+        if (item.extra != null || name.extra != null) return null
+        val pieces = item.parts.ifEmpty { listOf(item) }.map { it.durationSec }
+        val length = if (pieces.any { it <= 0 }) 0 else pieces.sum()
+        val film = SeriesShelf.isFilm(item)
+        val feature = when {
+            length >= SeriesShelf.FEATURE_SEC -> true
+            length > 0 -> film && length >= SameVideo.SHORT_SEC
+            else -> film || item.sizeBytes >= SameVideo.FEATURE_BYTES
+        }
+        return if (feature) HomeRow.Across.Kind.Videos else null
+    }
 
     /** [row]'s tiles before the cut to [LIMIT], with nothing added to [seen]. */
     private fun arranged(
