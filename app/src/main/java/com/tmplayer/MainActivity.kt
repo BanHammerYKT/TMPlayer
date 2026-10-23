@@ -1829,13 +1829,14 @@ private fun Root() {
                     layout = chatLayout,
                     homeRows = homeRows,
                     homeRowsReady = homeViewModel.rowsSettled,
+                    homeCarousel = settings.homeCarousel.collectAsStateWithLifecycle(initialValue = true).value,
                     homeArt = homeViewModel.art.collectAsStateWithLifecycle().value,
                     homeWatch = homeWatch,
                     onHomeRowShown = { row ->
                         when (row) {
                             is HomeRow.Chat -> homeViewModel.request(row.chatId)
                             is HomeRow.Recent -> homeViewModel.requestRecent()
-                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes, is HomeRow.Across -> Unit
+                            is HomeRow.Continue, is HomeRow.WatchLater, is HomeRow.NewEpisodes -> Unit
                         }
                     },
                     onHomeArtWanted = homeViewModel::requestArt,

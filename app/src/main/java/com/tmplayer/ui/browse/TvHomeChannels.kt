@@ -39,7 +39,6 @@ object HomeLaunch {
                 when (row) {
                     is HomeRow.Recent -> row.entries.asSequence()
                     is HomeRow.Chat -> row.entries.asSequence()
-                    is HomeRow.Across -> row.entries.asSequence()
                     else -> emptySequence()
                 }
             }

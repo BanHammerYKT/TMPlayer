@@ -145,6 +145,8 @@ internal fun HomePane(
      * Not needed when [rows] is empty: the empty state already says the same.
      */
     noFavourites: Boolean = false,
+    /** False when Settings turned the carousel off: Home opens on its rows, Recently added among them. */
+    carouselOn: Boolean = true,
     /** False while the rows have not been built from an answer yet ([HomeViewModel.rowsSettled]). */
     rowsReady: Boolean = true,
     /** What the first-run state says and where its button goes: Saved Messages, or a folder. */
@@ -175,7 +177,7 @@ internal fun HomePane(
     /** On the TV carousel's Play, for Down from the top bar. */
     tvPlayFocus: FocusRequester? = null,
     /**
-     * Movies and Shows read on through Home's chats as they are scrolled to their end
+     * Recently added reads on through Home's chats as it is scrolled to its end
      * ([com.tmplayer.ui.browse.HomeViewModel.seeAll]); null keeps each row to what Home holds.
      */
     feedOf: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
@@ -209,12 +211,13 @@ internal fun HomePane(
         }
         return
     }
-    // Recently added in starred chats is the featured carousel at the top rather than a row, on a
-    // phone and a television alike: present from the first frame whenever the row is, so nothing
-    // below it moves when it fills.
+    // Recently added is the featured carousel at the top as well as a row, on a phone and a
+    // television alike: present from the first frame whenever the row is, so nothing below it
+    // moves when it fills.
     val recent = rows.firstNotNullOfOrNull { it as? HomeRow.Recent }
-    val featured = rememberFeatured(recent)
-    val carousel = recent != null && featured?.isEmpty() != true
+    // Off in Settings, nothing is picked or turned over for it either.
+    val featured = rememberFeatured(recent.takeIf { carouselOn })
+    val carousel = carouselOn && recent != null && featured?.isEmpty() != true
     // With no carousel the rows are the whole first screen; with one, its first picture tells
     // HomeFirstPaint (through the carousel), so the loader lifts over a finished Home.
     // Not at once: the starred chats' row can arrive a moment after the rest, bringing the carousel
@@ -224,14 +227,15 @@ internal fun HomePane(
         kotlinx.coroutines.delay(if (touch) NO_CAROUSEL_SETTLE_MS else NO_CAROUSEL_SETTLE_TV_MS)
         HomeFirstPaint.markReady()
     }
-    val listed = if (recent != null) rows.filterNot { it === recent } else rows
+    // Recently added is a row of its own as well, under Continue watching (user, 2026-10-23).
+    val listed = rows
     val first = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     // Kept across a turn of the phone: the show is looked up again in the rows once they are back.
     val opened = rememberOpenSeries { key, chatId -> HomeLaunch.find(key, chatId, rows) }
-    // Movies' or Shows' See all page, by the row's key, so a turn of the phone keeps it open.
+    // Recently added's See all page, by the row's key, so a turn of the phone keeps it open.
     var seeAllKey by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
-    val seeAllRow = seeAllKey?.let { key -> rows.firstOrNull { it.key == key } as? HomeRow.Across }
+    val seeAllRow = seeAllKey?.let { key -> rows.firstOrNull { it.key == key } as? HomeRow.Recent }
     // The row whose tiles the remote goes back to once its page closes.
     var returnTo by remember { mutableStateOf<String?>(null) }
     val listState = com.tmplayer.ui.components.rememberAheadListState(column = true)
@@ -511,8 +515,8 @@ internal fun HomePane(
                         is HomeRow.Continue -> onSeeContinue
                         is HomeRow.WatchLater -> onSeeWatchLater
                         is HomeRow.Chat -> { { onOpenChat(row.chatId) } }
-                        is HomeRow.Across -> { { seeAllKey = row.key } }
-                        is HomeRow.NewEpisodes, is HomeRow.Recent -> null
+                        is HomeRow.Recent -> { { seeAllKey = row.key } }
+                        is HomeRow.NewEpisodes -> null
                     }?.takeIf { row.hasMore }
                     val countLabel = if (row.totalAtLeast) s.homeSeeAllCountAtLeast(row.total) else s.homeSeeAllCount(row.total)
                     // On a television "See all" sits on the heading, where it can be seen, but it only
@@ -646,8 +650,7 @@ internal fun HomePane(
                                 }
                             }
                             is HomeRow.Chat -> ShelfRows(row.entries, watch, touch, isFirst, first, { row.title }, onPlay, onHoldMedia, start, end, rowTiles) { opened.open(it) }
-                            is HomeRow.Recent -> ShelfRows(row.entries, watch, touch, isFirst, first, chatTitle, onPlay, onHoldMedia, start, end, rowTiles) { opened.open(it) }
-                            is HomeRow.Across -> {
+                            is HomeRow.Recent -> {
                                 // Read on through Home's chats once the row is scrolled near its
                                 // end: the next tiles land after the last, nothing before it moves.
                                 var feed by remember(row.key) { mutableStateOf<com.tmplayer.ui.browse.RowFeed?>(null) }
@@ -769,7 +772,7 @@ internal fun HomePane(
     }
 
     seeAllRow?.let { row ->
-        AcrossSeeAll(
+        RowSeeAll(
             row = row,
             title = homeRowTitle(row, LocalStrings.current),
             feed = remember(row.key) { feedOf(row) },
@@ -874,13 +877,13 @@ private fun LazyListScope.entries(
 }
 
 /**
- * Movies' or Shows' See all on a phone and a television: the row's tiles as a grid, read on
+ * Recently added's See all on a phone and a television: the row's tiles as a grid, read on
  * through Home's chats as it nears its end ([com.tmplayer.ui.browse.RowFeed], the same reading
  * the row itself pages with). Back, or the arrow on a phone, goes back to Home.
  */
 @Composable
-private fun AcrossSeeAll(
-    row: HomeRow.Across,
+private fun RowSeeAll(
+    row: HomeRow.Recent,
     title: String,
     feed: com.tmplayer.ui.browse.RowFeed?,
     watch: SeriesWatch,

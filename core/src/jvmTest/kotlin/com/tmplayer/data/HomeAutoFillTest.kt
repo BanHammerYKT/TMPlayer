@@ -70,68 +70,54 @@ class HomeAutoFillTest {
     }
 
     @Test
-    fun `movies and shows never share a row`() {
-        val a = video(1, "Big Buck Bunny (2008).mkv").copy(durationSec = 100 * 60)
+    fun `Home is Continue watching, Recently added, then a row for each starred chat`() {
+        val a = video(1, "Big Buck Bunny (2008).mkv")
         val b = video(1, "Harbour Notes S01E01.mkv")
-        val c = video(1, "Harbour Notes S01E02.mkv")
-        val d = video(2, "Sintel (2010).mkv").copy(durationSec = 100 * 60)
-        // A feature-length video without a film's name: a movie still, after the films.
-        val e = video(2, "Family evening.mp4").copy(durationSec = 95 * 60)
-        val chats = listOf(chat(1), chat(2))
-        val loaded = mapOf(1L to listOf(a, b, c), 2L to listOf(d, e))
-        val rows = HomeRows.build(
-            emptyList(), chats, loaded, recent = listOf(a, b, c, d, e), recentMinStarred = 1,
-            starred = emptySet(), autoFill = true,
+        val c = video(2, "Harbour Notes S01E02.mkv")
+        val d = video(3, "Sintel (2010).mkv")
+        val e = video(3, "Lecture one.mp4")
+        val chats = listOf(chat(1), chat(2), chat(3))
+        val loaded = mapOf(1L to listOf(a, b), 2L to listOf(c), 3L to listOf(d, e))
+        val resume = ResumeRecord(
+            chatId = 3, messageId = e.messageId, fileId = 1, title = "Lecture one.mp4", chatTitle = "Chat 3",
+            sizeBytes = 1, durationSec = 60, positionMs = 5_000, durationMs = 60_000, updatedAt = 1,
         )
+        val home = HomeRows.homeChats(chats, favourites = setOf(3, 1), recent = listOf(a, b, c, d, e))
+        val rows = HomeRows.build(
+            listOf(resume), home, loaded, recent = listOf(a, b, c, d, e), recentMinStarred = 1,
+            starred = setOf(3, 1), autoFill = true,
+        )
+        // Starred chats in the chat list's order; chat 2, picked by Home itself, only feeds Recently added.
+        assertEquals(listOf("continue", "recent", "chat-1", "chat-3"), rows.map { it.key })
         val recent = rows.filterIsInstance<HomeRow.Recent>().single()
         assertFalse("not every chat is starred", recent.starredOnly)
-        val across = rows.filterIsInstance<HomeRow.Across>()
-        assertEquals(listOf(HomeRow.Across.Kind.Videos, HomeRow.Across.Kind.Shows), across.map { it.kind })
-        assertEquals("right under the carousel", listOf("recent", "across-videos", "across-shows"), rows.take(3).map { it.key })
-        across.forEach { row -> assertTrue(row.entries.all { HomeRows.kindOf(it) == row.kind }) }
-        // Carousel, Movies and Shows only: no row per chat, Watch later or New episodes.
-        assertEquals(listOf("recent", "across-videos", "across-shows"), rows.map { it.key })
-        // Films come first among the videos.
-        val videos = across.first { it.kind == HomeRow.Across.Kind.Videos }.entries.map { (it as ShelfEntry.File).item.messageId }
-        assertEquals(listOf(d.messageId, a.messageId, e.messageId), videos)
+        assertTrue(recent.hasMore)
+        // What is part way through stays in Continue and nowhere else.
+        val chat3 = rows.filterIsInstance<HomeRow.Chat>().single { it.chatId == 3L }
+        assertEquals(listOf(d.messageId), chat3.entries.map { (it as ShelfEntry.File).item.messageId })
     }
 
     @Test
-    fun `clips and trailers stay out of Movies, season packs and dated episodes go to Shows`() {
-        val film = video(1, "Sintel (2010).mkv").copy(durationSec = 0)
-        val longVideo = video(1, "Family evening.mp4").copy(durationSec = 90 * 60)
-        val bigUnknown = video(1, "Recording.mp4").copy(durationSec = 0, sizeBytes = 900L * 1024 * 1024)
-        val clip = video(1, "Holiday clip.mp4")
-        val shortYear = video(1, "Wedding 2019.mp4").copy(durationSec = 4 * 60)
-        val trailer = video(1, "Sintel (2010) Trailer.mp4")
-        val pack = video(2, "Harbour Notes S02 1080p.mkv")
-        val dated = video(2, "Evening News 2024.10.14.mp4")
-        val episode = video(2, "Harbour Notes S01E03.mkv")
-        val movies = HomeRow.Across.Kind.Videos
-        val shows = HomeRow.Across.Kind.Shows
-        assertEquals(movies, HomeRows.kindOf(film))
-        assertEquals(movies, HomeRows.kindOf(longVideo))
-        assertEquals(movies, HomeRows.kindOf(bigUnknown))
-        assertNull("a short clip", HomeRows.kindOf(clip))
-        assertNull("a clip named with a year", HomeRows.kindOf(shortYear))
-        assertNull("a trailer", HomeRows.kindOf(trailer))
-        assertEquals(shows, HomeRows.kindOf(pack))
-        assertEquals(shows, HomeRows.kindOf(dated))
-        assertEquals(shows, HomeRows.kindOf(episode))
-
-        val all = listOf(film, longVideo, bigUnknown, clip, shortYear, trailer, pack, dated, episode)
+    fun `with nothing starred Home is Continue watching and Recently added`() {
+        val a = video(1, "Sintel (2010).mkv")
         val rows = HomeRows.build(
-            emptyList(), listOf(chat(1), chat(2)), mapOf(1L to all.filter { it.chatId == 1L }, 2L to all.filter { it.chatId == 2L }),
-            recent = all, recentMinStarred = 1, starred = emptySet(), autoFill = true,
+            emptyList(), HomeRows.homeChats(listOf(chat(1)), emptySet(), listOf(a)), mapOf(1L to listOf(a)),
+            recent = listOf(a), recentMinStarred = 1, starred = emptySet(), autoFill = true,
         )
-        val across = rows.filterIsInstance<HomeRow.Across>()
-        val shown = across.flatMap { row -> row.entries.map { row.kind to it } }
-        assertTrue(shown.all { (kind, entry) -> HomeRows.kindOf(entry) == kind })
-        val ids = across.flatMap { row -> row.entries.filterIsInstance<ShelfEntry.File>().map { it.item.messageId } }.toSet()
-        assertFalse(clip.messageId in ids || shortYear.messageId in ids || trailer.messageId in ids)
-        // See all lists the same kind as its row.
-        val moviesRow = across.first { it.kind == movies }
-        assertTrue(HomeRows.seeAll(moviesRow, all)!!.all { HomeRows.kindOf(it) == movies })
+        assertEquals(listOf("recent"), rows.map { it.key })
+    }
+
+    @Test
+    fun `a starred chat still loading holds its row's place, and one with nothing is left out`() {
+        val a = video(1, "Sintel (2010).mkv")
+        val chats = listOf(chat(1), chat(2), chat(3))
+        val rows = HomeRows.build(
+            emptyList(), HomeRows.homeChats(chats, setOf(2, 3), listOf(a)), mapOf(1L to listOf(a), 3L to emptyList()),
+            recent = listOf(a), recentMinStarred = 1, starred = setOf(2, 3), autoFill = true,
+        )
+        val chatRows = rows.filterIsInstance<HomeRow.Chat>()
+        assertEquals(listOf(2L), chatRows.map { it.chatId })
+        assertFalse(chatRows.single().loaded)
     }
 
     @Test

@@ -285,6 +285,8 @@ internal fun BrowseScreen(
     /** Home's rows, built by [com.tmplayer.data.HomeRows] from what has loaded so far. */
     homeRows: List<HomeRow> = emptyList(),
     homeRowsReady: Boolean = true,
+    /** The carousel at the top of Home, which Settings can turn off. */
+    homeCarousel: Boolean = true,
     /** Continue watching videos as Telegram describes them, by progress key, for their pictures. */
     homeArt: Map<String, MediaItem> = emptyMap(),
     homeWatch: SeriesWatch = SeriesWatch.None,
@@ -295,7 +297,7 @@ internal fun BrowseScreen(
     /** A row came on screen without its videos: fetch them. */
     onHomeRowShown: (HomeRow) -> Unit = {},
     onHomeArtWanted: (ResumeRecord) -> Unit = {},
-    /** Movies and Shows read on through Home's chats as they are scrolled to their end. */
+    /** Recently added reads on through Home's chats as it is scrolled to its end. */
     homeFeedOf: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
     onHomeLaterArtWanted: (WatchLaterRecord) -> Unit = {},
     /** Plays a video from one of Home's rows; the second argument is its chat's name. */
@@ -551,6 +553,7 @@ internal fun BrowseScreen(
                             HomePane(
                                 rows = homeRows,
                                 rowsReady = homeRowsReady,
+                                carouselOn = homeCarousel,
                                 watch = homeWatch,
                                 art = homeArt,
                                 chatTitle = { titles[it].orEmpty() },
@@ -572,11 +575,10 @@ internal fun BrowseScreen(
                                     query = ""
                                 },
                                 onOpenChat = { id -> data.chats.firstOrNull { it.id == id }?.let(onOpenChat) },
-                                // Never: Home fills itself from the chats with videos (2026-10-21), so
-                                // "add chats to your favourites" no longer says how to fill it, and it
-                                // flashed up while the rows were still being built. An account with no
-                                // videos at all gets the first run's tip instead.
-                                noFavourites = false,
+                                // Starred chats get a row each under Recently added (2026-10-23), so
+                                // with none the hint says how to add them; only once the rows are
+                                // built, since it flashed up while they were still coming in.
+                                noFavourites = favorites.isEmpty() && homeRowsReady,
                                 onOpenSection = { onPickTab(it); query = "" },
                                 onOpenWatchLater = openLater,
                                 onLaterArtWanted = onHomeLaterArtWanted,

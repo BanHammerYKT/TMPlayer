@@ -674,7 +674,6 @@ class HomeViewModel(
      */
     fun seeAll(row: HomeRow): RowFeed? {
         val chats = when (row) {
-            is HomeRow.Across -> row.chatIds
             is HomeRow.Recent -> row.chatIds
             is HomeRow.Chat -> listOf(row.chatId)
             else -> return null
@@ -795,8 +794,8 @@ fun rememberHomeRows(
     /** See [HomeRows.build]: one on a phone, whose Recently added is the featured carousel. */
     recentMinStarred: Int = HomeRows.RECENT_MIN_STARRED,
     /**
-     * Home fills itself from the chats with videos, favourites first ([HomeRows.homeChats]), with
-     * Movies and Shows rows across them and each chat's movies and shows in rows of their own.
+     * Home fills itself from the chats with videos, favourites first ([HomeRows.homeChats]): they
+     * feed Recently added, and each starred chat has a row of its own under it.
      * False draws the starred chats alone, as Home did before 2026-10-21.
      */
     autoFill: Boolean = true,
@@ -833,10 +832,9 @@ fun rememberHomeRows(
             homeMemo.key = key
             if (picked !== homeMemo.home) {
                 homeMemo.home = picked
-                // Filling itself, Home has no chat rows to ask for their videos when drawn, so
-                // Movies and Shows saw only the newest videos across every chat: a show posted
-                // before the last few dozen uploads anywhere never reached them. Each of Home's
-                // chats is asked for its own (once each: the model keeps count).
+                // Filling itself, Home has no row for a chat it picked to ask for its videos when
+                // drawn, so Recently added saw only the newest videos across every chat. Each of
+                // Home's chats is asked for its own (once each: the model keeps count).
                 if (autoFill) picked.forEach { model.request(it.id) }
             }
         }
@@ -905,7 +903,6 @@ private fun PrefetchHomeArt(rows: List<HomeRow>, model: HomeViewModel) {
             val entries = when (row) {
                 is HomeRow.Chat -> row.entries
                 is HomeRow.Recent -> row.entries
-                is HomeRow.Across -> row.entries
                 else -> emptyList()
             }
             // The carousel's pages want their title logos too.

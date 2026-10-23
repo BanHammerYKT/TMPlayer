@@ -294,6 +294,7 @@ fun SettingsScreen(
     // Matches the stored default, so the switch does not show as on for the frame before the
     // first value arrives and then visibly flick off.
     val openLastChat by settings.openLastChat.collectAsStateWithLifecycle(initialValue = false)
+    val homeCarousel by settings.homeCarousel.collectAsStateWithLifecycle(initialValue = true)
     // The single video watching leaves behind. Empty until the first read, which reads the same as
     // having none: "Nothing cached" for a frame is honest either way.
     val cached by settings.cachedVideos.collectAsStateWithLifecycle(initialValue = emptyList())
@@ -1199,6 +1200,17 @@ fun SettingsScreen(
                             },
                         )
                     }
+                }
+
+                // The carousel at the top of Home, which some would rather do without.
+                item(key = "home_carousel") {
+                    ToggleRow(
+                        title = s.settingsHomeCarousel,
+                        subtitle = if (homeCarousel) s.settingsHomeCarouselOn else s.settingsHomeCarouselOff,
+                        icon = TmIcons.Home,
+                        checked = homeCarousel,
+                        onToggle = { scope.launch { settings.setHomeCarousel(!homeCarousel) } },
+                    )
                 }
 
                 // ---- lists ---------------------------------------------------------------------------
