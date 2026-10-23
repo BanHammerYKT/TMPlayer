@@ -548,6 +548,11 @@ fun MediaGridScreen(
     // switch of arrangement made there leaves it there, on the button just pressed.
     var headerHasFocus by remember { mutableStateOf(false) }
     val laidOut = remember { arrayOf(layout) }
+    // The television's search field is being typed into. Each pause in the typing lists the
+    // answer, and nothing the listing does then may take the field's focus: that closed the
+    // keyboard after a letter or two (user, 2026-10-23).
+    var typing by remember { mutableStateOf(false) }
+    val typingNow = typing && !selecting
 
     val listing: @Composable () -> Unit = {
       CompositionLocalProvider(com.tmplayer.ui.components.LocalTileShared provides tileShared) {
@@ -555,6 +560,7 @@ fun MediaGridScreen(
             state,
             onRetry = viewModel::load,
             loading = { MediaGridSkeleton(layout = layout) },
+            takeFocus = !typingNow,
             onAction = { action ->
                 viewModel.act(action)
                 // The search across every chat lives with the chat list: back there, where it opens.
@@ -1087,10 +1093,11 @@ fun MediaGridScreen(
             // on a remote: on a phone this would highlight a card nobody pointed at.
             // The rows or tiles button pressed in the heading keeps the remote, though: the list
             // under it changes, and the button is where the viewer is looking to press it again.
+            // Nor while the search is being typed into: the answer is what changed the first item.
             LaunchedEffect(list.items.firstOrNull()?.id, layout, touch) {
                 val switchedHere = laidOut[0] != layout && headerHasFocus
                 laidOut[0] = layout
-                if (!touch && !switchedHere) runCatching { firstItem.requestFocus() }
+                if (!touch && !switchedHere && !typingNow) runCatching { firstItem.requestFocus() }
             }
             // Back from a video's page the remote lands on the tile it was opened from: a page
             // of messages arriving meanwhile asked for the first tile above (Mi TV, 2026-10-23).
@@ -1233,6 +1240,7 @@ fun MediaGridScreen(
                     onSort = { sorting = true },
                     filtered = filter != com.tmplayer.data.VideoFilter.All,
                     onChatInfo = { chatInfoOpen = true },
+                    onTyping = { typing = it },
                 )
             }
             // Under the heading and over the grid, so Up from the first row of tiles reaches it.
@@ -1614,6 +1622,8 @@ internal fun Header(
     filtered: Boolean = false,
     /** Opens the chat's info panel, from a button beside its name; null leaves it out. */
     onChatInfo: (() -> Unit)? = null,
+    /** Told whether the search field is being typed into (its text field holds the focus). */
+    onTyping: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val s = LocalStrings.current
@@ -1674,7 +1684,12 @@ internal fun Header(
                 placeholder = s.gridSearchThisChat,
                 onSubmit = onSubmit,
                 editRequests = keyboardRequests,
-                modifier = Modifier.weight(1f).focusRequester(searchField),
+                // The field's own box focused is the remote passing by; the text field inside it
+                // focused is typing.
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(searchField)
+                    .onFocusChanged { onTyping(it.hasFocus && !it.isFocused) },
             )
             if (startVoice != null) {
                 // The microphone says what it does, so no label takes room from the search field.
