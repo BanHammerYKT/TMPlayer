@@ -47,6 +47,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -368,6 +369,8 @@ internal fun HomePane(
         ) {
           // While a See all page stands over Home, the remote cannot move into the rows under it.
           val pageOpen by androidx.compose.runtime.rememberUpdatedState(seeAllRow != null)
+          // The last key pressed anywhere on Home, which stops the TV carousel turning once nobody is there.
+          val homeIdle = remember { HomeIdle() }
           Column(
               Modifier
                   .fillMaxSize()
@@ -375,7 +378,10 @@ internal fun HomePane(
                       if (touch) {
                           Modifier
                       } else {
-                          Modifier.onFocusChanged { state ->
+                          Modifier.onPreviewKeyEvent {
+                              homeIdle.touched()
+                              false
+                          }.onFocusChanged { state ->
                               if (state.hasFocus) {
                                   homeHad[0] = true
                               } else if (homeHad[0]) {
@@ -442,6 +448,7 @@ internal fun HomePane(
                             },
                             header = tvHeader?.let { heading -> { heading(true) } },
                             playFocus = tvPlayFocus,
+                            idle = homeIdle,
                             modifier = Modifier.onFocusChanged { state ->
                                 if (state.hasFocus) {
                                     focusedSpot[0] = FEATURED_KEY
@@ -631,9 +638,14 @@ internal fun HomePane(
                                 var feed by remember(row.key) { mutableStateOf<com.tmplayer.ui.browse.RowFeed?>(null) }
                                 val fed = feed?.state?.collectAsState()?.value
                                 LaunchedEffect(feed, row) { feed?.reshape(row) }
-                                val paging = RowPaging(fed) {
-                                    val reading = feed ?: feedOf(row).also { feed = it }
-                                    reading?.loadMore()
+                                // Kept across compositions while the read stands still, so the row
+                                // skips when nothing it shows has changed.
+                                val feedFor by rememberUpdatedState(feedOf)
+                                val paging = remember(fed, row) {
+                                    RowPaging(fed) {
+                                        val reading = feed ?: feedFor(row).also { feed = it }
+                                        reading?.loadMore()
+                                    }
                                 }
                                 // Back from its See all page, the remote lands on this row again.
                                 if (!touch) LaunchedEffect(returnTo) {
@@ -799,7 +811,9 @@ private fun ShelfRows(
         val fed = paging.state
         com.tmplayer.ui.components.LoadMoreAhead(
             list,
-            enabled = fed == null || fed.wants(scrolling = list.isScrollInProgress),
+            // The scroll is read only where the answer turns on it, so a row whose read is busy or
+            // done does not compose again each time the viewer starts or stops moving it.
+            enabled = fed == null || fed.wants(scrolling = false) || (fed.wants(scrolling = true) && list.isScrollInProgress),
             count = entries.size,
             ahead = ROW_TILES_AHEAD,
             onLoadMore = paging.more,
@@ -873,7 +887,10 @@ private fun AcrossSeeAll(
     val poster = remember(entries) { SeriesShelf.posterKeys(entries).isNotEmpty() }
     val grid = com.tmplayer.ui.components.rememberAheadGridState()
     if (feed != null) {
-        com.tmplayer.ui.components.LoadMoreAhead(grid, enabled = fed == null || fed.wants(scrolling = grid.isScrollInProgress)) { feed.loadMore() }
+        com.tmplayer.ui.components.LoadMoreAhead(
+            grid,
+            enabled = fed == null || fed.wants(scrolling = false) || (fed.wants(scrolling = true) && grid.isScrollInProgress),
+        ) { feed.loadMore() }
     }
     // The remote lands on the first tile as the page opens.
     val firstTile = remember { FocusRequester() }
@@ -929,13 +946,18 @@ private fun AcrossSeeAll(
             horizontalArrangement = Arrangement.spacedBy(gap),
             verticalArrangement = Arrangement.spacedBy(if (touch) 16.dp else gap + Tv.FocusClearance),
         ) {
-            items(entries.size, key = { entries[it].key }) { index ->
+            items(
+                entries.size,
+                key = { entries[it].key },
+                // As the row's own: a show's tile and a video's are built differently, so each reuses its own kind.
+                contentType = { if (poster) "poster-${entries[it]::class.simpleName}" else entries[it]::class },
+            ) { index ->
                 val entry = entries[index]
                 val focus = if (index == 0) Modifier.focusRequester(firstTile) else Modifier
                 ShelfTile(entry, poster, watch, touch, chatTitle, onPlay, onHold, onOpenSeries, Modifier.fillMaxWidth().then(focus))
             }
             if (fed != null && (fed.loading || fed.failure != null)) {
-                item(key = "more-foot", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                item(key = "more-foot", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, contentType = "more-foot") {
                     com.tmplayer.ui.components.PageFoot(fed.loading, fed.failure, onRetry = { feed.loadMore() }) {
                         PlaceholderTile(if (poster) posterWidth(touch) else wideWidth(touch), touch, poster)
                     }

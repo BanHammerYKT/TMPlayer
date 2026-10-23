@@ -30,7 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -54,16 +54,21 @@ import com.tmplayer.ui.theme.Tv
  */
 @Stable
 class Shimmer internal constructor(
-    private val progress: State<Float>,
+    /** The sweep's place, 0 to 1; null where the placeholders stand still. */
+    private val progress: State<Float>?,
     /**
      * The band's three stops, read once where the theme is in scope. They must be the scheme's own
      * greys, so a light window does not shimmer a dark block.
      */
     private val colors: List<Color>,
 ) {
+    /** Whether the band moves, so a placeholder has to be painted again every frame. */
+    internal val moving: Boolean get() = progress != null
+
     internal fun brush(width: Float): Brush {
-        // A zero-width element would ask for a gradient whose two ends are the same point.
-        if (width <= 0f) return SolidColor(colors.first())
+        // A zero-width element would ask for a gradient whose two ends are the same point, and a
+        // still placeholder is one flat colour.
+        if (width <= 0f || progress == null) return SolidColor(colors.first())
         // The band is as wide as the element and travels from just off its left edge to just off
         // its right, so every placeholder sweeps in step with its neighbours whatever its width,
         // and is fully outside the element at both ends, hiding the jump back to the start.
@@ -86,10 +91,11 @@ class Shimmer internal constructor(
 fun rememberShimmer(): Shimmer {
     val base = Tone.surface
     val band = Tone.surfaceHigh
-    // Reduce motion (CP68): the placeholders stand still, the band parked off to the side.
-    if (com.tmplayer.ui.theme.Motion.reduced) {
-        val still = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-        return remember(base, band) { Shimmer(still, listOf(base, base, base)) }
+    // Reduce motion (CP68), and always on a television: the placeholders stand still, drawn once.
+    // A sweep on a TV stick repainted every placeholder on screen every frame while a screen was
+    // loading, the time the stick has least to spare.
+    if (com.tmplayer.ui.theme.Motion.reduced || com.tmplayer.ui.theme.Motion.television) {
+        return remember(base) { Shimmer(null, listOf(base, base, base)) }
     }
     val transition = rememberInfiniteTransition(label = "shimmer")
     val progress = transition.animateFloat(
@@ -108,8 +114,10 @@ fun rememberShimmer(): Shimmer {
 /**
  * A single grey placeholder block.
  *
- * Painted with [drawBehind] and an outline rather than `clip().background()`: a clip allocates a
- * graphics layer per element, and a full grid of tiles would want forty of them.
+ * Painted with an outline rather than `clip().background()`: a clip allocates a graphics layer per
+ * element, and a full grid of tiles would want forty of them. The outline, and a still
+ * placeholder's paint, are made once per size in [drawWithCache]; only a moving band's gradient
+ * is made again each frame.
  */
 @Composable
 fun SkeletonBox(
@@ -118,8 +126,10 @@ fun SkeletonBox(
     shape: Shape = RoundedCornerShape(Corner.Small),
 ) {
     Box(
-        modifier.drawBehind {
-            drawOutline(shape.createOutline(size, layoutDirection, this), shimmer.brush(size.width))
+        modifier.drawWithCache {
+            val outline = shape.createOutline(size, layoutDirection, this)
+            val still = if (shimmer.moving) null else shimmer.brush(size.width)
+            onDrawBehind { drawOutline(outline, still ?: shimmer.brush(size.width)) }
         },
     )
 }
