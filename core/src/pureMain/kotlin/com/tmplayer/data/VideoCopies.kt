@@ -172,10 +172,6 @@ object VideoCopies {
         name.lowercase().split(NOT_WORD).mapNotNullTo(LinkedHashSet()) { LANGUAGES[it] }
 
     /**
-     * The picture's height a copy was made at, 2160 for 4K: from the name where it says ("1080p",
-     * "4K"), else from the size Telegram states, the shorter side. Null when neither says.
-     */
-    /**
      * The picture a copy is, as a badge names it ("4K", "1080p"), read as the copies list reads it
      * ([heightOf]: the name's marker first, then the size Telegram states), so a video's facts line
      * and the copy named under Play never give one file two qualities (a "720p" badge over
@@ -183,6 +179,10 @@ object VideoCopies {
      */
     fun qualityLabel(item: MediaItem): String? = heightOf(item)?.let { if (it >= 2160) "4K" else "${it}p" }
 
+    /**
+     * The picture's height a copy was made at, 2160 for 4K: from the name where it says ("1080p",
+     * "4K"), else from the size Telegram states, the shorter side. Null when neither says.
+     */
     fun heightOf(item: MediaItem): Int? {
         val name = item.fileName.ifBlank { item.title }
         val marked = EpisodeCopies.markers(name).firstNotNullOfOrNull { it.toIntOrNull() }
