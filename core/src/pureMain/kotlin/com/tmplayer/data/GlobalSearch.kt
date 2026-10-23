@@ -170,6 +170,13 @@ data class ResultGroup(
 ) {
     val lead: MediaItem get() = copies.first()
 
+    /**
+     * How many files the copies are, the same file posted twice counted once, as the video's page
+     * counts its versions ([VideoCopies.distinctFiles]): the card said "4 copies" over a page of
+     * "3 versions" when one file had been forwarded to a second chat.
+     */
+    val fileCount: Int get() = VideoCopies.distinctFiles(copies).size
+
     /** The chats the copies are in, the lead's first, each once. */
     val chatIds: List<Long> get() = copies.map { it.chatId }.distinct()
 

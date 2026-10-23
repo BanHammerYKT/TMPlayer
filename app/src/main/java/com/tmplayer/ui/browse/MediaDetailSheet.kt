@@ -412,7 +412,7 @@ private fun HoldMenu(
     val subtitle = listOfNotNull(
         item.durationSec.takeIf { it > 0 }?.let { s.formatter.duration(it.toLong()) },
         item.sizeBytes.takeIf { it > 0 }?.let { com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(it)) },
-        facts.resolution,
+        com.tmplayer.data.VideoCopies.qualityLabel(item) ?: facts.resolution,
         facts.videoCodec,
         chatTitle.ifBlank { null },
     ).joinToString("  ·  ").ifBlank { null }

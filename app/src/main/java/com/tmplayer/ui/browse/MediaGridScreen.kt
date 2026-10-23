@@ -676,6 +676,9 @@ fun MediaGridScreen(
                 }
             }
             val firstItem = remember { FocusRequester() }
+            // The tile a video's page (or a show's, or the hold menu) was opened from, which the
+            // remote goes back to when it closes rather than to the first tile.
+            val tileReturn = rememberTileReturn()
             val firstKey = shelf.firstOrNull()?.key
             // The first row of a television's listing, by key. Focus landing there asks to be
             // brought into view with the focus clearance above it, which scrolls the listing a
@@ -800,11 +803,14 @@ fun MediaGridScreen(
                                                     series = shelved.series,
                                                     progress = remember(shelved.series, watch) { watch.progress(shelved.series) },
                                                     fresh = remember(shelved.series, watch) { watch.newEpisodes(shelved.series) > 0 },
-                                                    onClick = { openSeries.open(shelved.series) },
+                                                    onClick = {
+                                                        tileReturn.open(shelved.key)
+                                                        openSeries.open(shelved.series)
+                                                    },
                                                     dense = dense,
                                                     poster = true,
                                                     onFocused = { standingOn = shelved.series.cover },
-                                                    modifier = focusOf(shelved),
+                                                    modifier = focusOf(shelved).returnTile(tileReturn, shelved.key),
                                                 )
                                             } else {
                                             val item = (shelved as ShelfEntry.File).item
@@ -817,12 +823,18 @@ fun MediaGridScreen(
                                                 dense = dense,
                                                 poster = shelved.key in posterKeys,
                                                 selected = if (selecting) selected.containsKey(item.id) else null,
-                                                onClick = { if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item) },
+                                                onClick = {
+                                                    tileReturn.open(shelved.key)
+                                                    if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item)
+                                                },
                                                 onLongClick = if (selecting) null else {
-                                                    { heldMenuOf = item }
+                                                    {
+                                                        tileReturn.open(shelved.key)
+                                                        heldMenuOf = item
+                                                    }
                                                 },
                                                 onFocused = { standingOn = item },
-                                                modifier = focusOf(shelved),
+                                                modifier = focusOf(shelved).returnTile(tileReturn, shelved.key),
                                             )
                                             }
                                         }
@@ -868,9 +880,12 @@ fun MediaGridScreen(
                                                 series = shelved.series,
                                                 progress = remember(shelved.series, watch) { watch.progress(shelved.series) },
                                                 fresh = remember(shelved.series, watch) { watch.newEpisodes(shelved.series) > 0 },
-                                                onClick = { openSeries.open(shelved.series) },
+                                                onClick = {
+                                                    tileReturn.open(shelved.key)
+                                                    openSeries.open(shelved.series)
+                                                },
                                                 onFocused = { standingOn = shelved.series.cover },
-                                                modifier = focusOf(shelved),
+                                                modifier = focusOf(shelved).returnTile(tileReturn, shelved.key),
                                             )
                                         } else {
                                         val item = (shelved as ShelfEntry.File).item
@@ -882,12 +897,18 @@ fun MediaGridScreen(
                                             ],
                                             finished = SettingsStore.progressKey(item.watchedBy.chatId, item.watchedBy.messageId) in watchedVideos,
                                             selected = if (selecting) selected.containsKey(item.id) else null,
-                                            onClick = { if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item) },
+                                            onClick = {
+                                                tileReturn.open(shelved.key)
+                                                if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item)
+                                            },
                                             onLongClick = if (selecting) null else {
-                                                { heldMenuOf = item }
+                                                {
+                                                    tileReturn.open(shelved.key)
+                                                    heldMenuOf = item
+                                                }
                                             },
                                             onFocused = { standingOn = item },
-                                            modifier = focusOf(shelved),
+                                            modifier = focusOf(shelved).returnTile(tileReturn, shelved.key),
                                         )
                                         }
                                     }
@@ -1073,6 +1094,20 @@ fun MediaGridScreen(
                 val switchedHere = laidOut[0] != layout && headerHasFocus
                 laidOut[0] = layout
                 if (!touch && !switchedHere) runCatching { firstItem.requestFocus() }
+            }
+            // Back from a video's page the remote lands on the tile it was opened from: a page
+            // of messages arriving meanwhile asked for the first tile above (Mi TV, 2026-10-23).
+            ReturnToTile(tileReturn, pageOpen = details.top != null || heldMenuOf != null || openSeries.series != null) { key ->
+                val at = feed.indexOfFirst { (it as? MediaFeedEntry.Media)?.item?.key == key }
+                if (at < 0) return@ReturnToTile false
+                // The notes the listing may start with are items of their own.
+                val lead = (if (metaNotice) 1 else 0) +
+                    (if (course != null || loadedOnly || filterNote || selfDestructNote) 1 else 0)
+                when (layout) {
+                    CardLayout.Grid -> gridState.scrollToItem(lead + at)
+                    CardLayout.List -> listState.scrollToItem(lead + at)
+                }
+                true
             }
 
             // Fetch the next page well before the user reaches the bottom row. The lead is counted

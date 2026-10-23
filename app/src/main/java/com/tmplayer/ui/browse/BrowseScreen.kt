@@ -643,6 +643,7 @@ internal fun BrowseScreen(
                                     tiles = tiles,
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
+                                    pageOpen = details.top != null,
                                     text = { it.cardText() },
                                     onResume = openResume,
                                     onHold = { mediaMenu = it },
@@ -662,6 +663,7 @@ internal fun BrowseScreen(
                                     tiles = tiles,
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
+                                    pageOpen = details.top != null,
                                     onResume = openLater,
                                     onHold = { laterMenu = it },
                                 )
@@ -683,6 +685,7 @@ internal fun BrowseScreen(
                                     tiles = tiles,
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
+                                    pageOpen = details.top != null,
                                     onResume = onOpenWatched,
                                     onHold = { watchedMenu = it },
                                     dayOf = { it.watchedAt },
@@ -1407,8 +1410,12 @@ private fun <T : Any> ContinueSection(
     dayText: ((T, DayGroup) -> VideoCardText)? = null,
     /** Listed A to Z: the fast scroller's bubble gives the letter rather than the day. */
     byName: Boolean = false,
+    /** A video's page is up over the list: once it closes, the remote goes back to its card. */
+    pageOpen: Boolean = false,
 ) {
     val first = remember { FocusRequester() }
+    // The card a page was opened from, which the remote goes back to when the page closes.
+    val tileReturn = rememberTileReturn()
     val now = remember(records) { System.currentTimeMillis() }
     val days = remember(records, dayOf != null) { dayOf?.let { DayGroup.headings(records, it, now) } }
     val sections: List<Pair<DayGroup?, List<T>>> = days ?: listOf(null to records)
@@ -1423,7 +1430,12 @@ private fun <T : Any> ContinueSection(
     val standIn: T? = if (heldGone) records.getOrNull(minOf(held!!.second, records.lastIndex)) else null
     val holdThis: (T) -> Unit = { record ->
         held = text(record).key to records.indexOf(record)
+        tileReturn.open(text(record).key)
         onHold(record)
+    }
+    val resumeThis: (T) -> Unit = { record ->
+        tileReturn.open(text(record).key)
+        onResume(record)
     }
     // Only the first card asks for focus, and which card that is does not change with the
     // arrangement, so the two branches can share one modifier.
@@ -1465,9 +1477,9 @@ private fun <T : Any> ContinueSection(
                         chatTitle = card.chatTitle,
                         fraction = card.fraction,
                         finished = card.fraction >= 1f,
-                        onClick = { onResume(record) },
+                        onClick = { resumeThis(record) },
                         onHold = { holdThis(record) },
-                        modifier = focusOf(record),
+                        modifier = focusOf(record).returnTile(tileReturn, text(record).key),
                     )
                 }
                 }
@@ -1486,9 +1498,9 @@ private fun <T : Any> ContinueSection(
                 gridItems(members, key = { text(it).key }) { record ->
                     ContinueTile(
                         text = cardOf(record, day),
-                        onResume = { onResume(record) },
+                        onResume = { resumeThis(record) },
                         onHold = { holdThis(record) },
-                        modifier = focusOf(record),
+                        modifier = focusOf(record).returnTile(tileReturn, text(record).key),
                     )
                 }
                 }
@@ -1522,6 +1534,27 @@ private fun <T : Any> ContinueSection(
     // list from scratch, and the card that was holding focus leaves the composition with it.
     LaunchedEffect(records.firstOrNull()?.let { text(it).key }, layout, autoFocus) {
         if (autoFocus && mayTakeFocus()) runCatching { first.requestFocus() }
+    }
+    // Back from a video's page, the remote lands on the card it was opened from, scrolled back
+    // to where the list went while the page was up. Its lazy index counts the day headings.
+    ReturnToTile(tileReturn, pageOpen) { key ->
+        var index = 0
+        var found = -1
+        for ((day, members) in sections) {
+            if (day != null) index++
+            val at = members.indexOfFirst { text(it).key == key }
+            if (at >= 0) {
+                found = index + at
+                break
+            }
+            index += members.size
+        }
+        if (found < 0) return@ReturnToTile false
+        when (layout) {
+            CardLayout.List -> listState.scrollToItem(found)
+            CardLayout.Grid -> gridState.scrollToItem(found)
+        }
+        true
     }
     LaunchedEffect(standIn?.let { text(it).key }, heldGone) {
         if (!heldGone) return@LaunchedEffect

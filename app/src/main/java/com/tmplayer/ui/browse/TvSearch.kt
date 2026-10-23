@@ -514,7 +514,9 @@ private fun PosterCard(
             .clickable(interactionSource = interactions, indication = null, onClick = onClick),
     ) {
         ResultPoster(item, Modifier.fillMaxWidth(), fraction)
-        if (group.copies.size > 1 && !group.isShow) CopiesChip(group.copies.size, Modifier.align(Alignment.TopEnd).padding(6.dp), onArt = true)
+        // Files, as the page counts its versions: the same file in two chats is one.
+        val files = remember(group.copies) { group.fileCount }
+        if (files > 1 && !group.isShow) CopiesChip(files, Modifier.align(Alignment.TopEnd).padding(6.dp), onArt = true)
         AvatarStack(
             group.chatIds,
             chats,

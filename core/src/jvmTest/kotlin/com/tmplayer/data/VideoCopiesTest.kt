@@ -271,4 +271,29 @@ class VideoCopiesTest {
         assertEquals("1080p", bare.copyQuality())
         assertEquals("HDRip", MediaFacts.of(bare).source)
     }
+
+    @Test
+    fun `the page's quality badge names the copy as the copy line does`() {
+        // The name says 1080p while Telegram states 1280 x 720: the badge followed the size and
+        // said 720p over a copy line of "1080p  ·  HEVC" (Mi TV, 2026-10-23).
+        val copy = video(1, 70, "Night Train 2019 1080p WEBRip x265.mkv", width = 1280, height = 720)
+        assertEquals("1080p", VideoCopies.qualityLabel(copy))
+        assertEquals(copy.copyQuality(), VideoCopies.qualityLabel(copy))
+        // Only the stated size: it decides, a scope 4K film included.
+        assertEquals("720p", VideoCopies.qualityLabel(video(1, 71, "Night Train.mkv", width = 1280, height = 720)))
+        assertEquals("4K", VideoCopies.qualityLabel(video(1, 72, "Night Train.mkv", width = 3840, height = 1600)))
+        // Nothing to go on: no badge, and the copy line falls back to the size.
+        assertNull(VideoCopies.qualityLabel(video(1, 73, "Night Train.mkv")))
+    }
+
+    @Test
+    fun `a search card counts files as the page counts versions`() {
+        val one = video(1, 80, "Night Train 2019 1080p.mkv")
+        // The same file forwarded to a second chat: one version, though two posts.
+        val forwarded = one.copy(chatId = 2, messageId = 81)
+        val other = video(1, 82, "Night Train 2019 720p.mkv", size = 500L shl 20)
+        val group = ResultGroup("night train", listOf(one, forwarded, other))
+        assertEquals(2, group.fileCount)
+        assertEquals(VideoCopies.distinctFiles(group.asItem().versions).size, group.fileCount)
+    }
 }
