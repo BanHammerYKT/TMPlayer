@@ -68,7 +68,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
@@ -780,8 +782,17 @@ fun SeriesPanel(
     // slow television that item is laid out well after the page opens: a request before then is
     // lost, so it waits for Play itself rather than for a count of frames, which a stick outlasts.
     var playPlaced by remember(series.key) { mutableStateOf(false) }
+    // The episode OK last played from this page on a television, by its id: Back from the player
+    // puts the remote back on it rather than on Play or the season tabs (user, 2026-10-23). Saved,
+    // since a 1 GB stick may let the app go while the player is up and build the page again on the
+    // way back, which used to start on Play. Any other OK on the page forgets it.
+    val episodeReturn = com.tmplayer.ui.components.deviceForm() == com.tmplayer.data.DeviceForm.Tv && onOpenEpisode == null
+    var returnEpisode by rememberSaveable(series.key) { mutableStateOf<String?>(null) }
+    val episodeFocus = remember(series.key) { EpisodeFocus() }
     LaunchedEffect(series.key, windowFocused, playPlaced) {
         if (!tv || !windowFocused || !playPlaced) return@LaunchedEffect
+        // Back from an episode: that episode takes the focus (below), not Play.
+        if (returnEpisode != null) return@LaunchedEffect
         // Asked again on each frame until Play has focus, for as long as a slow first
         // layout may take.
         val until = System.nanoTime() + FOCUS_WAIT_NS
@@ -900,6 +911,35 @@ fun SeriesPanel(
         }
         if (list.firstVisibleItemIndex > SEASONS_ITEM) list.scrollToItem(SEASONS_ITEM)
     }
+    // Back from the player (the window has the focus again, or the page was built again behind
+    // it), the remote lands on the episode it was played from. Held for a few frames, as a list's
+    // tile is after a video's page, so the page's own first focus does not take it back; scrolled
+    // to first when the list has not composed it, and its range picked again when the page was
+    // rebuilt on the up-next one.
+    val ranged by rememberUpdatedState(ranges)
+    val listedNow by rememberUpdatedState(listed)
+    LaunchedEffect(series.key, windowFocused, firstPaint) {
+        if (!episodeReturn || !windowFocused || !firstPaint) return@LaunchedEffect
+        val id = returnEpisode ?: return@LaunchedEffect
+        var settled = 0
+        for (frame in 0 until EPISODE_RETURN_FRAMES) {
+            withFrameNanos { }
+            if (episodeFocus.focused == id) {
+                if (++settled >= EPISODE_RETURN_SETTLED_FRAMES) break
+                continue
+            }
+            settled = 0
+            if (episodeFocus.request(id)) continue
+            val at = listedNow.indexOfFirst { it.item.id == id }
+            if (at >= 0) {
+                list.scrollToItem(FIRST_EPISODE_ITEM + at)
+                continue
+            }
+            val range = ranged.indexOfFirst { members -> members.any { it.item.id == id } }
+            if (range < 0 || range == rangeAt) break
+            rangeAt = range
+        }
+    }
     // On a television Down from Play goes straight to the up-next card, scrolled into view first
     // since a lazy list has not composed it yet; Up from the cards still reaches the seasons.
     val downToUpNext = if (tv && upNextAt >= 0) {
@@ -920,7 +960,13 @@ fun SeriesPanel(
 
     BoxWithConstraints(
         modifier
-            .onPreviewKeyEvent { keyPressed = true; false }
+            .onPreviewKeyEvent { event ->
+                keyPressed = true
+                // OK on anything else (Play, a download, a season tab) forgets the episode played
+                // last; OK on an episode sets it again as the press is let go.
+                if (event.type == KeyEventType.KeyDown && event.key in OK_KEYS) returnEpisode = null
+                false
+            }
             // Should focus come into the page from outside before Play has it, it goes to Play.
             .then(if (tv) Modifier.focusProperties { onEnter = { runCatching { playFocus.requestFocus() } } } else Modifier)
             .focusGroup(),
@@ -1217,6 +1263,12 @@ fun SeriesPanel(
             items(listed, key = { it.item.id }) { episode ->
                 val chosen = copyOf(episode, if (next != null && episode.sameAs(next)) next.item else watch.pick(episode, progress))
                 val rowFocus = remember { FocusRequester() }
+                if (episodeReturn) {
+                    DisposableEffect(episode.item.id) {
+                        episodeFocus.attach(episode.item.id, rowFocus)
+                        onDispose { episodeFocus.detach(episode.item.id, rowFocus) }
+                    }
+                }
                 EpisodeRow(
                     episode = episode,
                     point = watch.pointOf(episode),
@@ -1224,13 +1276,19 @@ fun SeriesPanel(
                     upNext = next != null && episode.sameAs(next),
                     onClick = {
                         val open = onOpenEpisode
-                        if (open != null) open(chosen) { runCatching { rowFocus.requestFocus() } } else onPlay(chosen)
+                        if (open != null) {
+                            open(chosen) { runCatching { rowFocus.requestFocus() } }
+                        } else {
+                            if (episodeReturn) returnEpisode = episode.item.id
+                            onPlay(chosen)
+                        }
                     },
                     onLongClick = onLongClick?.let { { it(chosen) } },
                     chosen = chosen,
                     modifier = Modifier.padding(pad).widthIn(max = if (large) EPISODES_MAX_LARGE else EPISODES_MAX),
                     lineModifier = (if (next != null && episode.sameAs(next)) Modifier.focusRequester(upNextFocus) else Modifier)
-                        .focusRequester(rowFocus),
+                        .focusRequester(rowFocus)
+                        .then(if (episodeReturn) Modifier.onFocusChanged { episodeFocus.changed(episode.item.id, it.hasFocus) } else Modifier),
                     name = EpisodeNames.listName(episode.season, episode.episode, names),
                     guide = EpisodeNames.listed(episode.season, episode.episode, names),
                     showOverview = true,
@@ -1493,6 +1551,44 @@ private fun Modifier.okHold(
 }
 
 private val OK_KEYS = setOf(Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
+
+/**
+ * The show page's episode cards by id, and which one the remote is on, for putting it back on
+ * the episode played last. Plain fields read only from an effect: the remote moving between
+ * episodes is no reason to compose the page again.
+ */
+private class EpisodeFocus {
+    private val requesters = HashMap<String, FocusRequester>()
+
+    /** The episode the remote is on, or null when it is elsewhere on the page. */
+    var focused: String? = null
+        private set
+
+    fun attach(id: String, requester: FocusRequester) {
+        requesters[id] = requester
+    }
+
+    fun detach(id: String, requester: FocusRequester) {
+        if (requesters[id] === requester) requesters.remove(id)
+        if (focused == id) focused = null
+    }
+
+    fun changed(id: String, has: Boolean) {
+        if (has) focused = id else if (focused == id) focused = null
+    }
+
+    /** Asks for the episode's focus; false when its card is not composed. */
+    fun request(id: String): Boolean {
+        val requester = requesters[id] ?: return false
+        return runCatching { requester.requestFocus() }.isSuccess
+    }
+}
+
+/** How many frames after the page has the focus back the episode played last is held. */
+private const val EPISODE_RETURN_FRAMES = 12
+
+/** Frames in a row the remote has to stay on that episode for it to count as back. */
+private const val EPISODE_RETURN_SETTLED_FRAMES = 3
 
 /** How long to keep asking for Play's focus after it is placed, before giving up on it. */
 private const val FOCUS_WAIT_NS = 3_000_000_000L
