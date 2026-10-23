@@ -223,6 +223,20 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
         }
+        // A preview build for testers in the community group: the release build (minified,
+        // signed, the same speed) under its own package, so it installs beside the real app and
+        // leaves it, its sign in and its downloads alone. No updater, since the only thing it could
+        // offer is the release it is ahead of, and no crash reports, since its traces would land
+        // among the release's with no mapping uploaded for them.
+        // `./gradlew :app:assemblePreview -PtmRequireMedia3ext=true -PtmVersionName=<next release>`
+        create("preview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+            buildConfigField("boolean", "UPDATE_CHECK", "false")
+            buildConfigField("String", "SENTRY_DSN", "\"\"")
+            matchingFallbacks += listOf("release")
+        }
         create("promo") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".promo"
@@ -240,6 +254,8 @@ android {
     sourceSets.getByName("promo").kotlin.directories += "src/promo/shared"
     // The promo build's own name, so it is told apart from the real one on a launcher; with
     // `-PpromoShots` the real name, since the home screen channel shots carry it over the row.
+    // The preview build's name and marked TV banner, so it is told apart from the real one.
+    sourceSets.getByName("preview").res.directories += "src/preview/label"
     sourceSets.getByName("promo").res.directories += if (project.hasProperty("promoShots")) "src/promo/shots-label" else "src/promo/label"
 
     if (fdroidBuild) {
@@ -395,7 +411,7 @@ sentry {
     includeDependenciesReport.set(false)
     telemetry.set(false)
     // Release only: the debug and promo builds are not minified, and never report anything.
-    ignoredVariants.set(listOf("debug", "promoDebug", "promoRelease", "promo"))
+    ignoredVariants.set(listOf("debug", "promoDebug", "promoRelease", "promo", "preview"))
 
     tracingInstrumentation {
         enabled.set(false)
