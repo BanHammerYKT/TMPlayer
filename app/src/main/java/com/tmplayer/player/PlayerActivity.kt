@@ -139,6 +139,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
@@ -921,6 +922,19 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private var creditsSkipped = false
 
     /**
+     * Wakes [watchForTheEnd] while the video is not playing: it sleeps then rather than looking at
+     * the clock twice a second for a playhead that is not moving, which on a 1 GB television kept
+     * the main thread waking for as long as a paused video was left on screen. Sent whenever
+     * something that loop reads can change without the video playing: playing or stopping, a
+     * seek, the lock, picture in picture, the loading sheet, the skip times arriving.
+     */
+    private val endWatchWake = Channel<Unit>(Channel.CONFLATED)
+
+    private fun wakeEndWatch() {
+        endWatchWake.trySend(Unit)
+    }
+
+    /**
      * The "Skip intro" pill and what it works from: the timed stretches of this video, as
      * [OnlineMetadata.skipTimes] found them (empty while lookups are off or nobody has timed it),
      * the stretches already skipped this playback, by start, so none comes back after a seek
@@ -1688,6 +1702,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             }
         }
         player = exo
+        wakeEndWatch()
         castClient = client
         attachMediaSession(exo)
         attachSurface(exo)
@@ -3326,6 +3341,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            wakeEndWatch()
             loopHandler.removeCallbacks(loopWatch)
             if (isPlaying && abLoop?.complete == true) loopHandler.post(loopWatch)
             // Started again from outside the card (a headset, the notification): the question
@@ -3409,6 +3425,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             newPosition: Player.PositionInfo,
             reason: Int,
         ) {
+            // A paused playhead moved by a seek may have left the skip pill's stretch or the
+            // next-up card's last half minute, or come into them.
+            wakeEndWatch()
             if (reason != Player.DISCONTINUITY_REASON_SEEK) return
             seekStartedAt = SystemClock.elapsedRealtime()
             noteSeek(oldPosition.positionMs, newPosition.positionMs)
@@ -5205,6 +5224,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         inPictureInPicture = isInPictureInPictureMode
+        wakeEndWatch()
         if (!isInPictureInPictureMode) pictureInPictureEndedAt = SystemClock.elapsedRealtime()
         // At thumbnail size there is room for the picture and nothing else. The system draws its
         // own play and pause over the window, fed by the media session.
@@ -5930,6 +5950,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         undoChip?.hide()
         if (locked) return
         locked = true
+        wakeEndWatch()
         // The lock is invisible to a hand on a lap: it is felt going on and coming off.
         findViewById<View>(R.id.player_root)?.haptic(com.tmplayer.ui.components.Haptic.Confirm, touchPrefs.haptics)
         lockedAt = android.os.SystemClock.uptimeMillis()
@@ -6057,6 +6078,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun unlockScreen() {
         if (!locked) return
         locked = false
+        wakeEndWatch()
         findViewById<View>(R.id.player_root)?.haptic(com.tmplayer.ui.components.Haptic.ToggleOff, touchPrefs.haptics)
         unlockHeldKey = 0
         unlockPill?.removeCallbacks(unlockAfterHold)
@@ -6100,6 +6122,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * in, and near the end of an episode with a successor and autoplay on, the card comes up and
      * counts the remaining seconds down.
      *
+     * While the video is not playing (paused, waiting for bytes, not built yet) nothing here moves
+     * on its own, so the loop sleeps until [endWatchWake] says something did, and looks once.
+     *
      * "Near the end" is the last half minute, or from the start of the closing credits where
      * somebody has timed them and they begin earlier than that: credits that roll for two minutes
      * are two minutes nobody is watching for, which is when every streaming service raises its
@@ -6110,7 +6135,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val autoplay = runCatching { settings.autoplayNextNow() }.getOrDefault(true)
                 while (true) {
-                    delay(500)
+                    if (player?.isPlaying == true) delay(500) else endWatchWake.receive()
                     val exo = player ?: continue
                     updateSkipPill(exo, autoplay)
                     if (!autoplay) continue
@@ -6186,6 +6211,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             skipSegments = withContext(Dispatchers.IO) {
                 runCatching { metadata.skipTimes(item) }.getOrDefault(emptyList())
             }
+            wakeEndWatch()
         }
     }
 
@@ -6676,6 +6702,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         watchOpening()
         layOutSheetForThisScreen()
         statusOverlay.visibility = View.VISIBLE
+        wakeEndWatch()
         statusIcon.visibility = View.GONE
         rebufferChip.visibility = View.GONE
         feedback?.buffering(false)
@@ -7370,6 +7397,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         failedRetryable = false
         openingFilm = false
         statusOverlay.visibility = View.GONE
+        wakeEndWatch()
         stopArtDrift()
         rebufferChip.visibility = View.GONE
         feedback?.buffering(false)
