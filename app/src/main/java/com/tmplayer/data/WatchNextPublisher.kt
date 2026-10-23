@@ -37,6 +37,8 @@ object WatchNextPublisher {
     private const val EXTRA_DURATION = "wn_duration"
 
     fun apply(context: Context, changes: List<WatchNext.Change>) {
+        // The Play next row is Android 8's TV provider; an older television has none to fill.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
         if (changes.isEmpty()) return
         val existing = ownRows(context)
         for (change in changes) {
@@ -51,6 +53,7 @@ object WatchNextPublisher {
 
     /** Takes every entry this app put in the row back out: the setting was turned off. */
     fun clearAll(context: Context) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
         ownRows(context).values.forEach { runCatching { delete(context, it.id) } }
     }
 
@@ -87,6 +90,7 @@ object WatchNextPublisher {
     private class Row(val id: Long, val browsable: Boolean)
 
     /** This app's entries, by internal id. The provider only ever shows an app its own rows. */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ownRows(context: Context): Map<String, Row> = runCatching {
         val projection = arrayOf(
             TvContract.WatchNextPrograms._ID,
@@ -104,6 +108,7 @@ object WatchNextPublisher {
             }.orEmpty()
     }.getOrDefault(emptyMap())
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun upsert(context: Context, entry: WatchNext.Entry, row: Row?) {
         // Taken out of the row by the viewer on the home screen: that is an answer, and putting
         // it back on the next stop would be arguing with it.
@@ -128,10 +133,12 @@ object WatchNextPublisher {
         }
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun delete(context: Context, id: Long) {
         context.contentResolver.delete(ContentUris.withAppendedId(TvContract.WatchNextPrograms.CONTENT_URI, id), null, null)
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun values(context: Context, entry: WatchNext.Entry): ContentValues = ContentValues().apply {
         val video = entry.video
         put(TvContract.WatchNextPrograms.COLUMN_INTERNAL_PROVIDER_ID, entry.internalId)

@@ -276,7 +276,8 @@ kotlin {
         namespace = "com.tmplayer.core"
         // tdl-coroutines refuses anything older, as in :app.
         compileSdk = 37
-        minSdk = 26
+        // As low as :app, which says why; :app desugars java.time and java.nio.file for this code.
+        minSdk = 23
     }
     jvm()
     @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)

@@ -1,6 +1,5 @@
 package com.tmplayer.player
 
-import android.animation.ValueAnimator
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -95,7 +94,7 @@ class PlayerLoaderHost(
                 status = status,
                 note = note,
                 tv = tv,
-                motion = ValueAnimator.areAnimatorsEnabled(),
+                motion = com.tmplayer.ui.theme.systemAnimatorsEnabled(root.context),
                 insets = insets,
             )
         }

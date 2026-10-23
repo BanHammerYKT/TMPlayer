@@ -175,7 +175,7 @@ object FolderExport {
         )
         val started = runCatching {
             val intent = Intent(app, FolderExportService::class.java)
-            app.startForegroundService(intent)
+            app.startForegroundServiceCompat(intent)
         }.isSuccess
         // No service allowed (Android 15's data sync allowance spent, say): the copy still runs,
         // in the process, for as long as the app is in use.
@@ -410,7 +410,7 @@ class FolderExportService : Service() {
                     runCatching { notifier().notify(NOTIFICATION_ID, notification(progress)) }
                 }
             }
-            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+            runCatching { stopForegroundRemoving() }
             // Nobody on the Downloads screen to see the result: it is said in the shade instead.
             if (FolderExport.watchers.get() == 0) {
                 runCatching {
@@ -453,7 +453,7 @@ class FolderExportService : Service() {
     }
 
     private fun builder(): Notification.Builder =
-        Notification.Builder(this, AndroidTransferNotifier.CHANNEL_ID)
+        notificationBuilder(this, AndroidTransferNotifier.CHANNEL_ID, OldAndroid.IMPORTANCE_LOW)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentIntent(AndroidTransferNotifier.openDownloads(this))
             .setOnlyAlertOnce(true)

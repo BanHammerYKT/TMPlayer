@@ -92,7 +92,7 @@ class AndroidTransferNotifier(context: Context) : TransferNotifier {
     }
 
     private fun builder(): Notification.Builder =
-        Notification.Builder(app, CHANNEL_ID)
+        notificationBuilder(app, CHANNEL_ID, OldAndroid.IMPORTANCE_LOW)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentIntent(openDownloads(app))
             .setOnlyAlertOnce(true)
@@ -124,6 +124,8 @@ class AndroidTransferNotifier(context: Context) : TransferNotifier {
         }
 
         fun ensureChannel(context: Context) {
+            // Android 7 and older have no channels: each notification carries its own priority there.
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 L.notifyChannelDownloads,

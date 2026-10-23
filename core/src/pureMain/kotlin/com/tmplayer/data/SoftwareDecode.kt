@@ -62,7 +62,9 @@ object SoftwareDecode {
         heavyUploads[ProgressKeys.of(chatId, messageId)] = true
     }
 
-    fun knownHeavy(chatId: Long, messageId: Long): Boolean = heavyUploads[ProgressKeys.of(chatId, messageId)] == true
+    // Only ever true when present. containsKey rather than an index, which lint takes for a regex
+    // group lookup (Android 8) through the expect/actual map and flags on Android 6.
+    fun knownHeavy(chatId: Long, messageId: Long): Boolean = heavyUploads.containsKey(ProgressKeys.of(chatId, messageId))
 
     /** True the first time it is asked for a video while the app runs: the note is said once per video. */
     fun noteOnce(chatId: Long, messageId: Long): Boolean =

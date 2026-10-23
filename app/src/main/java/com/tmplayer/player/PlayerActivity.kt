@@ -5,7 +5,6 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.os.Looper
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Bundle
@@ -74,6 +73,7 @@ import com.tmplayer.data.ChatRepository
 import com.tmplayer.data.CopyHandoff
 import com.tmplayer.data.VideoCopies
 import com.tmplayer.data.copyQuality
+import com.tmplayer.data.hasPictureInPicture
 import com.tmplayer.data.LocalDownloads
 import com.tmplayer.data.OpeningStall
 import com.tmplayer.data.start
@@ -1086,7 +1086,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 activity = this,
                 root = findViewById(R.id.player_root),
                 title = { mediaTitle },
-                pictureInPicture = { packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) },
+                pictureInPicture = { hasPictureInPicture() },
                 saveToDownloads = ::canSaveToDownloads,
                 markWatched = ::hasMessage,
                 watched = { onWatchedList },
@@ -5015,7 +5015,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (FormFactor.isTv(this)) return
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        if (!hasPictureInPicture()) return
         if (player?.isPlaying != true) return
         if (cast?.casting == true) return
         if (statusOverlay.visibility == View.VISIBLE) return
@@ -5027,7 +5027,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     /** The overflow menu's and the row's picture in picture: straight into the corner. */
     private fun enterPictureInPictureNow() {
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        if (!hasPictureInPicture()) return
         runCatching { enterPictureInPictureMode(pictureInPictureParams()) }
     }
 
@@ -5037,10 +5037,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun updatePictureInPictureParams() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return
-        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return
+        if (!hasPictureInPicture()) return
         runCatching { setPictureInPictureParams(pictureInPictureParams()) }
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun pictureInPictureParams(): PictureInPictureParams {
         val builder = PictureInPictureParams.Builder()
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -5119,7 +5120,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         val menu = android.widget.PopupMenu(this, anchor, Gravity.END)
         val items = menu.menu
         val entries = PlayerMenu.phoneEntries(
-            pictureInPicture = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE),
+            pictureInPicture = hasPictureInPicture(),
             openInAnotherApp = savable == true,
             saveToDownloads = canSaveToDownloads(),
             markWatched = hasMessage(),

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +52,10 @@ object NetworkMonitor : Connectivity {
             val initial = active?.let(manager::getNetworkCapabilities)
             publish(factsOf(active, initial))
             _metered.value = meteredOf(initial)
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
+                watchEveryNetwork(manager)
+                return
+            }
             manager.registerDefaultNetworkCallback(
                 object : ConnectivityManager.NetworkCallback() {
                     override fun onCapabilitiesChanged(
@@ -68,6 +73,28 @@ object NetworkMonitor : Connectivity {
                 },
             )
         }
+    }
+
+    /**
+     * Android 6 has no callback for the default network alone, only one per network. Any change
+     * to any of them re-reads the default one, so a second network coming or going (Wi-Fi beside
+     * Ethernet on a box) never stands in for the one in use.
+     */
+    private fun watchEveryNetwork(manager: ConnectivityManager) {
+        fun refresh() {
+            val active = manager.activeNetwork
+            val capabilities = active?.let { runCatching { manager.getNetworkCapabilities(it) }.getOrNull() }
+            publish(factsOf(active, capabilities))
+            _metered.value = meteredOf(capabilities)
+        }
+        manager.registerNetworkCallback(
+            NetworkRequest.Builder().build(),
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = refresh()
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+                override fun onLost(network: Network) = refresh()
+            },
+        )
     }
 
     /** Unknown is allowed to try; only a confirmed offline state should suppress a request. */

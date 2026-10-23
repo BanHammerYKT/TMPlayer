@@ -74,7 +74,12 @@ android {
 
     defaultConfig {
         applicationId = "com.tmplayer"
-        minSdk = 26
+        // Android 6. The floor is the highest minSdk among the libraries (TDLib's tdl-coroutines,
+        // Media3, nextlib, Compose, AndroidX and the Cast framework all declare 23), so older TVs
+        // such as the Fire TV Stick 4K on Fire OS 6 (Android 7.1) and the Android 6 and 7 boxes
+        // install it. What only Android 8 and later have is guarded where it is called
+        // (LegacyApiCompat.kt); `:app:lintRelease` reports a new one in :app as NewApi.
+        minSdk = 23
         targetSdk = 35
         // A release is cut by pushing a git tag, and the workflow passes the version through as
         // Gradle properties. The literals below are what a local build gets, and they track the
@@ -247,6 +252,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // The shared core uses java.time and java.nio.file (File.toPath(), Files.move,
+        // FileChannel.open), which Android only has from 8.0. Desugaring rewrites those calls at
+        // build time to a bundled copy, so nothing is looked up or loaded at start-up: the classes
+        // load lazily on first use, the same as the platform's would.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -287,6 +297,7 @@ kotlin {
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     // TDLib, the repositories, settings, the download queue and the streaming window: everything
     // that is not Android's, shared with the desktop app. It brings tdl-coroutines, coroutines and
     // DataStore's preferences core with it.

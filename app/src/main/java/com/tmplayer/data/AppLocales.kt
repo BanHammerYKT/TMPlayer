@@ -27,6 +27,8 @@ object AppLocales {
 
     /** The device's own languages, as BCP 47 tags, not this app's override of them. */
     fun system(context: Context): List<String> {
+        // Android 6 has one language, not a list of them.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return listOf(java.util.Locale.getDefault().toLanguageTag())
         val list = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.getSystemService(LocaleManager::class.java)?.systemLocales ?: LocaleList.getDefault()
         } else {

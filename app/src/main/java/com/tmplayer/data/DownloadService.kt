@@ -808,7 +808,7 @@ class DownloadService : Service() {
         // viewer wants to find later. Only the ongoing one holding the service up goes, and it is
         // marked as gone before it is taken down so that nothing arriving late puts it back.
         stopping = true
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopForegroundRemoving()
         // Asked for by hand as well. STOP_FOREGROUND_REMOVE only takes down a notification this
         // service is actually in the foreground with, and an earlier refresh may have replaced it
         // with an ordinary one of the same id, which that flag leaves exactly where it is.
@@ -1141,7 +1141,7 @@ class DownloadService : Service() {
     }
 
     private fun builder(): Notification.Builder =
-        Notification.Builder(this, CHANNEL_ID)
+        notificationBuilder(this, CHANNEL_ID, OldAndroid.IMPORTANCE_LOW)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentIntent(openApp())
             .setOnlyAlertOnce(true)

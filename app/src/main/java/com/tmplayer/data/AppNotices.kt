@@ -42,6 +42,8 @@ object AppNotices {
 
     /** Every channel, created (or renamed into the current language) at once. */
     fun ensureChannels(context: Context) {
+        // Android 7 and older have no channels: each notification carries its own priority there.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
         fun channel(id: String, name: String, description: String, importance: Int) =
             NotificationChannel(id, name, importance).apply { this.description = description }
         val channels = listOf(
@@ -71,13 +73,13 @@ object AppNotices {
         val words = DownloadResults.words(result, private, reason)
         val id = DownloadResults.notificationId(result.group)
         ensureChannels(context)
-        val builder = Notification.Builder(context, CHANNEL_RESULTS)
+        val builder = notificationBuilder(context, CHANNEL_RESULTS, OldAndroid.IMPORTANCE_DEFAULT)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentTitle(words.title)
             .setContentIntent(AndroidTransferNotifier.openDownloads(context))
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(
-                Notification.Builder(context, CHANNEL_RESULTS)
+                notificationBuilder(context, CHANNEL_RESULTS, OldAndroid.IMPORTANCE_DEFAULT)
                     .setSmallIcon(R.drawable.ic_stat_download)
                     .setContentTitle(if (result.failed.isEmpty()) L.notifyDownloadDonePrivate else L.notifyDownloadFailedPrivate)
                     .build(),
@@ -112,12 +114,12 @@ object AppNotices {
 
     fun postEpisode(context: Context, alert: EpisodeAlerts.Alert) {
         ensureChannels(context)
-        val builder = Notification.Builder(context, CHANNEL_EPISODES)
+        val builder = notificationBuilder(context, CHANNEL_EPISODES, OldAndroid.IMPORTANCE_DEFAULT)
             .setSmallIcon(R.drawable.ic_stat_new_videos)
             .setContentTitle(alert.title)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(
-                Notification.Builder(context, CHANNEL_EPISODES)
+                notificationBuilder(context, CHANNEL_EPISODES, OldAndroid.IMPORTANCE_DEFAULT)
                     .setSmallIcon(R.drawable.ic_stat_new_videos)
                     .setContentTitle(L.notifyEpisodesPrivate)
                     .build(),
@@ -134,12 +136,12 @@ object AppNotices {
     fun postPieces(context: Context, alert: PieceAlerts.Alert, index: Int) {
         ensureChannels(context)
         val id = ID_PIECES + index * 0x10
-        val builder = Notification.Builder(context, CHANNEL_PIECES)
+        val builder = notificationBuilder(context, CHANNEL_PIECES, OldAndroid.IMPORTANCE_DEFAULT)
             .setSmallIcon(R.drawable.ic_stat_new_videos)
             .setContentTitle(alert.title)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(
-                Notification.Builder(context, CHANNEL_PIECES)
+                notificationBuilder(context, CHANNEL_PIECES, OldAndroid.IMPORTANCE_DEFAULT)
                     .setSmallIcon(R.drawable.ic_stat_new_videos)
                     .setContentTitle(L.notifyPiecesPrivate)
                     .build(),
@@ -159,7 +161,7 @@ object AppNotices {
     fun postLowStorage(context: Context, title: String, body: String) {
         ensureChannels(context)
         val freeUp = open(context, ID_LOW_STORAGE) { it.putExtra(MainActivity.EXTRA_OPEN, MainActivity.OPEN_FREE_UP_SPACE) }
-        val notification = Notification.Builder(context, CHANNEL_LOW_STORAGE)
+        val notification = notificationBuilder(context, CHANNEL_LOW_STORAGE, OldAndroid.IMPORTANCE_DEFAULT)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentTitle(title)
             .setContentText(body)
@@ -175,7 +177,7 @@ object AppNotices {
     fun postUpdate(context: Context, release: Release) {
         ensureChannels(context)
         val (title, body) = UpdateAlerts.words(release)
-        val notification = Notification.Builder(context, CHANNEL_UPDATES)
+        val notification = notificationBuilder(context, CHANNEL_UPDATES, OldAndroid.IMPORTANCE_LOW)
             .setSmallIcon(R.drawable.ic_stat_download)
             .setContentTitle(title)
             .setContentText(body)

@@ -20,7 +20,7 @@ object DeviceQuirks {
     fun isFireTv(context: Context): Boolean = fireOs(context) == FireOs.Kind.Tv
 
     /** What the remote and the system around it change, for this device. */
-    fun remote(context: Context): RemoteQuirks = RemoteQuirks.of(fireOs(context), FormFactor.isTv(context))
+    fun remote(context: Context): RemoteQuirks = RemoteQuirks.of(fireOs(context), FormFactor.isTv(context), Build.VERSION.SDK_INT)
 
     /** Whether this device has the memory for scrub thumbnails at all, whatever the setting says. */
     fun trickplayMemory(context: Context): Boolean {

@@ -80,7 +80,8 @@ kotlin {
     android {
         namespace = "com.tmplayer.ui"
         compileSdk = 37
-        minSdk = 26
+        // As low as :app, which says why; :app desugars java.time and java.nio.file for this code.
+        minSdk = 23
     }
     jvm()
     // The browser (web/, CP92): the same shared screens, compiled against Compose Multiplatform

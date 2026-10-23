@@ -41,6 +41,11 @@ androidxTestCore = "1.7.0"
 # Android ships org.json in the platform; a plain JVM does not, so `:core`'s jvm target carries
 # this for update-response parsing (and its tests), and the Android build never bundles it.
 json = "20240303"
+# java.time, java.nio.file and the java.util additions on Android 6 and 7 (API 23 to 25), where the
+# platform does not have them yet. The _nio flavour, because the shared core moves and opens files
+# through java.nio.file (File.toPath(), Files.move, FileChannel.open) and the plain one stops at
+# java.time.
+desugarJdkLibs = "2.1.5"
 # Desktop (Part B of the 2026-10-03 plan). Compose Multiplatform 1.12.2 maps to Jetpack Compose
 # 1.12; mediamp 0.5.2 is built against 1.12 and wraps libmpv. Its native runtime is a separate
 # artifact per OS and does not come in transitively, so :desktop names the ones it ships.
@@ -76,6 +81,7 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
 json = { group = "org.json", name = "json", version.ref = "json" }
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs_nio", version.ref = "desugarJdkLibs" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }

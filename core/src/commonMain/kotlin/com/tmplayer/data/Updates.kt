@@ -211,7 +211,9 @@ object Updates {
                 val digest = MessageDigest.getInstance("SHA-256")
                 try {
                     connection.inputStream.use { input ->
-                        val total = connection.contentLengthLong.takeIf { it > 0 } ?: asset.size
+                        // Read from the header rather than contentLengthLong, which Android has
+                        // only from 7.0; the app installs on Android 6.
+                        val total = connection.getHeaderField("Content-Length")?.toLongOrNull()?.takeIf { it > 0 } ?: asset.size
                         target.outputStream().use { output ->
                             val buffer = ByteArray(64 * 1024)
                             var done = 0L

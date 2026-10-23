@@ -95,9 +95,13 @@ object TvChannelsPublisher {
      * Whether this device has a home screen that shows channels: a television with the TV
      * provider, and not a Fire TV, whose launcher reads neither channels nor "Play next".
      */
+    @androidx.annotation.ChecksSdkIntAtLeast(api = android.os.Build.VERSION_CODES.O)
     fun supported(context: Context): Boolean = supportedCache ?: runCatching {
         val pm = context.packageManager
-        pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) &&
+        // Channels and Play next are the TV provider of Android 8 and later. Android 7's launcher
+        // had only the recommendations row, so an older television simply gets no channels.
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+            pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) &&
             DeviceQuirks.remote(context).watchNextSupported &&
             pm.resolveContentProvider(TvContract.AUTHORITY, 0) != null
     }.getOrDefault(false).also { supportedCache = it }
@@ -147,6 +151,7 @@ object TvChannelsPublisher {
 
     private class ChannelRow(val id: Long, val name: String?)
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ownChannels(context: Context): Map<Channel, ChannelRow> = runCatching {
         val projection = arrayOf(
             TvContract.Channels._ID,
@@ -163,6 +168,7 @@ object TvChannelsPublisher {
         }.orEmpty()
     }.getOrDefault(emptyMap())
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ensureChannel(context: Context, channel: Channel, name: String, existing: ChannelRow?): Long? {
         if (existing != null) {
             if (existing.name != name) {
@@ -216,6 +222,7 @@ object TvChannelsPublisher {
 
     private class ProgramRow(val existing: TvChannels.Existing, val art: String?)
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private fun ownPrograms(context: Context, channelId: Long): Map<String, ProgramRow> = runCatching {
         val projection = arrayOf(
             TvContract.PreviewPrograms._ID,
@@ -251,6 +258,7 @@ object TvChannelsPublisher {
         }
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private suspend fun publishLocked(context: Context, programs: List<TvChannels.Program>, names: (Channel) -> String) {
         val channels = ownChannels(context)
         val quiet = runCatching { SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() < START_QUIET_MS }
@@ -294,6 +302,7 @@ object TvChannelsPublisher {
         pruneArt(context, keptArt)
     }
 
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private suspend fun values(
         context: Context,
         channelId: Long,
@@ -346,6 +355,7 @@ object TvChannelsPublisher {
     // ---- pictures -------------------------------------------------------------------------------
 
     /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without the title's own artwork. */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.O)
     private suspend fun resolveArt(context: Context, art: TvChannels.Art, budget: OnlineBudget): Pair<String, Int>? {
         found(art, budget)?.let { info ->
             // The wide picture (a film's or show's backdrop), a better card than a frame from the

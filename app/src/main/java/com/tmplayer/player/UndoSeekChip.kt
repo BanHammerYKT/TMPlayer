@@ -1,6 +1,5 @@
 package com.tmplayer.player
 
-import android.animation.ValueAnimator
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.MotionEvent
@@ -131,7 +130,7 @@ class UndoSeekChip(
             .start()
     }
 
-    private fun moving(): Boolean = !Motion.reduced && ValueAnimator.areAnimatorsEnabled()
+    private fun moving(): Boolean = !Motion.reduced && com.tmplayer.ui.theme.systemAnimatorsEnabled(context)
 
     private companion object {
         const val SLIDE_DP = 24

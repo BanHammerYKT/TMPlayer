@@ -56,8 +56,11 @@ fun FloatingWindow(
             window?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             window?.setDimAmount(Floating.SCRIM_ALPHA)
             if (immersive && window != null) {
-                window.attributes = window.attributes.apply {
-                    layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                // Cutouts are Android 9's; an older phone has none to draw under.
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    window.attributes = window.attributes.apply {
+                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    }
                 }
                 WindowCompat.getInsetsController(window, view).apply {
                     hide(WindowInsetsCompat.Type.systemBars())

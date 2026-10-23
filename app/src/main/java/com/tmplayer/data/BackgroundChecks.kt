@@ -117,18 +117,20 @@ class BackgroundChecks : JobService() {
                 !settings.supportCountersNow().finished
             val daily = !tv && (sponsor || settings.noticeOnNow(Notice.LowStorage))
             val updates = !tv && Updates.enabled && settings.noticeOnNow(Notice.UpdateReady)
+            // Waiting for the battery is Android 8's; on 6 and 7 the checks run on schedule, which
+            // a television plugged into the wall does not notice.
             ensure(context, scheduler, JOB_NEW_VIDEOS, chats) { component ->
                 JobInfo.Builder(JOB_NEW_VIDEOS, component)
                     .setPeriodic(NEW_VIDEOS_EVERY_MS)
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                    .setRequiresBatteryNotLow(true)
+                    .apply { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) setRequiresBatteryNotLow(true) }
                     .setPersisted(true)
                     .build()
             }
             ensure(context, scheduler, JOB_SPONSOR, daily) { component ->
                 JobInfo.Builder(JOB_SPONSOR, component)
                     .setPeriodic(SPONSOR_EVERY_MS)
-                    .setRequiresBatteryNotLow(true)
+                    .apply { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) setRequiresBatteryNotLow(true) }
                     .setPersisted(true)
                     .build()
             }
@@ -136,7 +138,7 @@ class BackgroundChecks : JobService() {
                 JobInfo.Builder(JOB_UPDATES, component)
                     .setPeriodic(UPDATES_EVERY_MS)
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                    .setRequiresBatteryNotLow(true)
+                    .apply { if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) setRequiresBatteryNotLow(true) }
                     .setPersisted(true)
                     .build()
             }
@@ -149,7 +151,12 @@ class BackgroundChecks : JobService() {
             wanted: Boolean,
             build: (ComponentName) -> JobInfo,
         ) {
-            val pending = scheduler.getPendingJob(id)
+            // Asking for one job by id is Android 7's; on 6 it is found in the whole list.
+            val pending = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                scheduler.getPendingJob(id)
+            } else {
+                scheduler.allPendingJobs.firstOrNull { it.id == id }
+            }
             when {
                 wanted && pending == null -> runCatching {
                     scheduler.schedule(build(ComponentName(context, BackgroundChecks::class.java)))
@@ -229,7 +236,7 @@ class BackgroundChecks : JobService() {
             val star = rung == SupportReminder.NudgeRung.Star
             val title = if (star) L.notifyStarTitle else L.notifySponsorTitle
             val body = if (star) L.notifyStarBody else L.notifySponsorBody
-            val builder = Notification.Builder(context, CHANNEL_NEWS)
+            val builder = notificationBuilder(context, CHANNEL_NEWS, OldAndroid.IMPORTANCE_LOW)
                 .setSmallIcon(R.drawable.ic_stat_support)
                 .setContentTitle(title)
                 .setContentText(body)
@@ -255,13 +262,13 @@ class BackgroundChecks : JobService() {
         private fun postNewVideos(context: Context, alert: NewVideoAlerts.Alert) {
             if (!canNotify(context)) return
             ensureChannels(context)
-            val builder = Notification.Builder(context, CHANNEL_NEW_VIDEOS)
+            val builder = notificationBuilder(context, CHANNEL_NEW_VIDEOS, OldAndroid.IMPORTANCE_DEFAULT)
                 .setSmallIcon(R.drawable.ic_stat_new_videos)
                 .setContentTitle(alert.title)
                 // Kept off the lock screen whatever the alert says: a chat's name is private.
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(
-                    Notification.Builder(context, CHANNEL_NEW_VIDEOS)
+                    notificationBuilder(context, CHANNEL_NEW_VIDEOS, OldAndroid.IMPORTANCE_DEFAULT)
                         .setSmallIcon(R.drawable.ic_stat_new_videos)
                         .setContentTitle(L.notifyNewVideosPrivate)
                         .build(),
@@ -274,6 +281,8 @@ class BackgroundChecks : JobService() {
 
         /** "TMPlayer news", quiet, "New videos", which may make a sound, and the CP76 channels. */
         fun ensureChannels(context: Context) {
+            // Android 7 and older have no channels: each notification carries its own priority there.
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
             val news = NotificationChannel(CHANNEL_NEWS, L.notifyChannelNews, NotificationManager.IMPORTANCE_LOW).apply {
                 description = L.notifyChannelNewsDescription
                 setShowBadge(false)

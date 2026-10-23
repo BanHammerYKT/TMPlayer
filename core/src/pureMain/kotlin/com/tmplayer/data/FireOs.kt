@@ -87,10 +87,10 @@ data class RemoteQuirks(
          *
          * On Fire OS the recogniser is never used, even when something answers the probe: the
          * remote's microphone is Alexa's, and what resolves on some Fire tablets opens a screen that
-         * never returns text. Watch Next is an Android TV launcher feature, absent on a phone and
-         * on Fire TV's own home screen.
+         * never returns text. Watch Next is an Android TV launcher feature, absent on a phone, on
+         * Fire TV's own home screen and before Android 8 ([sdk], null where it is not Android).
          */
-        fun of(fire: FireOs.Kind, tv: Boolean): RemoteQuirks = when (fire) {
+        fun of(fire: FireOs.Kind, tv: Boolean, sdk: Int? = null): RemoteQuirks = when (fire) {
             FireOs.Kind.Tv -> RemoteQuirks(
                 menuOpensPlayerMenu = true,
                 holdSeekAccelerates = true,
@@ -108,7 +108,7 @@ data class RemoteQuirks(
             FireOs.Kind.None -> RemoteQuirks(
                 menuOpensPlayerMenu = false,
                 holdSeekAccelerates = false,
-                watchNextSupported = tv,
+                watchNextSupported = tv && OldAndroid.hasTvProviderRows(sdk),
                 recognizerUsable = true,
                 voiceFallback = VoiceRoute.None,
             )

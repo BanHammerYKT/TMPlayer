@@ -3,6 +3,7 @@ package com.tmplayer.ui.theme
 import android.animation.ValueAnimator
 import android.content.Context
 import android.database.ContentObserver
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -26,8 +27,22 @@ fun rememberReducedMotion(): Boolean {
     return SystemMotion.reduced.value
 }
 
+/**
+ * Whether the system lets animations run. Android 8 answers in one call; on 6 and 7 the developer
+ * options' animator duration scale at zero, the same switch underneath, is the only way to tell.
+ * Either is cheap enough to ask per animation: the settings read is cached in the process.
+ */
+fun systemAnimatorsEnabled(context: Context): Boolean =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        ValueAnimator.areAnimatorsEnabled()
+    } else {
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
+    }
+
 private object SystemMotion {
-    val reduced = mutableStateOf(!ValueAnimator.areAnimatorsEnabled())
+    // Android 6 and 7 need a context for the answer, so there it is read as the watch starts,
+    // before anything has read this state.
+    val reduced = mutableStateOf(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled())
 
     @Volatile
     private var watching = false
@@ -39,9 +54,10 @@ private object SystemMotion {
             watching = true
         }
         val app = context.applicationContext
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) reduced.value = !systemAnimatorsEnabled(app)
         val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
-                reduced.value = !ValueAnimator.areAnimatorsEnabled() ||
+                reduced.value = !systemAnimatorsEnabled(app) ||
                     Settings.Global.getFloat(app.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
             }
         }
