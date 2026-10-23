@@ -332,7 +332,9 @@ private fun SearchField(
             .background(FloatingTone.menu)
             .border(floatingBorder(), CircleShape)
             .border(1.5.dp, edge, CircleShape)
-            .padding(start = 16.dp, end = 4.dp),
+            // Clear and the microphone draw a 40 dp circle in a 48 dp target: 8 dp here puts it
+            // 12 dp from the round end, as from the top and bottom of the 64 dp pill.
+            .padding(start = 16.dp, end = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(TmIcons.Search, contentDescription = null, tint = glass, modifier = Modifier.size(22.dp))

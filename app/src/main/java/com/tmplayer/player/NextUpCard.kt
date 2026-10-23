@@ -52,7 +52,9 @@ class NextUpCard(
     val view: LinearLayout = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         background = context.getDrawable(R.drawable.bg_player_chip)
-        setPadding(px(18), px(14), px(18), px(12))
+        // Play now sits in the card's bottom end corner: 12 dp from both edges there, with its
+        // focus fill rounded at the card's 22 dp less those 12, so the two corners run parallel.
+        setPadding(px(18), px(14), px(12), px(12))
         visibility = View.GONE
         isClickable = true
         addView(text)
@@ -113,7 +115,7 @@ class NextUpCard(
                         intArrayOf(android.R.attr.state_focused),
                         GradientDrawable().apply {
                             setColor(Color.WHITE)
-                            cornerRadius = px(20).toFloat()
+                            cornerRadius = px(10).toFloat()
                         },
                     )
                     addState(intArrayOf(), ColorDrawable(Color.TRANSPARENT))

@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -251,7 +250,8 @@ private fun BarPill(modifier: Modifier = Modifier, content: @Composable RowScope
             .clip(CircleShape)
             .background(FloatingTone.menu)
             .border(floatingBorder(), CircleShape)
-            .padding(horizontal = 6.dp),
+            // As far from the round ends as from the top and bottom of a captioned button.
+            .padding(horizontal = (FloatingChrome.LabelledBar - FloatingChrome.LabelledIcon) / 2),
         // The window's bar's gap, so a hovered button and a focused one beside it stay apart.
         horizontalArrangement = Arrangement.spacedBy(BarGap),
         verticalAlignment = Alignment.CenterVertically,
@@ -285,12 +285,13 @@ private fun RecentPanel(searches: List<String>, onPick: (String) -> Unit, onClea
     Row(
         Modifier
             .widthIn(max = SEARCH_WIDTH)
-            .shadow(6.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
+            .shadow(6.dp, CircleShape)
+            .clip(CircleShape)
             .background(Tone.surfaceHigh)
-            .border(floatingBorder(), RoundedCornerShape(24.dp))
+            .border(floatingBorder(), CircleShape)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 6.dp, vertical = 2.dp),
+            // Every entry and Clear are 40 dp pills, 2 dp clear of the panel on every side.
+            .padding(2.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -298,9 +299,9 @@ private fun RecentPanel(searches: List<String>, onPick: (String) -> Unit, onClea
             // No box round each: the panel already says these go together.
             Row(
                 Modifier
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(CircleShape)
                     .clickable(role = Role.Button) { onPick(recent) }
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {

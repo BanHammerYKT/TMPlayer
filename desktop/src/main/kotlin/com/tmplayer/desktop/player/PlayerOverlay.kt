@@ -506,7 +506,7 @@ internal fun BoxScope.PlayerOverlay(
                         Box {
                             Tip(s.playerSpeedHint) {
                                 Box(
-                                    Modifier.height(36.dp).widthIn(min = 48.dp).clip(RoundedCornerShape(18.dp))
+                                    Modifier.height(40.dp).widthIn(min = 48.dp).clip(CircleShape)
                                         .clickable { onOpenMenu(MenuAt(MenuPage.Speed, MenuAt.Anchor.Speed)) }.padding(horizontal = 10.dp),
                                     contentAlignment = Alignment.Center,
                                 ) { Text(SeekMath.speedLabel(status.speed), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium) }
@@ -1187,7 +1187,7 @@ internal fun BoxScope.ResumeNotice(from: Long, lifted: Boolean, onStartOver: () 
     }
     Row(
         Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = if (lifted) 120.dp else 24.dp)
-            .clip(RoundedCornerShape(20.dp)).background(Color(0xCC1C1C1E)).padding(start = 16.dp, end = 4.dp),
+            .clip(CircleShape).background(Color(0xCC1C1C1E)).padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(s.playerResumingFrom(SeekMath.clock(from)), color = Color.White, fontSize = 14.sp)

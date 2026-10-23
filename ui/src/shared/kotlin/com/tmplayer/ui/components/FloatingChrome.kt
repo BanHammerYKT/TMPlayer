@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
@@ -73,12 +72,19 @@ object FloatingChrome {
     val PageButton = 48.dp
     val PageButtonIcon = 24.dp
 
-    /** The sticky bar, and the same in a phone held sideways, where height is what is short. */
+    /**
+     * The sticky bar, and the same in a phone held sideways, where height is what is short. Each
+     * leaves the same room round its buttons on every side: 4 dp, and 2 dp when compact.
+     */
     val Bar = 56.dp
-    val CompactBar = 48.dp
+    val CompactBar = 52.dp
 
     /** The sticky bar when its icons carry a caption under them. */
     val LabelledBar = 60.dp
+
+    /** A sticky bar's button ([FloatingBarIcon]), and one with its caption under the glyph. */
+    val Icon = 48.dp
+    val LabelledIcon = 52.dp
 
     /** Between the sticky bar and the navigation bar (or the keyboard). */
     val Margin = 12.dp
@@ -238,14 +244,17 @@ fun StickyActionBar(
             .padding(start = 16.dp, end = 16.dp, bottom = FloatingChrome.Margin),
         contentAlignment = Alignment.Center,
     ) {
+        val height = if (compact) FloatingChrome.CompactBar else if (labelled) FloatingChrome.LabelledBar else FloatingChrome.Bar
         Row(
             (if (fill) Modifier.fillMaxWidth() else Modifier)
-                .height(if (compact) FloatingChrome.CompactBar else if (labelled) FloatingChrome.LabelledBar else FloatingChrome.Bar)
+                .height(height)
                 .shadow(FloatingChrome.Shadow, CircleShape)
                 .clip(CircleShape)
                 .background(FloatingTone.menu)
                 .border(floatingBorder(), CircleShape)
-                .padding(horizontal = 6.dp),
+                // The end buttons sit as far from the pill's round ends as from its top and
+                // bottom, so a pressed or hovered one is concentric with the pill.
+                .padding(horizontal = (height - if (labelled) FloatingChrome.LabelledIcon else FloatingChrome.Icon) / 2),
             verticalAlignment = Alignment.CenterVertically,
             content = content,
         )
@@ -312,9 +321,10 @@ private fun BarIconBody(
 ) {
     Box(
         modifier
-            .then(if (caption == null) Modifier.size(48.dp) else Modifier.height(52.dp).widthIn(min = 52.dp))
+            .then(if (caption == null) Modifier.size(FloatingChrome.Icon) else Modifier.height(FloatingChrome.LabelledIcon).widthIn(min = FloatingChrome.LabelledIcon))
             .pressScale(interactions)
-            .clip(if (caption == null) CircleShape else RoundedCornerShape(16.dp))
+            // A pill like the bar round it, so its ends follow the bar's at the same inset.
+            .clip(CircleShape)
             .clickable(interactionSource = interactions, indication = ripple(), enabled = enabled, role = Role.Button, onClick = onClick)
             .semantics {
                 contentDescription = label

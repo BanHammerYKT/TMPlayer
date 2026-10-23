@@ -404,17 +404,19 @@
 
                 <!-- The round buttons share one seat (bg_controls_pill): a dark pill with a
                      faint edge, so the group reads as one control over any frame. Focus still
-                     fills the focused button white inside it. -->
+                     fills the focused button white inside it, 4dp clear of the edge on every
+                     side (the first button's own 4dp start margin is its inset at the start),
+                     so the white circle sits concentric in the pill's round end. -->
                 <LinearLayout
                     android:id="@+id/controls_buttons"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_controls_pill"
                     android:orientation="horizontal"
-                    android:paddingStart="2dp"
-                    android:paddingTop="2dp"
-                    android:paddingEnd="6dp"
-                    android:paddingBottom="2dp">
+                    android:paddingStart="0dp"
+                    android:paddingTop="4dp"
+                    android:paddingEnd="4dp"
+                    android:paddingBottom="4dp">
 
                     <ImageButton
                         android:id="@+id/control_subtitles"

@@ -1401,7 +1401,8 @@ internal fun TouchMediaScaffold(
                 .border(floatingBorder(), CircleShape)
                 // The name is the way to the chat's info: its picture, username and description.
                 .then(if (onChatInfo != null) Modifier.clickable(onClickLabel = LocalStrings.current.chatsInfoAbout, onClick = onChatInfo) else Modifier)
-                .padding(start = 6.dp, end = 16.dp),
+                // The 36 dp picture 4 dp clear of the 44 dp pill all round its end.
+                .padding(start = 4.dp, end = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             MediaPreview(
