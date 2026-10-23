@@ -21,8 +21,11 @@ import com.tmplayer.data.FormFactor
  * buttons in a row under the words. The same phone held upright is the opposite case: beside a
  * 176dp poster the words had about 145dp, the title ran out mid word and a two word button broke
  * over two lines, so there it stacks again, with a smaller poster than a television's and the
- * buttons in a centred row that wraps. A television has the height and keeps the stack it was
- * designed around, buttons in a column.
+ * buttons in a centred row that wraps. A television goes side by side too, at its own size: the
+ * large poster and the name on the left, and on the right the message over the buttons in one
+ * column, which is the direction a remote moves in. Stacked, as it was until 2026-10-23, a failure
+ * with five ways out ran the last of them off the bottom of a 540dp screen while two thirds of
+ * its width stood empty.
  *
  * Decided at measure time by [StatusSheet] rather than once at startup: the player chooses its own
  * orientation and is not recreated when it changes, so the screen it was built against is regularly
@@ -32,8 +35,8 @@ import com.tmplayer.data.FormFactor
 object StatusSheetShape {
 
     enum class Shape {
-        /** A television: the large poster over the words, the buttons one under another. */
-        Column,
+        /** A television: the large poster beside the words, the buttons one under another. */
+        Tv,
 
         /** A narrow handset: a smaller poster over the words, the buttons in a centred row. */
         Stacked,
@@ -53,7 +56,7 @@ object StatusSheetShape {
      * is sideways whatever the window claims, so the sheet goes side by side regardless of width.
      */
     fun choose(tv: Boolean, widthDp: Float, askedSideways: Boolean): Shape = when {
-        tv -> Shape.Column
+        tv -> Shape.Tv
         askedSideways || widthDp >= SIDE_BY_SIDE_MIN_WIDTH_DP -> Shape.SideBySide
         else -> Shape.Stacked
     }
@@ -63,7 +66,7 @@ object StatusSheetShape {
         val sheet = overlay.findViewById<LinearLayout>(R.id.status_sheet) ?: return
         val column = overlay.findViewById<LinearLayout>(R.id.status_column) ?: return
         val side = overlay.findViewById<LinearLayout>(R.id.status_side) ?: return
-        val sideBySide = shape == Shape.SideBySide
+        val sideBySide = shape == Shape.SideBySide || shape == Shape.Tv
         sheet.orientation = if (sideBySide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
 
         val resources = overlay.resources
@@ -77,38 +80,51 @@ object StatusSheetShape {
         // The picture side takes a narrow, fixed slice: it is there to be recognised, not read, so
         // every point it does not use goes to the message and the buttons.
         side.updateLayoutParams<LinearLayout.LayoutParams> {
-            marginEnd = if (sideBySide) px(POSTER_GAP_DP) else 0
+            marginEnd = when (shape) {
+                Shape.Tv -> px(TV_POSTER_GAP_DP)
+                Shape.SideBySide -> px(POSTER_GAP_DP)
+                Shape.Stacked -> 0
+            }
         }
         poster?.updateLayoutParams<LinearLayout.LayoutParams> {
             width = when (shape) {
                 Shape.SideBySide -> px(SIDE_POSTER_WIDTH_DP)
                 Shape.Stacked -> px(STACKED_POSTER_WIDTH_DP)
-                Shape.Column -> resources.getDimensionPixelSize(R.dimen.player_poster_width)
+                Shape.Tv -> resources.getDimensionPixelSize(R.dimen.player_poster_width)
             }
             height = when (shape) {
                 Shape.SideBySide -> px(SIDE_POSTER_HEIGHT_DP)
                 Shape.Stacked -> px(STACKED_POSTER_HEIGHT_DP)
-                Shape.Column -> resources.getDimensionPixelSize(R.dimen.player_poster_height)
+                Shape.Tv -> resources.getDimensionPixelSize(R.dimen.player_poster_height)
             }
             // The gap between the two moves with them: what was space underneath the poster is now
             // space to the right of the pair.
             bottomMargin = when (shape) {
-                Shape.SideBySide -> px(NAME_GAP_DP)
+                Shape.SideBySide, Shape.Tv -> px(NAME_GAP_DP)
                 Shape.Stacked -> px(STACKED_POSTER_GAP_DP)
-                Shape.Column -> px(POSTER_STACK_GAP_DP)
             }
         }
         // The name wraps to the width of the picture it belongs to rather than running the width of
         // the screen, which is what keeps the two of them reading as one thing on the left.
         name?.apply {
-            maxWidth = if (sideBySide) px(SIDE_POSTER_WIDTH_DP) else px(NAME_STACK_MAX_WIDTH_DP)
+            maxWidth = when (shape) {
+                Shape.SideBySide -> px(SIDE_POSTER_WIDTH_DP)
+                Shape.Tv -> resources.getDimensionPixelSize(R.dimen.player_poster_width)
+                Shape.Stacked -> px(NAME_STACK_MAX_WIDTH_DP)
+            }
             maxLines = if (sideBySide) SIDE_NAME_LINES else STACK_NAME_LINES
         }
         // Weighted rather than wrapped, so a long message takes the width that is left over
-        // instead of pushing the picture off the side of the screen.
+        // instead of pushing the picture off the side of the screen. A television's column has a
+        // fixed width instead, so the pair sits centred on the screen as one block and does not
+        // jump sideways as the loading words change.
         column.updateLayoutParams<LinearLayout.LayoutParams> {
-            width = if (sideBySide) 0 else LinearLayout.LayoutParams.WRAP_CONTENT
-            weight = if (sideBySide) 1f else 0f
+            width = when (shape) {
+                Shape.SideBySide -> 0
+                Shape.Tv -> px(TV_COLUMN_WIDTH_DP)
+                Shape.Stacked -> LinearLayout.LayoutParams.WRAP_CONTENT
+            }
+            weight = if (shape == Shape.SideBySide) 1f else 0f
         }
         // The bars run the width of the column they are in rather than a width chosen for a screen
         // with nothing beside them.
@@ -125,7 +141,7 @@ object StatusSheetShape {
         // been given. Centred is right for a stacked sheet, where the column is the whole screen,
         // and wrong beside a picture.
         val flow = if (sideBySide) Gravity.START or Gravity.CENTER_VERTICAL else Gravity.CENTER
-        sheet.gravity = flow
+        sheet.gravity = if (shape == Shape.Tv) Gravity.CENTER else flow
         column.gravity = flow
         side.gravity = flow
         listOfNotNull<TextView>(name, overlay.findViewById(R.id.status_title), overlay.findViewById(R.id.status_meta), text, detail).forEach {
@@ -135,21 +151,21 @@ object StatusSheetShape {
         // the screen at once instead of a column of wide pills running off the bottom: from the
         // start edge beside a picture, centred under words that are centred themselves.
         val actions = overlay.findViewById<SheetActions>(R.id.status_actions)
-        actions?.inRow = shape != Shape.Column
+        actions?.inRow = shape == Shape.SideBySide || shape == Shape.Stacked
         actions?.centred = shape == Shape.Stacked
         if (actions != null) {
             for (i in 0 until actions.childCount) {
                 val button = actions.getChildAt(i) as? Button ?: continue
-                button.minWidth = if (shape == Shape.Column) px(STACK_BUTTON_MIN_WIDTH_DP) else px(ROW_BUTTON_MIN_WIDTH_DP)
+                button.minWidth = if (shape == Shape.Tv) px(TV_BUTTON_MIN_WIDTH_DP) else px(ROW_BUTTON_MIN_WIDTH_DP)
                 button.minimumWidth = button.minWidth
             }
         }
         // The message and its hint read as one paragraph beside the poster, not two blocks.
         text?.updateLayoutParams<LinearLayout.LayoutParams> {
-            bottomMargin = if (sideBySide) px(ROW_TEXT_GAP_DP) else px(STACK_TEXT_GAP_DP)
+            bottomMargin = if (shape == Shape.SideBySide) px(ROW_TEXT_GAP_DP) else px(STACK_TEXT_GAP_DP)
         }
         detail?.updateLayoutParams<LinearLayout.LayoutParams> {
-            topMargin = if (sideBySide) px(ROW_TEXT_GAP_DP) else px(STACK_DETAIL_GAP_DP)
+            topMargin = if (shape == Shape.SideBySide) px(ROW_TEXT_GAP_DP) else px(STACK_DETAIL_GAP_DP)
         }
     }
 
@@ -162,7 +178,14 @@ object StatusSheetShape {
 
     /** The gap between the poster and the words, beside them and above them. */
     private const val POSTER_GAP_DP = 24f
-    private const val POSTER_STACK_GAP_DP = 22f
+    private const val TV_POSTER_GAP_DP = 56f
+
+    /**
+     * A television's words and buttons: wide enough for the longest message in three or four
+     * lines and a button label on one, narrow enough that the poster beside it and the pair
+     * centred still leave the screen's edges clear on a 960dp television.
+     */
+    private const val TV_COLUMN_WIDTH_DP = 440f
 
     /** The picture's slice of a sideways sheet, and the name that sits under it. */
     private const val SIDE_POSTER_WIDTH_DP = 176f
@@ -177,8 +200,8 @@ object StatusSheetShape {
     private const val STACKED_POSTER_HEIGHT_DP = 90f
     private const val STACKED_POSTER_GAP_DP = 16f
 
-    /** The sheet's buttons: a wide pill in a column, as wide as its words in a row. */
-    private const val STACK_BUTTON_MIN_WIDTH_DP = 200f
+    /** The sheet's buttons: one width down a television's column, as wide as its words in a row. */
+    private const val TV_BUTTON_MIN_WIDTH_DP = 300f
     private const val ROW_BUTTON_MIN_WIDTH_DP = 112f
 
     /** Between the message, its hint and the buttons, stacked and beside a picture. */
