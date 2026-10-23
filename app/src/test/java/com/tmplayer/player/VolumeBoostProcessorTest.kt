@@ -90,4 +90,31 @@ class VolumeBoostProcessorTest {
         val out = run(processor(true, night = true), square(1f, 48_000))
         assertTrue(out.all { abs(it) <= 1f })
     }
+
+    @Test
+    fun `even out volume lifts a quiet track towards its target without clipping`() {
+        // Twenty seconds at about -30 dBFS: many of the leveller's time constants.
+        val out = run(processor(false, level = true), square(0.03f, 960_000))
+        val settled = abs(out.last())
+        assertEquals(0.03f * VolumeBoostProcessor.levelFor(0.03f * 0.03f), settled, 0.006f)
+        assertTrue(out.all { abs(it) <= 1f })
+    }
+
+    @Test
+    fun `even out volume sounds the same however the sound is cut into buffers`() {
+        // The leveller's aim is worked out once a block of frames, counted across buffers, so a
+        // buffer size that does not divide the block changes nothing.
+        val whole = run(processor(false, level = true), square(0.03f, 48_000))
+        val cut = processor(false, level = true)
+        val source = square(0.03f, 48_000)
+        val pieces = ArrayList<Float>()
+        while (source.hasRemaining()) {
+            val size = minOf(source.remaining(), 2 * 997)
+            val piece = ByteBuffer.allocateDirect(size).order(ByteOrder.nativeOrder())
+            repeat(size) { piece.put(source.get()) }
+            piece.flip()
+            pieces += run(cut, piece)
+        }
+        assertEquals(whole, pieces)
+    }
 }

@@ -820,8 +820,23 @@ private fun Root() {
     }
     // Home keeps itself up to date while the app is in front: on coming back, when its rows are
     // a minute old, and every few minutes after, in place (the tiles stay up and keep the focus).
+    val resumedBefore = remember { booleanArrayOf(false) }
     LaunchedEffect(shellInFront) {
         if (!shellInFront) return@LaunchedEffect
+        // Coming back (from the player, nearly always) the rows are older than a minute after any
+        // video, and a refresh rebuilds them all just as the viewer reaches for the remote: on a
+        // TV stick that made the first presses on Home lag. So it waits for the remote to rest a
+        // few seconds, or [RETURN_REFRESH_MAX_WAIT_MS] at most. The first start asks at once.
+        if (resumedBefore[0]) {
+            val back = android.os.SystemClock.elapsedRealtime()
+            while (true) {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val quiet = now - maxOf(back, MainActivity.lastInputAt)
+                if (quiet >= RETURN_REFRESH_QUIET_MS || now - back >= RETURN_REFRESH_MAX_WAIT_MS) break
+                delay(RETURN_REFRESH_QUIET_MS - quiet)
+            }
+        }
+        resumedBefore[0] = true
         homeViewModel.refreshIfStale()
         while (true) {
             delay(HomeViewModel.AUTO_REFRESH_MS)
@@ -2286,6 +2301,12 @@ private const val CONNECTING_SETTLE_MS = 2_500L
 
 /** How long the chat list is up before the support card may slide in. */
 private const val SUPPORT_CARD_DELAY_MS = 4_000L
+
+/** How long the remote rests after coming back to Home before its stale rows are refreshed. */
+private const val RETURN_REFRESH_QUIET_MS = 3_000L
+
+/** The longest that refresh waits for the remote to rest: a viewer browsing on gets it anyway. */
+private const val RETURN_REFRESH_MAX_WAIT_MS = 20_000L
 
 /**
  * The hint after the device struggled (CP68, [com.tmplayer.data.DeviceFitHint]): a bar at the foot

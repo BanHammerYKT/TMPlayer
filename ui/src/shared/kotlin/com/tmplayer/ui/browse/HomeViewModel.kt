@@ -199,6 +199,8 @@ class HomeViewModel(
      * Home anyway ([refreshIfStale]).
      */
     private val busy: () -> Boolean = { false },
+    /** Where the Cached badges are read off the disk again ([refreshLocalAvailability]): off the main thread. */
+    private val disk: kotlin.coroutines.CoroutineContext = Dispatchers.IO,
 ) : ViewModel() {
 
     /** The rows [rememberHomeRows] built last, drawn again at once when Home comes back. */
@@ -357,7 +359,7 @@ class HomeViewModel(
     }
 
     /** Returns once no video is playing ([busy]), checking every [BUSY_RECHECK_MS]. */
-    private suspend fun untilIdle() {
+    internal suspend fun untilIdle() {
         while (busy()) kotlinx.coroutines.delay(BUSY_RECHECK_MS)
     }
 
@@ -638,9 +640,16 @@ class HomeViewModel(
             val loadedBefore = _loaded.value
             val recentBefore = _recent.value
             val artBefore = _art.value
-            val loaded = loadedBefore.mapValues { (_, items) -> recheckAll(items) }
-            val recent = recentBefore?.let { recheckAll(it) }
-            val art = artBefore.mapValues { (_, item) -> recheckOne(item) }
+            // Off the main thread: every tile is a lookup of its file and a look at the disk, and
+            // on a TV stick coming back from the player that burst held the remote up. The answers
+            // are written back below, on the main thread, as before.
+            val (loaded, recent, art) = withContext(disk) {
+                Triple(
+                    loadedBefore.mapValues { (_, items) -> recheckAll(items) },
+                    recentBefore?.let { recheckAll(it) },
+                    artBefore.mapValues { (_, item) -> recheckOne(item) },
+                )
+            }
             // Written only over what is still the list that was checked: a row fetched meanwhile
             // came after the change and is right as it stands.
             _loaded.update { now ->
@@ -849,7 +858,7 @@ fun rememberHomeRows(
         // what Home shows now is the answer. Starred chats alone need no such list.
         if (built.isNotEmpty() || recent != null || !autoFill) model.rowsSettled = true
     }
-    PrefetchHomeArt(rows)
+    PrefetchHomeArt(rows, model)
     return rows
 }
 
@@ -879,11 +888,12 @@ private class HomeChatsMemo {
 /**
  * Looks up the posters of the first tiles in each row, and fetches them, before the rows are
  * drawn: a row a screen down is sharp when it scrolls in rather than starting its lookups then.
- * A handful per row, two lookups at a time, and only while lookups are on. Everything it finds
+ * A handful per row, two lookups at a time, only while lookups are on and no video plays
+ * ([HomeViewModel.untilIdle]). Everything it finds
  * lands in [OnlineMetadata]'s memory and disk caches, which the tiles read on their first frame.
  */
 @Composable
-private fun PrefetchHomeArt(rows: List<HomeRow>) {
+private fun PrefetchHomeArt(rows: List<HomeRow>, model: HomeViewModel) {
     val online = com.tmplayer.online.OnlineMetadata.current ?: return
     val settings by online.settings.collectAsState()
     if (!settings.enabled) return
@@ -913,6 +923,10 @@ private fun PrefetchHomeArt(rows: List<HomeRow>) {
             items.forEach { (item, show, logo) ->
                 launch(Dispatchers.IO) {
                     gate.withPermit {
+                        // Not while a video plays: Home stays composed under the player, and a
+                        // row that changed meanwhile set off lookups, downloads and decodes that
+                        // took the line and a weak CPU from playback. They go on once it stops.
+                        model.untilIdle()
                         val query = item.metaQuery
                             ?.let { if (show) it.showOnly() else it } ?: return@withPermit
                         val known = (online.peek(query) as? com.tmplayer.online.MetaResult.Found)?.info

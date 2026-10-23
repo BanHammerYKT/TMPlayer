@@ -62,6 +62,16 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
     /** The leveller's lift as applied, walking towards what [loudness] asks for. */
     private var levelGain = 1f
 
+    /**
+     * What the leveller's lift is walking towards, worked out from [loudness] once every
+     * [LEVEL_BLOCK] frames rather than every frame: [levelFor] is a square root, and [loudness]
+     * moves on a two second time constant, so a few milliseconds' stale answer is inaudible.
+     */
+    private var levelWanted = 1f
+
+    /** Frames until [levelWanted] is worked out again; counted across buffers. */
+    private var levelCountdown = 0
+
     private var loudnessStep = 0f
     private var levelRise = 0f
     private var levelFall = 0f
@@ -98,6 +108,7 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         levelRise = coefficient(LEVEL_RISE_SECONDS, rate)
         levelFall = coefficient(LEVEL_FALL_SECONDS, rate)
         frame = FloatArray(inputAudioFormat.channelCount)
+        levelCountdown = 0
         return inputAudioFormat
     }
 
@@ -151,15 +162,27 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
             square /= channels
             // Silence and near silence say nothing about how loud the track is.
             if (square > LEVEL_GATE_SQUARE) loudness += loudnessStep * (square - loudness)
-            val wanted = if (level) levelFor(loudness) else 1f
+            if (levelCountdown <= 0) {
+                levelWanted = levelFor(loudness)
+                levelCountdown = LEVEL_BLOCK
+            }
+            levelCountdown--
+            val wanted = if (level) levelWanted else 1f
             levelGain += (if (wanted > levelGain) levelRise else levelFall) * (wanted - levelGain)
             val lift = gain * levelGain
             peak *= lift
             envelope += (if (peak > envelope) attack else release) * (peak - envelope)
             val squeeze = squeeze(envelope, threshold, ratio)
             val scale = lift * squeeze
-            for (c in 0 until channels) {
-                buffer[at + c] = (buffer[at + c] * scale).coerceIn(-1f, 1f)
+            // The frame's loudest sample, scaled, is the most any of them reaches: a frame that
+            // stays clear of full scale (nearly all of them) needs no clamp per sample. The margin
+            // covers the rounding of multiplying in another order.
+            if (peak * squeeze < CLAMP_FREE) {
+                for (c in 0 until channels) buffer[at + c] *= scale
+            } else {
+                for (c in 0 until channels) {
+                    buffer[at + c] = (buffer[at + c] * scale).coerceIn(-1f, 1f)
+                }
             }
             at += channels
         }
@@ -186,6 +209,7 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         // A new track is measured afresh. A seek (onFlush) keeps what was learnt of this one.
         loudness = LEVEL_TARGET_SQUARE
         levelGain = 1f
+        levelCountdown = 0
     }
 
     companion object {
@@ -257,6 +281,12 @@ class VolumeBoostProcessor : BaseAudioProcessor() {
         private const val RELEASE_SECONDS = 0.25f
         private const val RAMP_SECONDS = 0.08f
         private const val SHORT_SCALE = 32768f
+
+        /** Frames between two answers of [levelFor]: about 5 ms at 48 kHz. */
+        private const val LEVEL_BLOCK = 256
+
+        /** Below this a frame's scaled peak cannot round past full scale, so it is not clamped. */
+        private const val CLAMP_FREE = 0.999f
 
         /** How near 1 the leveller's lift has to come, with the leveller off, to count as 1. */
         private const val LEVEL_SNAP = 0.01f
