@@ -1,7 +1,10 @@
 package com.tmplayer.ui.browse
 
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
+import androidx.compose.ui.unit.offset
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -175,11 +178,15 @@ internal fun TvFeaturedCarousel(
             },
         )
 
+        // The heading's height for the page's fades and its title's room, read where they are laid
+        // out and drawn: handed over as a number, the heading's first measure composed the page
+        // again a frame after Home appeared.
+        val headerFade: () -> Float = remember(header != null) { if (header != null) ({ headerPx.toFloat() }) else ({ 0f }) }
         // A page turns at once on a television: no two pages drawn together for a fade.
         Crossfade(targetState = pick, animationSpec = if (Motion.television) androidx.compose.animation.core.snap() else Motion.standard(), label = "tvFeatured", modifier = Modifier.matchParentSize()) { shown ->
             // The heading's words over any picture: a fade from the top, deeper than the heading,
             // under the page's own words.
-            TvFeaturedArt(shown, chatTitle, start = start, headerFade = if (header != null) headerPx.toFloat() else 0f)
+            TvFeaturedArt(shown, chatTitle, start = start, headerFade = headerFade)
         }
 
         // What Play starts, worked out as the phone's page does.
@@ -297,7 +304,7 @@ private fun CarouselTurns(
 
 /** A page's picture, the fades that let its words read, and the name at its start. */
 @Composable
-private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start: Dp, headerFade: Float) {
+private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start: Dp, headerFade: () -> Float) {
     val s = LocalStrings.current
     val item = pick.item
     val series = pick.series
@@ -321,7 +328,7 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
             Modifier.fillMaxSize(),
             // The picture melts into the page's ground towards the top, across the whole width, so
             // every item of the top bar reads over it in every theme.
-            topFade = with(LocalDensity.current) { (headerFade * BAR_FADE_REACH).toDp() },
+            topFadePx = { headerFade() * BAR_FADE_REACH },
             onPictured = HomeFirstPaint::markReady,
         )
         // Over Play and Details: the title's logo where TMDB has one (the name in type until then
@@ -329,12 +336,19 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
         // Never higher than [TITLE_TOP_GAP] under the top bar: a tall logo over two lines of
         // overview climbed to the bar's foot and read as part of it (user, 2026-10-23), where
         // Netflix and Google TV keep the title block clear in the picture's lower part.
-        val barDp = with(LocalDensity.current) { headerFade.toDp() }
         Column(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth(TEXT_SHARE)
-                .padding(start = start, top = barDp + TITLE_TOP_GAP, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP),
+                .padding(start = start, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP)
+                // The room above, as padding would keep it, worked out as the column is measured.
+                .layout { measurable, constraints ->
+                    val top = (headerFade().toDp() + TITLE_TOP_GAP).roundToPx().coerceAtLeast(0)
+                    val placeable = measurable.measure(constraints.offset(vertical = -top))
+                    layout(constraints.constrainWidth(placeable.width), constraints.constrainHeight(placeable.height + top)) {
+                        placeable.place(0, top)
+                    }
+                },
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
         ) {
             com.tmplayer.ui.online.TitleArt(meta, maxWidth = TV_LOGO_MAX_WIDTH, maxHeight = TV_LOGO_MAX_HEIGHT) {

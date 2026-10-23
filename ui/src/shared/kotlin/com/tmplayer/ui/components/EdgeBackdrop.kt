@@ -56,6 +56,12 @@ fun EdgeBackdrop(
     modifier: Modifier = Modifier,
     share: Float = EDGE_SHARE,
     topFade: Dp = 0.dp,
+    /**
+     * [topFade] in pixels, read where the fades are drawn rather than here: for a reach that
+     * follows something measured (the TV carousel's heading), so its arrival redraws the fades
+     * without composing the picture again. Null uses [topFade].
+     */
+    topFadePx: (() -> Float)? = null,
     cornerShade: Dp = 0.dp,
     /** Called once the first picture (or the cover standing for it) is drawn. */
     onPictured: (() -> Unit)? = null,
@@ -69,7 +75,8 @@ fun EdgeBackdrop(
         // The size the carousel's next pages are decoded at ahead ([prefetchBackdrop]).
         androidx.compose.runtime.SideEffect { if (pictureW > 0) edgeDrawnWidth = pictureW }
         val art = rememberBackdropArt(source, pictureW)
-        val topFadePx = with(density) { topFade.toPx() }
+        val topFadeFixed = with(density) { topFade.toPx() }
+        val topFadeOf: () -> Float = topFadePx ?: { topFadeFixed }
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
         // A slow push in on each page's picture (user, 2026-10-22: the television's backdrop
@@ -128,7 +135,7 @@ fun EdgeBackdrop(
                         Brush.horizontalGradient(*(if (rtl) stops.reversedStops(ground) else stops.inStops(ground)))
                     } else null
                     val foot = Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops(ground))
-                    val reach = if (small) FOOT_FADE else (topFadePx / size.height).coerceIn(0f, 1f)
+                    val reach = if (small) FOOT_FADE else (topFadeOf() / size.height).coerceIn(0f, 1f)
                     val top = if (reach > 0f) Brush.verticalGradient(*fadeOut(reach).inStops(ground)) else null
                     onDrawWithContent {
                         drawContent()
@@ -144,7 +151,7 @@ fun EdgeBackdrop(
                             Brush.horizontalGradient(*(if (rtl) stops.reversedStops() else stops.inStops()))
                         } else null
                         val foot = Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops())
-                        val reach = if (small) FOOT_FADE else (topFadePx / size.height).coerceIn(0f, 1f)
+                        val reach = if (small) FOOT_FADE else (topFadeOf() / size.height).coerceIn(0f, 1f)
                         val top = if (reach > 0f) Brush.verticalGradient(*fadeOut(reach).inStops()) else null
                         onDrawWithContent {
                             drawContent()
