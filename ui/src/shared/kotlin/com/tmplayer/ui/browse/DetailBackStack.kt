@@ -14,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import com.tmplayer.data.MediaItem
 import com.tmplayer.data.Td
+import com.tmplayer.online.KnownMedia
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -163,8 +164,9 @@ class DetailBackStack<T : Any>(
  * is up: a 1 GB TV reclaims the screen under the player, and so does Android's "Don't keep
  * activities", and Back from the video then landed on the list instead of the video's page
  * (2026-10-23). The pages are saved as their messages (with [labelOf], the chat's name where the
- * host shows one) and read again from Telegram ([Td.refreshMedia]), so a restored page is the
- * video as Telegram has it now; the copies a list had folded with it come back with the list.
+ * host shows one) and found again among the videos this session listed ([KnownMedia], with the
+ * copies folded into them), or read again from Telegram ([Td.refreshMedia]) when the app itself
+ * was stopped meanwhile.
  *
  * Nothing is restored over a page opened in the meantime, and a message that is gone is left out.
  */
@@ -188,7 +190,13 @@ fun <T : Any> rememberDetailBackStack(
                 val ids = parts.getOrNull(0)?.split(':') ?: return@mapNotNull null
                 val chatId = ids.getOrNull(0)?.toLongOrNull() ?: return@mapNotNull null
                 val messageId = ids.getOrNull(1)?.toLongOrNull() ?: return@mapNotNull null
-                val item = runCatching { Td.refreshMedia(chatId, messageId) }.getOrNull() ?: return@mapNotNull null
+                val id = "$chatId:$messageId"
+                // As this session last listed it, with the copies folded into it, while the app
+                // was not stopped meanwhile; otherwise as Telegram has the message.
+                val item = KnownMedia.all().filter { it.id == id || it.versions.any { copy -> copy.id == id } }
+                    .maxByOrNull { it.versions.size }
+                    ?: runCatching { Td.refreshMedia(chatId, messageId) }.getOrNull()
+                    ?: return@mapNotNull null
                 DetailEntry(make(item, parts.getOrNull(2).orEmpty()), parts.getOrNull(1) ?: item.id)
             }
             stack.restore(pages)
