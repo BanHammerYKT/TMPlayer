@@ -356,19 +356,9 @@ object TvChannelsPublisher {
     /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without a picture. */
     private suspend fun resolveArt(context: Context, art: TvChannels.Art, budget: OnlineBudget): Pair<String, Int>? {
         found(art, budget)?.let { info ->
-            // Where a poster will do, the poster: a small picture Home has usually fetched
-            // already, where a backdrop is a wide download of its own for every card.
-            if (art.posterWanted) {
-                info.posterUrl?.let { url ->
-                    if (budget.quiet) {
-                        budget.deferred = true
-                    } else {
-                        fetched(context, url, "p")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_2_3 }
-                    }
-                }
-            }
-            // Otherwise the wide picture (an episode's still, a show's backdrop), a better card
-            // than a frame from the file on a row of landscape cards; a few each run.
+            // The wide picture (a film's or show's backdrop), a better card than a frame from the
+            // file. Only landscape pictures: a 2:3 poster beside them made the launcher's row
+            // uneven. A few downloads each run; one the run cannot afford is left for the next.
             info.wideUrl?.let { url ->
                 if (budget.take()) fetched(context, url, "w")?.let { return it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
             }

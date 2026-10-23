@@ -59,15 +59,18 @@ object Thumbnails {
     /**
      * The "Lighter pictures" setting (CP68): half the usual share of the heap for pictures, and
      * thumbnails, posters and stills decoded at [lighter] widths. Set from the stored choice; a
-     * change empties the cache, since what is in it was decoded at the other size.
+     * change empties the cache, since what is in it was decoded at the other size. Snapshot
+     * state, so the lists already on screen take the new look-ahead and art at once.
      */
-    @Volatile
-    var light: Boolean = false
+    var light: Boolean
+        get() = lightState.value
         set(value) {
-            if (field == value) return
-            field = value
+            if (lightState.value == value) return
+            lightState.value = value
             cache = newCache(budget())
         }
+
+    private val lightState = androidx.compose.runtime.mutableStateOf(false)
 
     private fun budget(): Int {
         if (fixedBudget > 0) return if (light) fixedBudget / 2 else fixedBudget

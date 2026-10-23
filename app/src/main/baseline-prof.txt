@@ -1,0 +1,24 @@
+# TMPlayer's own start-up and playback path, compiled ahead of time once installed.
+#
+# The libraries (Compose, Media3) bring their own profiles; this one covers the app's code, which
+# otherwise runs interpreted on a sideloaded install until the device compiles it by itself, days
+# later on a TV that is never idle. On the 1 GB Mi TV a compiled install opened Home in 0.8 s
+# against 3.5 s, and a D-pad press on a row cost a third of the frames (2026-10-23).
+#
+# Home, its rows and tiles, the shared theme and the pictures behind them.
+HSPLcom/tmplayer/App;->**(**)**
+HSPLcom/tmplayer/MainActivity**;->**(**)**
+HSPLcom/tmplayer/ui/browse/**;->**(**)**
+HSPLcom/tmplayer/ui/components/**;->**(**)**
+HSPLcom/tmplayer/ui/theme/**;->**(**)**
+HSPLcom/tmplayer/ui/online/**;->**(**)**
+HSPLcom/tmplayer/data/**;->**(**)**
+HSPLcom/tmplayer/online/**;->**(**)**
+# Opening a video and the controls over it.
+HSPLcom/tmplayer/player/**;->**(**)**
+HSPLcom/tmplayer/ui/player/**;->**(**)**
+# The classes themselves, loaded at start rather than on first touch.
+Lcom/tmplayer/ui/browse/**;
+Lcom/tmplayer/ui/components/**;
+Lcom/tmplayer/data/**;
+Lcom/tmplayer/player/**;

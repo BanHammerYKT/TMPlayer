@@ -30,20 +30,21 @@ object TvChannels {
     }
 
     /**
-     * Where a card's picture comes from, worked out on the device: a 2:3 poster for a film or a
-     * show when the online lookups are on and one is known, the video's own thumbnail otherwise.
+     * Where a card's picture comes from, worked out on the device. Every card is landscape, so a
+     * channel reads as one even row: the film's or show's wide picture when the online lookups are
+     * on and one is known, the video's own thumbnail otherwise. Never a 2:3 poster beside them.
      */
     data class Art(
         /** The thumbnail's TDLib file; 0 for a video known only from a record, which has none. */
         val thumbnailFileId: Int,
-        /** True for a film or a show, which may wear its poster. */
-        val posterWanted: Boolean,
-        /** The name the poster is looked up by, with the caption beside it. */
+        /** True for a film or a show, as opposed to a plain video. */
+        val titled: Boolean,
+        /** The name the picture is looked up by, with the caption beside it. */
         val name: String,
         val caption: String,
     ) {
-        // "w": cards since the wide picture came first, so the rows written before are redrawn once.
-        val key: String get() = "t$thumbnailFileId|${if (posterWanted) "p" else "-"}|w|$name|$caption"
+        // "l": cards since every one is landscape, so the posters written before are redrawn once.
+        val key: String get() = "t$thumbnailFileId|${if (titled) "p" else "-"}|l|$name|$caption"
     }
 
     /** What a card does when it is picked. */
@@ -182,7 +183,7 @@ object TvChannels {
                         description = chatTitle(cover.chatId),
                         durationMs = 0,
                         positionMs = 0,
-                        art = Art(cover.thumbnailFileId, posterWanted = true, cover.nameForParsing, cover.caption),
+                        art = Art(cover.thumbnailFileId, titled = true, cover.nameForParsing, cover.caption),
                         target = Target.Show(cover.chatId, entry.series.key, entry.series.title),
                         weight = weight,
                         isShow = true,
@@ -211,7 +212,7 @@ object TvChannels {
             description = chatTitle,
             durationMs = durationMs.takeIf { it > 0 } ?: point?.durationMs ?: 0,
             positionMs = point?.positionMs?.takeIf { it > 0 } ?: 0,
-            art = Art(thumbnail.thumbnailFileId, posterWanted = film, item.nameForParsing, item.caption),
+            art = Art(thumbnail.thumbnailFileId, titled = film, item.nameForParsing, item.caption),
             target = Target.Play(WatchNext.Video.of(item, chatTitle)),
             weight = weight,
         )
@@ -241,8 +242,8 @@ object TvChannels {
             fileProgram(Channel.NewEpisodes, episode.item, chatTitle(episode.item.chatId), progress, kept.size - index).copy(
                 title = episode.show,
                 description = listOf(episode.code, chatTitle(episode.item.chatId)).filter { it.isNotBlank() }.joinToString(" · "),
-                // An episode is a frame of the show, not its poster: two new episodes would wear one picture.
-                art = Art(episode.item.thumbnailFileId, posterWanted = false, episode.item.nameForParsing, episode.item.caption),
+                // An episode is a frame of the show, not its backdrop: two new episodes would wear one picture.
+                art = Art(episode.item.thumbnailFileId, titled = false, episode.item.nameForParsing, episode.item.caption),
             )
         }
     }

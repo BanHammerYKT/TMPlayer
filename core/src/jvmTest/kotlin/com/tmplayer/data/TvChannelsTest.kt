@@ -121,7 +121,7 @@ class TvChannelsTest {
         val rows = HomeRows.build(emptyList(), listOf(chat(3), chat(4)), emptyMap(), recent = listOf(e1, e2, other))
         val programs = TvChannels.plan(rows, starred = 2, allowed = null, chatTitle = titles)!!
         val show = programs.single { it.isShow }
-        assertTrue(show.art.posterWanted)
+        assertTrue(show.art.titled)
         val target = show.target as TvChannels.Target.Show
         assertEquals(3L, target.chatId)
         // Films and shows only: the plain video beside the show stays off the home screen.
