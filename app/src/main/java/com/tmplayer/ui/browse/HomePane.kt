@@ -1079,12 +1079,8 @@ private fun telegramFacts(chat: String, item: MediaItem): String {
 
 /** One line of facts under a card, in the tile's [ink]: muted at rest, the full text under focus. */
 @Composable
-private fun CaptionLine(text: String, ink: Color) {
-    if (isTouch()) {
-        M3Text(text, style = M3MaterialTheme.typography.labelMedium, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    } else {
-        Text(text, style = MaterialTheme.typography.labelMedium, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
+private fun CaptionLine(text: String, ink: androidx.compose.ui.graphics.ColorProducer) {
+    TileCaption(text, if (isTouch()) M3MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelMedium, ink)
 }
 
 /**
@@ -1318,6 +1314,10 @@ private const val NO_CAROUSEL_SETTLE_TV_MS = 300L
 @Composable
 private fun SeeAllLink(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val touch = isTouch()
+    if (!touch) {
+        SeeAllLinkTv(label, onClick, modifier)
+        return
+    }
     val interactions = remember { MutableInteractionSource() }
     val focused by interactions.collectIsFocusedAsState()
     val pressed by interactions.collectIsPressedAsState()
@@ -1358,13 +1358,56 @@ private fun SeeAllLink(label: String, onClick: () -> Unit, modifier: Modifier = 
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (touch) {
-            M3Text(label, style = M3MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
-            androidx.compose.material3.Icon(TmIcons.ChevronRight, contentDescription = null, tint = ink, modifier = Modifier.size(20.dp))
-        } else {
-            Text(label, style = MaterialTheme.typography.titleSmall, color = ink, maxLines = 1)
-            Icon(TmIcons.ChevronRight, contentDescription = null, tint = ink, modifier = Modifier.size(20.dp))
-        }
+        M3Text(label, style = M3MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
+        androidx.compose.material3.Icon(TmIcons.ChevronRight, contentDescription = null, tint = ink, modifier = Modifier.size(20.dp))
+    }
+}
+
+/**
+ * [SeeAllLink] under the remote: the same accent, grow and underline, at once and with no
+ * animation behind them, all read from the focus where they are drawn. The words and the chevron
+ * repaint when focus arrives or leaves; nothing in the heading composes again.
+ */
+@Composable
+private fun SeeAllLinkTv(label: String, onClick: () -> Unit, modifier: Modifier) {
+    val interactions = remember { MutableInteractionSource() }
+    val focused = interactions.collectIsFocusedAsState()
+    val pressed = interactions.collectIsPressedAsState()
+    val still = com.tmplayer.ui.theme.rememberReducedMotion() || com.tmplayer.ui.theme.Motion.reduced
+    val accent = Tone.accent
+    val muted = Tone.muted
+    val ink = remember(focused, pressed, accent, muted) {
+        androidx.compose.ui.graphics.ColorProducer { if (focused.value || pressed.value) accent else muted }
+    }
+    val chevron = androidx.compose.ui.graphics.vector.rememberVectorPainter(TmIcons.ChevronRight)
+    Row(
+        modifier
+            .graphicsLayer {
+                val grow = when {
+                    still -> 1f
+                    pressed.value -> com.tmplayer.ui.theme.Motion.PressScale
+                    focused.value -> com.tmplayer.ui.theme.Motion.FocusScale
+                    else -> 1f
+                }
+                scaleX = grow
+                scaleY = grow
+            }
+            .clickable(interactionSource = interactions, indication = null, role = Role.Button, onClick = onClick)
+            .padding(vertical = 4.dp)
+            .drawBehind {
+                if (!focused.value) return@drawBehind
+                val stroke = 2.dp.toPx()
+                drawRect(ink(), topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - stroke), size = androidx.compose.ui.geometry.Size(size.width, stroke))
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.foundation.text.BasicText(label, style = MaterialTheme.typography.titleSmall, color = ink, maxLines = 1)
+        // The chevron as an Icon paints it, tinted from the same colour at draw time.
+        androidx.compose.foundation.layout.Box(
+            Modifier.size(20.dp).drawBehind {
+                with(chevron) { draw(size, colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(ink())) }
+            },
+        )
     }
 }
 

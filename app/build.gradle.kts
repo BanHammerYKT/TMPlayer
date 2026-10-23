@@ -367,6 +367,11 @@ dependencies {
     testImplementation(libs.json)
 }
 
+// The :core models that are immutable in fact though the compiler cannot see it; the file says which.
+composeCompiler {
+    stabilityConfigurationFiles.add(rootProject.layout.projectDirectory.file("compose-stability.conf"))
+}
+
 // The R8 mapping for crash reports, and nothing else of Sentry's plugin. A release build is
 // minified, so without its mapping a report's stack trace is a list of renamed classes. The
 // plugin writes a UUID into the APK and the matching mapping is uploaded under it, but only when

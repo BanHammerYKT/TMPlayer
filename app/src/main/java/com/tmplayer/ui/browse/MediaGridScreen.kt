@@ -88,12 +88,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.findRootCoordinates
@@ -2145,7 +2147,7 @@ internal fun MediaCard(
     /** What the caption says in place of the file's own name: Home's New episodes row names the episode. */
     title: String? = null,
     /** The line of facts in place of the file's own (Home's New episodes row: the chat, quality and size). */
-    meta: (@Composable (ink: Color) -> Unit)? = null,
+    meta: (@Composable (ink: androidx.compose.ui.graphics.ColorProducer) -> Unit)? = null,
 ) {
     // This video's correction alone, from the screen's one collector ([LocalTileShared]).
     val renamed = com.tmplayer.ui.components.rememberCorrection(item.id)?.title
@@ -2202,42 +2204,57 @@ internal fun VideoTile(
     onLongClick: (() -> Unit)? = null,
     onFocused: () -> Unit = {},
     selected: Boolean? = null,
-    meta: (@Composable (ink: Color) -> Unit)? = null,
+    meta: (@Composable (ink: androidx.compose.ui.graphics.ColorProducer) -> Unit)? = null,
     /** False for a card that writes its name on the art (Home's Continue watching), keeping only [meta] under it. */
     showTitle: Boolean = true,
     art: @Composable BoxScope.() -> Unit,
 ) {
     val touch = isTouch()
     val interactions = remember { MutableInteractionSource() }
-    val focused by interactions.collectIsFocusedAsState()
-    val pressed by interactions.collectIsPressedAsState()
+    // Kept as a State and, on a television, read only where it is drawn (the ring, the grow and
+    // the caption's colour), so a press of the remote composes neither the tile it leaves nor the
+    // one it reaches: on a 1 GB stick each tile composed again cost a frame of its own.
+    val focusedState = interactions.collectIsFocusedAsState()
     val still = rememberReducedMotion()
-    LaunchedEffect(focused) { if (focused) onFocused() }
-    val scale by animateFloatAsState(
-        targetValue = when {
-            still -> 1f
-            focused -> Motion.FocusScale
-            pressed && touch -> Motion.PressScale
-            else -> 1f
-        },
-        // At once on a television: grown over a few frames, every press drew the row again for
-        // each of them, which a TV stick's GPU felt more than anything else on Home.
-        animationSpec = if (touch) Motion.standard(PRESS_MS) else androidx.compose.animation.core.snap(),
-        label = "tileScale",
-    )
-    // On a television the ring and the words change at once: animated, the tile and its lines
-    // were composed again on every frame of each focus move, the tile left and the tile reached.
-    val ring = if (!touch) {
-        if (focused) Tone.accent else Color.Transparent
-    } else {
-        animateColorAsState(if (focused) Tone.accent else Color.Transparent, Motion.standard(Motion.Fast), label = "tileRing").value
+    val latestOnFocused = androidx.compose.runtime.rememberUpdatedState(onFocused)
+    LaunchedEffect(focusedState) {
+        snapshotFlow { focusedState.value }.collect { if (it) latestOnFocused.value() }
     }
-    val ink = if (!touch) {
-        if (focused) Tone.text else Tone.muted
-    } else {
-        animateColorAsState(if (focused) Tone.text else Tone.muted, Motion.standard(Motion.Fast), label = "tileInk").value
-    }
+    val accent = Tone.accent
+    val text = Tone.text
+    val muted = Tone.muted
     val shape = RoundedCornerShape(Corner.Medium)
+    val scale: () -> Float
+    val ink: androidx.compose.ui.graphics.ColorProducer
+    val ring: Modifier
+    if (touch) {
+        val focused by focusedState
+        val pressed by interactions.collectIsPressedAsState()
+        val grown = animateFloatAsState(
+            targetValue = when {
+                still -> 1f
+                focused -> Motion.FocusScale
+                pressed -> Motion.PressScale
+                else -> 1f
+            },
+            animationSpec = Motion.standard(PRESS_MS),
+            label = "tileScale",
+        )
+        scale = { grown.value }
+        val inkState = animateColorAsState(if (focused) text else muted, Motion.standard(Motion.Fast), label = "tileInk")
+        ink = remember(inkState) { androidx.compose.ui.graphics.ColorProducer { inkState.value } }
+        val ringColor by animateColorAsState(if (focused) accent else Color.Transparent, Motion.standard(Motion.Fast), label = "tileRing")
+        ring = Modifier.border(Focus.Ring, ringColor, shape)
+    } else {
+        // At once on a television, with no animation behind it: grown over a few frames, every
+        // press drew the row again for each of them, which a TV stick's GPU felt more than
+        // anything else on Home.
+        scale = remember(focusedState, still) { { if (!still && focusedState.value) Motion.FocusScale else 1f } }
+        ink = remember(focusedState, text, muted) { androidx.compose.ui.graphics.ColorProducer { if (focusedState.value) text else muted } }
+        // Drawn only round the focused tile: a transparent ring was still a rounded stroke drawn
+        // on every tile in view.
+        ring = Modifier.focusRingDrawn(focusedState, accent, shape)
+    }
     Column(
         modifier
             .fillMaxWidth()
@@ -2263,15 +2280,14 @@ internal fun VideoTile(
                 // The grow and the rounded corners in one layer: a scale layer with a clip layer
                 // inside it was two render nodes a tile, every tile on screen, every frame.
                 .graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
+                    val grow = scale()
+                    scaleX = grow
+                    scaleY = grow
                     this.shape = shape
                     clip = true
                 }
                 .then(if (touch) Modifier.indication(interactions, LocalIndication.current) else Modifier)
-                // On a television the ring is drawn only round the focused tile: a transparent
-                // ring was still a rounded stroke drawn on every tile in view.
-                .then(if (touch || focused) Modifier.border(Focus.Ring, ring, shape) else Modifier)
+                .then(ring)
                 .selectionEdge(selected, shape),
             content = art,
         )
@@ -2304,6 +2320,52 @@ internal fun VideoTile(
             Spacer(Modifier.height(2.dp))
             meta(ink)
         }
+    }
+}
+
+/**
+ * [Focus.Ring] round a television's tile, painted from [focused] in the draw phase alone, so a
+ * focus move draws the tile again and composes nothing. The stroke is the one
+ * [androidx.compose.foundation.border] draws for a rounded shape (whole pixels wide, inset by half
+ * of that, the corners shrunk to match), so the ring looks as it did when it was a border.
+ */
+private fun Modifier.focusRingDrawn(focused: androidx.compose.runtime.State<Boolean>, color: Color, shape: Shape): Modifier =
+    drawWithCache {
+        val stroke = kotlin.math.min(kotlin.math.ceil(Focus.Ring.toPx()), kotlin.math.ceil(size.minDimension / 2))
+        val half = stroke / 2
+        val outline = shape.createOutline(size, layoutDirection, this)
+        val corner = (outline as? androidx.compose.ui.graphics.Outline.Rounded)?.roundRect?.topLeftCornerRadius?.let {
+            androidx.compose.ui.geometry.CornerRadius((it.x - half).coerceAtLeast(0f), (it.y - half).coerceAtLeast(0f))
+        }
+        val style = androidx.compose.ui.graphics.drawscope.Stroke(stroke)
+        onDrawWithContent {
+            drawContent()
+            if (!focused.value) return@onDrawWithContent
+            if (corner != null) {
+                drawRoundRect(
+                    color,
+                    topLeft = androidx.compose.ui.geometry.Offset(half, half),
+                    size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
+                    cornerRadius = corner,
+                    style = style,
+                )
+            } else {
+                drawOutline(outline, color, style = style)
+            }
+        }
+    }
+
+/**
+ * A line of facts under a tile in the tile's [ink]. On a television the colour is read where the
+ * text is drawn, so the tile's focus repaints the line without composing it again; on a phone and
+ * the desktop it is read here, as the animated colour always was.
+ */
+@Composable
+internal fun TileCaption(text: String, style: androidx.compose.ui.text.TextStyle, ink: androidx.compose.ui.graphics.ColorProducer) {
+    if (isTouch()) {
+        M3Text(text, style = style, color = ink(), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    } else {
+        androidx.compose.foundation.text.BasicText(text, style = style, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -2360,7 +2422,9 @@ private fun MediaRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        MetaLine(item, watched, finished = finished)
+        // A list row has no focus colour of its own for the line: it stays muted.
+        val muted = Tone.muted
+        MetaLine(item, watched, remember(muted) { androidx.compose.ui.graphics.ColorProducer { muted } }, finished = finished)
     }
 }
 
@@ -2798,7 +2862,7 @@ private fun Modifier.selectionEdge(selected: Boolean?, shape: Shape): Modifier =
 private fun MetaLine(
     item: MediaItem,
     watched: WatchPoint?,
-    ink: Color = Tone.muted,
+    ink: androidx.compose.ui.graphics.ColorProducer,
     finished: Boolean = false,
     /** A film's poster: the year first, and no quality, which the poster wears on its art. */
     poster: Boolean = false,
@@ -2821,23 +2885,12 @@ private fun MetaLine(
         item.qualityTags.firstOrNull()?.takeIf { !poster },
         resume,
     ).joinToString("  ·  ")
-    if (isTouch()) {
-        M3Text(
-            text,
-            style = if (poster) M3MaterialTheme.typography.labelSmall else M3MaterialTheme.typography.labelMedium,
-            color = ink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+    val style = if (isTouch()) {
+        if (poster) M3MaterialTheme.typography.labelSmall else M3MaterialTheme.typography.labelMedium
     } else {
-        Text(
-            text,
-            style = if (poster) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
-            color = ink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (poster) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium
     }
+    TileCaption(text, style, ink)
 }
 
 /** No overscan to clear on a phone, so the margin is only what keeps art off the bezel. */

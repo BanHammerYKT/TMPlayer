@@ -62,12 +62,13 @@ internal fun SeriesCard(
         poster = poster,
         modifier = modifier,
         meta = { ink ->
-            Text(
+            // A show already begun keeps its line in the accent; otherwise the tile's own colour.
+            val accent = Tone.accent
+            val begun = progress.watched > 0
+            TileCaption(
                 summary,
-                style = if (poster) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
-                color = if (progress.watched > 0) Tone.accent else ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                if (poster) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                remember(begun, accent, ink) { if (begun) androidx.compose.ui.graphics.ColorProducer { accent } else ink },
             )
         },
     ) {
