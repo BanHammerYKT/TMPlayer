@@ -536,7 +536,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         Log.w("TMPlayer", "No decoder for the picture: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
         player?.pause()
         val lines = nominalLines(format.width, format.height)
-        showError(if (lines >= UHD_HEIGHT) L.playerErrorUhd(lines.toString()) else L.playerErrorFormat, retryable = false)
+        showError(
+            when {
+                FormatRoute.dolbyVisionOnly(format) -> L.playerErrorDolbyVision
+                lines >= UHD_HEIGHT -> L.playerErrorUhd(lines.toString())
+                else -> L.playerErrorFormat
+            },
+            retryable = false,
+        )
         return true
     }
 
@@ -567,26 +574,57 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         )
         if (!heavy) return false
         Log.i("TMPlayer", "Picture decodes in software here: ${format.sampleMimeType} ${format.codecs.orEmpty()} ${format.width}x${format.height}")
+        // 4K in software on this device plays at a few frames a second: with no lighter copy to
+        // hand over to, the sheet says it is too large rather than starting a slide show. Only
+        // when the FFmpeg decoder really took the picture: a device decoder that undersells
+        // itself is left to try, and its failure says the same thing.
+        val unwatchable = com.tmplayer.data.SoftwareDecode.unwatchable(
+            format.sampleMimeType,
+            format.width,
+            format.height,
+            hardware = false,
+            weak = true,
+        ) && DecoderSwitch.softwareVideoChosen(player)
         val swappable = playingQuality == 0 && !qualityHandPicked && !softwareSwapTried &&
             downloadedFile == null && joinedSource == null && hasMessage()
         if (!swappable) {
+            if (unwatchable) return tooLargeForSoftware(format)
             noteSoftwareDecode(playing = false)
             return false
         }
         val copies = postItem?.qualities?.takeIf { it.isNotEmpty() } ?: carriedQualities
         if (copies.isNotEmpty()) {
             if (swapForSoftware(copies)) return true
+            if (unwatchable) return tooLargeForSoftware(format)
             noteSoftwareDecode(playing = false)
             return false
         }
         // The copies not known yet: the message is being read as the player opens ([readPost]),
-        // and the swap waits a moment for it, the upload playing meanwhile.
+        // and the swap waits a moment for it, the upload playing meanwhile (held, when it would
+        // only stutter).
         softwareSwapTried = true
+        if (unwatchable) player?.pause()
         itemScope.launch {
             val later = kotlinx.coroutines.withTimeoutOrNull(POST_READ_MS) { readPost() }?.qualities.orEmpty()
-            if (later.isEmpty() || !swapForSoftware(later)) noteSoftwareDecode(playing = true)
+            if (later.isEmpty() || !swapForSoftware(later)) {
+                if (unwatchable) tooLargeForSoftware(format) else noteSoftwareDecode(playing = true)
+            }
         }
         return false
+    }
+
+    /**
+     * The failure sheet for a picture only the FFmpeg decoder takes here and too large for it
+     * ([com.tmplayer.data.SoftwareDecode.unwatchable]): the same sentence as a hardware decoder
+     * that gives up on 4K, naming the height and that a 1080p copy will play. Always true, for
+     * [checkSoftwareDecode].
+     */
+    private fun tooLargeForSoftware(format: androidx.media3.common.Format): Boolean {
+        Log.w("TMPlayer", "Too large to decode in software here: ${format.sampleMimeType} ${format.width}x${format.height}")
+        player?.pause()
+        decoderPlan = null
+        showError(L.playerErrorUhd(nominalLines(format.width, format.height).toString()), retryable = false)
+        return true
     }
 
     /**
@@ -2524,6 +2562,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         .build()
 
     private fun buildPlayer(client: TdlClient): ExoPlayer {
+        // A new player starts with both decoders on, so each may switch by itself once again.
+        decodersSwitched.clear()
         // Hardware decoders first; NextLib's FFmpeg renderers pick up the audio codecs a TV stick
         // has no silicon for: DTS and TrueHD tracks are common in video remuxes.
         // Read once here, outside the factory, so nothing depends on when the factory's own
@@ -2774,8 +2814,25 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // Constant-bitrate seeking rescues formats that ship without a seek index. Not "always":
         // on a file that has an index the estimate is worse than the index, and the seek lands
         // somewhere other than where it was asked to.
-        val extractors = DefaultExtractorsFactory()
-            .setConstantBitrateSeekingEnabled(true)
+        //
+        // MPEG-TS as Blu-ray rips and TV recordings write it: DTS in an .m2ts is declared with the
+        // Blu-ray (HDMV) stream type, which Media3 leaves unread unless asked, so the film played
+        // silent; a recording whose H.264 has no IDR frames, only recovery points, never showed a
+        // picture; and a long GOP pushed the timestamps a seek searches for past Media3's window,
+        // so seeking landed far from the asked place. Jellyfin and Just Player set the same.
+        //
+        // Wrapped last so a Dolby Vision track this device would not show as Dolby Vision reaches
+        // the player as its HEVC base layer, which both decoders take ([DolbyVisionBaseLayer]).
+        val extractors = DolbyVisionBaseLayer(
+            this,
+            DefaultExtractorsFactory()
+                .setConstantBitrateSeekingEnabled(true)
+                .setTsExtractorFlags(
+                    androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or
+                        androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory.FLAG_ALLOW_NON_IDR_KEYFRAMES,
+                )
+                .setTsExtractorTimestampSearchBytes(TS_TIMESTAMP_SEARCH_BYTES),
+        )
 
         return ExoPlayer.Builder(this, renderers)
             .setLoadControl(loadControl)
@@ -2795,7 +2852,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                         ),
                     ).setTransferListener(byteCounter),
                     extractors,
-                ),
+                )
+                    // A text track saved in a Windows code page rather than UTF-8 reads in its
+                    // language's page instead of as mojibake ([SubtitleEncoding]).
+                    .setSubtitleParserFactory(SubtitleEncoding(androidx.media3.extractor.text.DefaultSubtitleParserFactory())),
             )
             .setSeekBackIncrementMs(Skip.BACK_MS)
             .setSeekForwardIncrementMs(Skip.FORWARD_MS)
@@ -3339,6 +3399,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // only when the other decoder can take this format.
             decoderPlan = DecoderSwitch.planFor(player, error)
             lastPlaybackError = error
+            if (switchDecoderByItself(error)) return
             // A file TDLib cannot size is a stale id, not a slow network: retrying the same id
             // only spins for a minute, while asking for the message again fixes it in a second.
             if (staleFileId(error) && resourceAgain(error, sameId = { if (!recoverFrom(error)) showError(friendlyError(error), retryable = !isHopeless(error)) })) return
@@ -3720,10 +3781,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             // A remux with a single video track bypasses the selector's viewport constraints, so a
             // 4K stream reaches a decoder built for 1080p. Naming the resolution matters: "a
             // different copy may work" sends somebody looking for a bad file, not a smaller one.
-            if (failedLines(error) >= UHD_HEIGHT) {
-                L.playerErrorUhd(failedLines(error).toString())
-            } else {
-                L.playerErrorFormat
+            // Dolby Vision profile 5 says what it is, since no copy of the same file plays here.
+            when {
+                (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+                    ?.let(FormatRoute::dolbyVisionOnly) == true -> L.playerErrorDolbyVision
+                failedLines(error) >= UHD_HEIGHT -> L.playerErrorUhd(failedLines(error).toString())
+                else -> L.playerErrorFormat
             }
 
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
@@ -6858,6 +6921,41 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusName?.visibility = View.GONE
     }
 
+    /** The track types this player already moved to the other decoder by itself ([switchDecoderByItself]). */
+    private val decodersSwitched = mutableSetOf<Int>()
+
+    /**
+     * The first decoder failure of a picture or a soundtrack goes straight to the other decoder,
+     * the way the failure sheet's "Try the other decoder" would, without the viewer having to read
+     * a sheet first: a device decoder that claimed a format and then choked on it (a Hi10P film, a
+     * profile the chip lists and cannot do), the FFmpeg decoder failing where the device's would
+     * not, or a Dolby or DTS track whose passthrough AudioTrack the device refused. Once per track
+     * type per player ([FormatRoute.switchesByItself]): a second failure brings the sheet, with
+     * the button to go back. Never to software for a 4K picture on a weak device, which would
+     * only stutter; the sheet says so instead.
+     */
+    private fun switchDecoderByItself(error: PlaybackException): Boolean {
+        val plan = decoderPlan ?: return false
+        if (player == null) return false
+        val format = (error as? androidx.media3.exoplayer.ExoPlaybackException)?.rendererFormat
+        val tooSlow = weakDevice && format != null && com.tmplayer.data.SoftwareDecode.unwatchable(
+            format.sampleMimeType,
+            format.width,
+            format.height,
+            hardware = false,
+            weak = true,
+        )
+        if (!FormatRoute.switchesByItself(plan.trackType, plan.toFfmpeg, decodersSwitched, tooSlow, firstFrameReady)) return false
+        decodersSwitched += plan.trackType
+        Log.w(
+            "TMPlayer",
+            "Decoder failed (${error.errorCodeName}) on ${format?.sampleMimeType} ${format?.codecs.orEmpty()}: " +
+                "switching to the ${if (plan.toFfmpeg) "FFmpeg" else "device"} decoder",
+        )
+        tryOtherDecoder()
+        return true
+    }
+
     /**
      * "Try the other decoder": the failed side's renderers off ([DecoderSwitch]), and the player
      * prepared again where it stood. A player that failed keeps its position, so nothing is lost.
@@ -7789,6 +7887,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
          */
         internal fun nominalLines(width: Int, height: Int): Int =
             if (width <= 0 || height <= 0) maxOf(height, 0) else maxOf(height, width * 9 / 16)
+
+        /**
+         * How far either side of a seek target the MPEG-TS extractor looks for a timestamp:
+         * three times Media3's 600 packets, enough for a broadcast recording's long GOP.
+         */
+        private const val TS_TIMESTAMP_SEARCH_BYTES = 1800 * 188
 
         /** Android's own limits on a picture-in-picture window's shape. */
         private const val PIP_MIN_RATIO = 1f / 2.39f

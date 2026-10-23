@@ -40,6 +40,16 @@ object SoftwareDecode {
     }
 
     /**
+     * Whether a [heavy] picture is beyond watching altogether: 4K (either side, so a 3840 by 1600
+     * scope film counts) in software on a weak device. A quad Cortex-A53 stick decodes 1080p HEVC
+     * in software with dropped frames, and 4K at a few frames a second, so such a video is not
+     * started in software to stutter: the player says plainly that it is too large for this device
+     * and that a 1080p copy will play, as it does when the hardware decoder gives up.
+     */
+    fun unwatchable(mime: String?, width: Int, height: Int, hardware: Boolean, weak: Boolean): Boolean =
+        heavy(mime, width, height, hardware, weak) && (width >= UHD_WIDTH || height >= UHD_HEIGHT)
+
+    /**
      * Whether the device is weak enough for [heavy] to matter: a television (the sticks are
      * phone chips of years ago at best) or a phone [DeviceFit] finds short of memory.
      */
@@ -50,6 +60,8 @@ object SoftwareDecode {
     private const val HD_HEIGHT = 700
     private const val FULL_HD_WIDTH = 1800
     private const val FULL_HD_HEIGHT = 1000
+    private const val UHD_WIDTH = 3000
+    private const val UHD_HEIGHT = 1600
 
     private val heavyUploads = concurrentMap<String, Boolean>()
     private val noted = concurrentMap<String, Boolean>()
