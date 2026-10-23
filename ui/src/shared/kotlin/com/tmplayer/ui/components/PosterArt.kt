@@ -69,10 +69,27 @@ fun PosterArt(
     // The inline preview first, off the composition thread, then the thumbnail when it arrives.
     // Decoding: nothing drawn yet, so the colour cover is not flashed for a frame under a preview
     // about to land. [NoPreview] once there is none to decode.
-    val mini by produceState<Any?>(if (miniThumbnail == null || miniThumbnail.isEmpty()) NoPreview else null, miniThumbnail) {
-        value = withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) } ?: NoPreview
-    }
     var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
+    var mini by remember {
+        mutableStateOf<Any?>(if (miniThumbnail == null || miniThumbnail.isEmpty()) NoPreview else null)
+    }
+    // The bytes [mini] was decoded from. TDLib hands an equal but fresh array with every update of
+    // the message, and the effect restarts on the array itself: the same preview is not decoded and
+    // hashed again for it, and none is decoded while the sharp thumbnail covers it.
+    val miniSource = remember { PreviewSource() }
+    LaunchedEffect(miniThumbnail) {
+        val bytes = miniThumbnail
+        if (bytes == null || bytes.isEmpty()) {
+            if (mini == null) mini = NoPreview
+            return@LaunchedEffect
+        }
+        val decoded = mini != null && mini !== NoPreview
+        if (decoded && miniSource.bytes?.contentEquals(bytes) == true) return@LaunchedEffect
+        if (full != null) return@LaunchedEffect
+        val picture = withContext(Dispatchers.Default) { Thumbnails.mini(bytes) }
+        miniSource.bytes = bytes
+        mini = picture ?: NoPreview
+    }
     // On a television the poster alone is fetched whenever there is one: the thumbnail's download
     // and decode under it cost a stick as much again for a picture nobody sees. The preview holds
     // the card meanwhile, and the thumbnail is fetched only when the poster cannot be had.
@@ -155,3 +172,8 @@ private const val FIELD_DIM = 0.3f
 
 /** No inline preview to show: the generated cover stands in. */
 private object NoPreview
+
+/** The inline preview's bytes last decoded, held outside snapshot state: only compared, never drawn. */
+private class PreviewSource {
+    var bytes: ByteArray? = null
+}
