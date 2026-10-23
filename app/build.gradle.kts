@@ -343,6 +343,8 @@ dependencies {
     // own; leanback stays only for the TV player's theme (values-television/themes.xml).
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    // Only for 3D video: the anaglyph shader ([Stereo3dEffect]). Nothing goes through it otherwise.
+    implementation(libs.androidx.media3.effect)
     // The transport controls the system draws for us: notification, lock screen, headset
     // buttons and the Assistant, none of which the app has to lay out itself.
     implementation(libs.androidx.media3.session)

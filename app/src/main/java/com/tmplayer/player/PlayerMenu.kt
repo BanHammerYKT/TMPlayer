@@ -19,6 +19,11 @@ enum class PlayerMenuEntry {
     LockScreen,
     PlaybackDetails,
     StartOver,
+    /**
+     * 3D video: a page of how the file keeps its two pictures and which glasses are on
+     * ([Stereo3d]). Not for sound alone, nor while the video plays on a cast.
+     */
+    Stereo,
     /** Louder: quiet dialogue lifted, the peaks kept from clipping. On or off, and the menu closes. */
     VolumeBoost,
     /** Night mode: the range squeezed, so loud scenes are quieter and dialogue clearer. */
@@ -67,6 +72,8 @@ enum class PhoneMenuEntry {
      * button (a phone held upright), so the pinch is not the only way there.
      */
     PictureShape,
+    /** 3D video, as on the television: a page of the layout, the glasses and the eye swap. */
+    Stereo,
     VolumeBoost,
     NightMode,
     EvenVolume,
@@ -106,10 +113,12 @@ fun PhoneMenuEntry.label(
     loop: AbLoop? = null,
     bookmarks: Int = 0,
     shape: VideoScale? = null,
+    stereo: String? = null,
 ): String = when (this) {
     PhoneMenuEntry.LockScreen -> L.playerLockScreen
     PhoneMenuEntry.PictureInPicture -> L.playerPictureInPicture
     PhoneMenuEntry.PictureShape -> shape?.let { L.commonWithDetail(L.playerPictureShape, it.label) } ?: L.playerPictureShape
+    PhoneMenuEntry.Stereo -> stereo?.let { L.commonWithDetail(L.playerStereo, it) } ?: L.playerStereo
     PhoneMenuEntry.VolumeBoost -> L.playerVolumeBoost
     PhoneMenuEntry.NightMode -> L.playerNightMode
     PhoneMenuEntry.EvenVolume -> L.playerEvenVolume
@@ -163,6 +172,8 @@ object PlayerMenu {
      * working through one moment of a video.
      *
      * [chapters] is whether the file has chapter marks, which adds the chapter steps.
+     *
+     * [stereo] is whether 3D video is offered: a picture to draw, not sound alone.
      */
     fun tvEntries(
         pictureInPicture: Boolean,
@@ -172,10 +183,12 @@ object PlayerMenu {
         paused: Boolean = false,
         bookmarks: Boolean = false,
         chapters: Boolean = false,
+        stereo: Boolean = false,
     ): List<PlayerMenuEntry> = buildList {
         add(PlayerMenuEntry.LockScreen)
         add(PlayerMenuEntry.PlaybackDetails)
         add(PlayerMenuEntry.StartOver)
+        if (stereo) add(PlayerMenuEntry.Stereo)
         add(PlayerMenuEntry.VolumeBoost)
         add(PlayerMenuEntry.NightMode)
         add(PlayerMenuEntry.EvenVolume)
@@ -209,6 +222,7 @@ object PlayerMenu {
      * chat that restricts saving (or while that is still being asked), whose frames stay in it.
      * [pictureShape] is whether the row has no picture shape button right now, which puts its
      * page here instead. The lock stays first either way: the line people come here for.
+     * [stereo] offers 3D video, beside the picture's shape.
      */
     fun phoneEntries(
         pictureInPicture: Boolean,
@@ -220,10 +234,12 @@ object PlayerMenu {
         chapters: Boolean = false,
         saveFrame: Boolean = false,
         pictureShape: Boolean = false,
+        stereo: Boolean = false,
     ): List<PhoneMenuEntry> = buildList {
         add(PhoneMenuEntry.LockScreen)
         if (pictureInPicture) add(PhoneMenuEntry.PictureInPicture)
         if (pictureShape) add(PhoneMenuEntry.PictureShape)
+        if (stereo) add(PhoneMenuEntry.Stereo)
         add(PhoneMenuEntry.VolumeBoost)
         add(PhoneMenuEntry.NightMode)
         add(PhoneMenuEntry.EvenVolume)

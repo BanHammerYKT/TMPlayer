@@ -117,6 +117,7 @@ class PlayerMenuTest {
             paused = true,
             bookmarks = true,
             chapters = true,
+            stereo = true,
         )
         assertFalse(PlayerMenuEntry.PictureInPicture in entries)
         assertEquals(PlayerMenuEntry.entries.size - 1, entries.size)
@@ -133,8 +134,19 @@ class PlayerMenuTest {
                 paused = true,
                 bookmarks = true,
                 chapters = true,
+                stereo = true,
             ).toSet(),
         )
+    }
+
+    @Test
+    fun `3D video sits by the picture's own lines and only for a picture`() {
+        assertFalse(PlayerMenuEntry.Stereo in PlayerMenu.tvEntries(pictureInPicture = true))
+        val tv = PlayerMenu.tvEntries(pictureInPicture = true, stereo = true)
+        assertEquals(tv.indexOf(PlayerMenuEntry.StartOver) + 1, tv.indexOf(PlayerMenuEntry.Stereo))
+        val phone = PlayerMenu.phoneEntries(true, true, true, true, pictureShape = true, stereo = true)
+        assertEquals(phone.indexOf(PhoneMenuEntry.PictureShape) + 1, phone.indexOf(PhoneMenuEntry.Stereo))
+        assertFalse(PhoneMenuEntry.Stereo in PlayerMenu.phoneEntries(true, true, true, true))
     }
 
     @Test
@@ -172,7 +184,7 @@ class PlayerMenuTest {
                 saveFrame = true,
             ),
         )
-        assertEquals(PhoneMenuEntry.entries.toSet(), PlayerMenu.phoneEntries(true, true, true, true, paused = true, bookmarks = true, chapters = true, saveFrame = true, pictureShape = true).toSet())
+        assertEquals(PhoneMenuEntry.entries.toSet(), PlayerMenu.phoneEntries(true, true, true, true, paused = true, bookmarks = true, chapters = true, saveFrame = true, pictureShape = true, stereo = true).toSet())
     }
 
     @Test

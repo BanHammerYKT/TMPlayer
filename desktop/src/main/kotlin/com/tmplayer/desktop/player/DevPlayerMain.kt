@@ -64,6 +64,8 @@ import kotlin.system.exitProcess
  * - `--press "<ms>:<key>;<ms>:<key>"` presses each key at its time through `java.awt.Robot`, for
  *   keys that need their own moment (A-B repeat, chapters). A key is a letter, or a name with
  *   modifiers in front: `r`, `shift+s`, `ctrl+right`, `ctrl+left`.
+ * - `--stereo <sbs|tab>[,rc|gm|yb|2d][,swap]` turns 3D video on once the file plays, as the
+ *   menu's 3D video page would.
  * - `--quit-after <ms>` closes the window, so a scripted run ends on its own.
  */
 fun main(argv: Array<String>) {
@@ -98,6 +100,13 @@ fun main(argv: Array<String>) {
     val fullscreenAfter = value("--fullscreen-after")?.toLongOrNull()
     val fullscreenRounds = value("--fullscreen-rounds")?.toIntOrNull() ?: 1
     val menuPage = value("--menu")
+    val stereo = value("--stereo")?.split(',')?.let { parts ->
+        com.tmplayer.player.Stereo3d(
+            layout = if (parts[0] == "tab") com.tmplayer.player.Stereo3d.Layout.TopBottom else com.tmplayer.player.Stereo3d.Layout.SideBySide,
+            view = com.tmplayer.player.Stereo3d.View.ofKey(parts.getOrNull(1)),
+            swapEyes = "swap" in parts,
+        )
+    }
     val idleLimit = value("--idle-limit")?.toLongOrNull()
     val presses = value("--press").orEmpty().split(';').mapNotNull { step ->
         val (at, key) = step.split(':', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
@@ -159,6 +168,11 @@ fun main(argv: Array<String>) {
                     while (!e.state.value.opened) delay(20)
                     val wait = ms - (System.currentTimeMillis() - t0)
                     if (wait > 0) delay(wait)
+                }
+                if (stereo != null) {
+                    at(300)
+                    e.setStereo3d(stereo)
+                    println("dev: stereo $stereo")
                 }
                 if (sub != null) {
                     at(500)

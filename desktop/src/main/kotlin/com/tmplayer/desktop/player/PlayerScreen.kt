@@ -79,6 +79,7 @@ import com.tmplayer.desktop.WatchedWords
 import com.tmplayer.data.DownloadRunner
 import com.tmplayer.data.OfflineDownloads
 import com.tmplayer.player.PlaybackSpeed
+import com.tmplayer.player.Stereo3d
 import com.tmplayer.player.SeekUndo
 import com.tmplayer.player.SleepTimer
 import com.tmplayer.player.SpeedMemory
@@ -141,7 +142,7 @@ internal data class Flash(val kind: Kind, val text: String, val id: Long) {
     enum class Kind { SeekBack, SeekForward, Text, Volume }
 }
 
-internal enum class MenuPage { Main, Audio, Subtitles, Speed, Shape, Sleep, Options, SubtitleStyle, Bookmarks, Copies }
+internal enum class MenuPage { Main, Audio, Subtitles, Speed, Shape, Sleep, Options, SubtitleStyle, Bookmarks, Copies, Stereo }
 
 /** Where an open menu hangs: at the cursor for a right click, or under a button. */
 internal data class MenuAt(val page: MenuPage, val anchor: Anchor, val at: Offset = Offset.Zero) {
@@ -157,7 +158,7 @@ internal data class MenuAt(val page: MenuPage, val anchor: Anchor, val at: Offse
         MenuPage.Subtitles -> if (anchor == Anchor.Subtitles) null else MenuPage.Main
         MenuPage.Speed -> if (anchor == Anchor.Speed) null else MenuPage.Main
         MenuPage.Sleep -> MenuPage.Options
-        MenuPage.Options, MenuPage.Shape, MenuPage.Bookmarks, MenuPage.Copies -> MenuPage.Main
+        MenuPage.Options, MenuPage.Shape, MenuPage.Bookmarks, MenuPage.Copies, MenuPage.Stereo -> MenuPage.Main
         MenuPage.SubtitleStyle -> if (anchor == Anchor.Subtitles) MenuPage.Subtitles else MenuPage.Main
     }
 }
@@ -603,6 +604,13 @@ fun PlayerScreen(
         phase = Phase.Playing
         // A video whose pieces stop at a gap says so as it starts.
         current.notice?.let { showFlash(Flash.Kind.Text, it) }
+        // A file named as 3D says how to watch it, once, unless 3D is on already: never turned
+        // on by itself, since without glasses the picture is two pictures or tinted.
+        if (current.notice == null && !engine.state.value.stereo.on &&
+            Stereo3d.detect(listOf(item.title, item.fileName, item.caption).joinToString(" ")) != null
+        ) {
+            showFlash(Flash.Kind.Text, s.playerStereoFound)
+        }
         if (start > 0 && !reopening) resumedFrom = start
         onPlayingItemChanged(item)
         refocus()
@@ -929,6 +937,19 @@ fun PlayerScreen(
         engine.setVolumeBoost(on)
         showFlash(Flash.Kind.Text, if (on) L.playerVolumeBoostOn else L.playerVolumeBoostOff)
         playerScope.launch { runCatching { settings.setVolumeBoost(on) } }
+    }
+
+    /**
+     * The menu's 3D video page: the layout, the glasses and the eyes, each applied as it is
+     * picked with the page left open. A colour picked while 3D is off only waits as the choice.
+     */
+    fun setStereo(next: Stereo3d) {
+        val before = status.stereo
+        engine.setStereo3d(next)
+        when {
+            next.on && (!before.on || next.view != before.view) -> showFlash(Flash.Kind.Text, L.playerStereoOnNow(stereoGlassesLabel(next.view)))
+            !next.on && before.on -> showFlash(Flash.Kind.Text, L.playerStereoOffNow)
+        }
     }
 
     /** The menu's Night mode: switched on the sound already playing, and kept for every video. */
@@ -1678,6 +1699,7 @@ fun PlayerScreen(
                         }
                         MenuAction.ToggleVolumeBoost -> toggleVolumeBoost()
                         MenuAction.ToggleNightMode -> toggleNightMode()
+                        is MenuAction.Stereo -> setStereo(action.stereo)
                         is MenuAction.Sleep -> setSleepTimer(action.minutes)
                         is MenuAction.SubtitleDelay -> stepSubtitleDelay(action.direction)
                         is MenuAction.AudioDelay -> stepAudioDelay(action.direction)

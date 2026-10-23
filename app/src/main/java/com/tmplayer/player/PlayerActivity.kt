@@ -366,6 +366,26 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** Night mode for sound, as the viewer left it, read before the player is built. */
     private var nightModeOn = false
 
+    /**
+     * 3D video as chosen for this player ([Stereo3d]): off for every player built, and kept for
+     * an episode that follows in the same one, which is most likely 3D too.
+     */
+    private var stereo = Stereo3d.OFF
+
+    /**
+     * Whether this player has Media3's effects pipeline. It can only be built as the player
+     * starts, so it is built up front only for a file whose name says 3D, and otherwise on the
+     * first time 3D is chosen, by preparing the player again where it stands ([applyStereo]).
+     * Every other video keeps the plain path to the screen, with nothing in between.
+     */
+    private var stereoPipeline = false
+
+    /** The 3D layout the file's name declares, for the hint and the page's focus. */
+    private var stereoTagged: Stereo3d.Layout? = null
+
+    /** Whether the hint that the file looks 3D has been shown for this video. */
+    private var stereoHinted = false
+
     /** Even out volume, read with the others before the player is built; see [VolumeBoostProcessor.level]. */
     private var evenVolumeOn = true
 
@@ -1163,6 +1183,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 bookmarks = ::hasMessage,
                 bookmarkCount = { bookmarkList.value.size },
                 openInAnotherApp = { savable == true },
+                stereoOffered = ::stereoOffered,
+                stereo = { stereo.detailText() },
                 volumeBoost = { volumeBoostOn },
                 nightMode = { nightModeOn },
                 evenVolume = { evenVolumeOn },
@@ -1701,6 +1723,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             subtitleFiles.metadata = sessionMetadata()
             built.setMediaItem(subtitleFiles.item(source))
             if (resumeMs > 0) built.seekTo(resumeMs)
+            prepareStereo(built)
             // With a cast up (the next episode, or a video opened while casting) the TV plays it
             // and this player waits, unprepared, for the cast to end. So it does while the cast
             // screen says the TV was lost: only Play here starts it.
@@ -2596,6 +2619,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     private fun buildPlayer(client: TdlClient): ExoPlayer {
         failurePinned = false
+        stereoPipeline = false
         // A new player starts with both decoders on, so each may switch by itself once again.
         decodersSwitched.clear()
         // Hardware decoders first; NextLib's FFmpeg renderers pick up the audio codecs a TV stick
@@ -3326,6 +3350,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
         override fun onRenderedFirstFrame() {
             logFirstFrame()
+            hintStereo()
             if (videoBackAskedAt == 0L) return
             Log.i("TMPlayer", "Background audio: picture back in ${SystemClock.elapsedRealtime() - videoBackAskedAt} ms")
             videoBackAskedAt = 0L
@@ -5301,6 +5326,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             saveFrame = savable == true,
             // Only while the row has no button for it: a phone held upright.
             pictureShape = controls?.shapeOnRow != true,
+            stereo = stereoOffered(),
         )
         // Speed and the sleep timer open the pickers' sheet rather than a submenu, so a choice
         // of one of several looks the same here as the subtitle and audio pickers.
@@ -5311,6 +5337,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 loop = abLoop,
                 bookmarks = bookmarkList.value.size,
                 shape = videoScale,
+                stereo = stereo.detailText(),
             )
             // Lock the screen heads the menu in a group of its own, under a divider, with the
             // lock the television's and the desktop's menus draw beside the same words.
@@ -5328,6 +5355,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 PhoneMenuEntry.LockScreen -> lockScreen()
                 PhoneMenuEntry.PictureInPicture -> enterPictureInPictureNow()
                 PhoneMenuEntry.PictureShape -> showSheet { it.showShape(videoScale, ::applyScale) }
+                PhoneMenuEntry.Stereo -> showStereo()
                 PhoneMenuEntry.VolumeBoost -> toggleVolumeBoost()
                 PhoneMenuEntry.NightMode -> toggleNightMode()
                 PhoneMenuEntry.EvenVolume -> toggleEvenVolume()
@@ -5361,6 +5389,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             PlayerMenuEntry.LockScreen -> lockScreen()
             PlayerMenuEntry.PlaybackDetails -> showPlaybackDetails()
             PlayerMenuEntry.StartOver -> startOver()
+            PlayerMenuEntry.Stereo -> showStereo()
             PlayerMenuEntry.PictureInPicture -> enterPictureInPictureNow()
             PlayerMenuEntry.OpenInAnotherApp -> openInAnotherApp()
             PlayerMenuEntry.SaveToDownloads -> saveToDownloads()
@@ -5654,6 +5683,89 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         volumeBoost?.night = on
         showGestureFeedback(if (on) L.playerNightModeOn else L.playerNightModeOff)
         lifecycleScope.launch { runCatching { settings.setNightMode(on) } }
+    }
+
+    /** 3D video is for a picture: not sound alone, and not while a cast plays the video. */
+    private fun stereoOffered(): Boolean = !isAudio && cast?.connected != true && cast?.casting != true
+
+    /**
+     * Before the player is first prepared: what the file's name says about 3D, and the effects
+     * pipeline built only for a file that says it is 3D, or when 3D is already on (an episode
+     * that follows in a new player), so turning it on there needs no second start.
+     */
+    private fun prepareStereo(exo: ExoPlayer) {
+        stereoTagged = if (isAudio) null else Stereo3d.detect(listOf(mediaFileName, mediaCaption, mediaTitle).joinToString(" "))
+        stereoHinted = false
+        if (stereoPipeline || isAudio) return
+        if (stereo.on || stereoTagged != null) {
+            exo.setVideoEffects(if (stereo.on) listOf(Stereo3dEffect(stereo)) else emptyList())
+            stereoPipeline = true
+        }
+    }
+
+    /** Once a video, on its first picture: a file named as 3D says where 3D video is. Nothing changes by itself. */
+    private fun hintStereo() {
+        if (stereoHinted || stereo.on || stereoTagged == null) return
+        stereoHinted = true
+        showGestureFeedback(L.playerStereoFound)
+    }
+
+    private fun showStereo() {
+        showSheet { it.showStereo(stereo, stereoTagged) { next -> applyStereo(next) to stereo } }
+    }
+
+    /**
+     * Why 3D cannot be drawn for the video playing, or null when it can: an HDR picture, whose
+     * colours the shader would wash out, and a video on the app's own (FFmpeg) decoder, whose
+     * frames do not pass through Media3's effects.
+     */
+    private fun stereoBlocked(exo: ExoPlayer): String? {
+        val color = exo.videoFormat?.colorInfo
+        if (color != null && androidx.media3.common.ColorInfo.isTransferHdr(color)) return L.playerStereoNotHdr
+        val onFfmpeg = (0 until exo.rendererCount).any { index ->
+            exo.getRendererType(index) == C.TRACK_TYPE_VIDEO &&
+                exo.getRenderer(index).state != androidx.media3.exoplayer.Renderer.STATE_DISABLED &&
+                DecoderSwitch.isFfmpeg(exo.getRenderer(index))
+        }
+        return if (onFfmpeg) L.playerStereoNotSoftware else null
+    }
+
+    /**
+     * Puts [next] on the picture. A choice that only changes the glasses while 3D is off, or that
+     * the video cannot take ([stereoBlocked]), changes nothing on screen. The first time 3D comes
+     * on in a player without the pipeline, the player is prepared again where it stands, a
+     * moment's wait with the place, the tracks and play or pause kept.
+     *
+     * Returns why 3D could not come on, for the page to say, or null.
+     */
+    private fun applyStereo(next: Stereo3d): String? {
+        val exo = player ?: return null
+        val before = stereo
+        if (next.on && !before.on) {
+            stereoBlocked(exo)?.let { why ->
+                // Kept as a choice of glasses, so a later video can use it.
+                stereo = before.copy(view = next.view, swapEyes = next.swapEyes)
+                return why
+            }
+        }
+        stereo = next
+        if (!next.on && !before.on) return null
+        val effects: List<androidx.media3.common.Effect> = if (next.on) listOf(Stereo3dEffect(next)) else emptyList()
+        if (stereoPipeline) {
+            exo.setVideoEffects(effects)
+        } else if (next.on) {
+            stereoPipeline = true
+            val at = exo.currentPosition
+            val play = exo.playWhenReady
+            exo.stop()
+            exo.setVideoEffects(effects)
+            exo.seekTo(at)
+            exo.prepare()
+            exo.playWhenReady = play
+        }
+        stereoHinted = true
+        showGestureFeedback(if (next.on) L.playerStereoOnNow(next.view.label()) else L.playerStereoOffNow)
+        return null
     }
 
     /**

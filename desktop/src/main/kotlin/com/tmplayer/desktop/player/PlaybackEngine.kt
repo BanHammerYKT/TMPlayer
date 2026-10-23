@@ -1,6 +1,7 @@
 package com.tmplayer.desktop.player
 
 import com.tmplayer.i18n.L
+import com.tmplayer.player.Stereo3d
 import com.tmplayer.player.SubtitlePlan
 import com.tmplayer.player.SubtitleStyle
 import com.tmplayer.player.SyncDelays
@@ -62,6 +63,12 @@ interface PlaybackEngine {
      * See [MpvPlaybackEngine.setNightMode] for what the bundled FFmpeg allows.
      */
     fun setNightMode(on: Boolean) {}
+
+    /**
+     * 3D video: a 3D file's two eyes drawn as one anaglyph, or one eye alone ([Stereo3d]). It
+     * lasts for this player, across the files opened in it, until set again.
+     */
+    fun setStereo3d(stereo: Stereo3d) {}
 
     /** Size, box and position for plain text subtitles; a file's own ASS styling is left alone. */
     fun setSubtitleStyle(style: SubtitleStyle)
@@ -154,6 +161,8 @@ data class PlaybackStatus(
     val audioDelayMs: Long = 0,
     /** The file's chapters in order, empty for a file without any. */
     val chapters: List<Chapter> = emptyList(),
+    /** 3D video as chosen, kept across the files this player opens ([PlaybackEngine.setStereo3d]). */
+    val stereo: Stereo3d = Stereo3d.OFF,
 ) {
     val delays: SyncDelays get() = SyncDelays(subtitleDelayMs, audioDelayMs)
 }
