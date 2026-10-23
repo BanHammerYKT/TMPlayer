@@ -87,3 +87,5 @@ fun LocaleFormatter.dateTime(epochMillis: Long, zone: ZoneId): String = Platform
 
 internal actual fun bundledCatalog(tag: String): String? =
     Translator::class.java.getResourceAsStream("/i18n/$tag.json")?.use { it.readBytes().decodeToString() }
+
+internal actual fun parseCatalog(json: String): Map<String, String> = catalogFromJson(json)

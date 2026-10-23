@@ -52,7 +52,9 @@ class Decimal private constructor(val unscaled: Long, val scale: Int) : Number()
         /** [number] exactly: whole types as they are, a Double by its shortest decimal form. */
         fun of(number: Number): Decimal = when (number) {
             is Decimal -> number
-            is Int, is Long, is Short, is Byte -> Decimal(number.toLong(), 0)
+            is Long -> Decimal(number, 0)
+            // On Kotlin/JS every number but a Long passes `is Int`, 1.5 too: whole only when it is.
+            is Int, is Short, is Byte -> if (number.toDouble() % 1.0 == 0.0) Decimal(number.toLong(), 0) else parse(number.toDouble().toString()) ?: Decimal(number.toLong(), 0)
             else -> parse(number.toDouble().toString()) ?: Decimal(number.toLong(), 0)
         }
 

@@ -116,7 +116,7 @@ class SplitPiecesTest {
 
     @Test
     fun `seven pieces are one video, never seven versions`() {
-        val pieces = spiderPieces().shuffled(java.util.Random(4))
+        val pieces = spiderPieces().shuffled(kotlin.random.Random(4))
         val entries = SeriesShelf.arrange(pieces)
         val video = entries.filterIsInstance<ShelfEntry.File>().single().item
         assertTrue(video.versions.isEmpty())

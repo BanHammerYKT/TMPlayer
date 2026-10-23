@@ -1,0 +1,23 @@
+# The JVM tests of core/src/jvmTest/kotlin that also run on Kotlin/JS (core/build.gradle.kts,
+# coreJsTests): the rules the web player runs in the browser (WebRules) and what they rest on.
+# A test listed here may use only the pure half, kotlin.test's equivalents of JUnit's asserts,
+# and the stand ins in core/src/jsTest/kotlin.
+com/tmplayer/data/ContentProtectionTest.kt
+com/tmplayer/data/EpisodeStepsTest.kt
+com/tmplayer/data/FuzzyTest.kt
+com/tmplayer/data/HiddenBySizeTest.kt
+com/tmplayer/data/MediaNameTest.kt
+com/tmplayer/data/NameCorpus.kt
+com/tmplayer/data/NameEdgeCasesTest.kt
+com/tmplayer/data/ResumeRewindTest.kt
+com/tmplayer/data/SameTitleTest.kt
+com/tmplayer/data/SameVideoTest.kt
+com/tmplayer/data/SeriesShelfTest.kt
+com/tmplayer/data/SizeFilterTest.kt
+com/tmplayer/data/SplitPiecesTest.kt
+com/tmplayer/data/TileTitleTest.kt
+com/tmplayer/data/CaptionsAndLessonsTest.kt
+com/tmplayer/data/WatchNextTest.kt
+com/tmplayer/data/GlobalSearchTest.kt
+com/tmplayer/data/AllChatsSearchTest.kt
+com/tmplayer/data/OpeningStallTest.kt

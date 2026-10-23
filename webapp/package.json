@@ -7,8 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
+    "rules": "cd .. && ./gradlew -q :core:webRules",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "pnpm rules && tsc --noEmit && vite build",
     "preview": "vite preview --port 8091",
     "check": "tsc --noEmit"
   },

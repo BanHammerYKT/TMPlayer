@@ -8,7 +8,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization) apply false
 }
 
-// Kotlin/Wasm's tooling (web/ and :core's wasmJs tests on Node) would download Node.js and
+// Kotlin/Wasm's and Kotlin/JS's tooling (web/, :core's wasmJs and js tests on Node) would download Node.js and
 // Binaryen from repositories it adds to each project, which settings.gradle.kts forbids. Node
 // comes from the machine instead (any recent LTS; CI installs one), and Binaryen through the ivy
 // repository declared in settings.
@@ -20,6 +20,16 @@ allprojects {
     }
     plugins.withType<org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsRootPlugin> {
         extensions.configure<org.jetbrains.kotlin.gradle.targets.wasm.nodejs.WasmNodeJsEnvSpec> {
+            download.set(false)
+        }
+    }
+    plugins.withType<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsPlugin> {
+        extensions.configure<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec> {
+            download.set(false)
+        }
+    }
+    plugins.withType<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootPlugin> {
+        extensions.configure<org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsEnvSpec> {
             download.set(false)
         }
     }

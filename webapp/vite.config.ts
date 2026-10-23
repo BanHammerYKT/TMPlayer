@@ -26,6 +26,7 @@ export default defineConfig({
     worker: { format: 'es' },
     optimizeDeps: { exclude: ['@mtcute/wasm', '@mtcute/web', '@mediabunny/ac3', '@mediabunny/dts'] },
     build: { target: 'es2022', sourcemap: true },
-    server: { port: 8091, host: true },
+    // The UI catalog is read from :core, where every app reads it.
+    server: { port: 8091, host: true, fs: { allow: ['.', '../core/src/commonMain/resources/i18n'] } },
     preview: { port: 8091, host: true },
 })

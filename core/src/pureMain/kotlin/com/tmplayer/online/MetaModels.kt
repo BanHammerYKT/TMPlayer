@@ -72,7 +72,7 @@ data class MetaQuery(
             return year != null && words.size == 1 && words[0].all { it.isDigit() }
         }
 
-        private val SXXEXX = Regex("""(?i)\bS\d{1,2}\s?E\d{1,4}\b|\b\d{1,2}x\d{2,3}\b""")
+        private val SXXEXX = Regex("""\bS\d{1,2}\s?E\d{1,4}\b|\b\d{1,2}x\d{2,3}\b""", RegexOption.IGNORE_CASE)
 
         /**
          * The question for a video, or null when there is nothing worth asking: a name with no

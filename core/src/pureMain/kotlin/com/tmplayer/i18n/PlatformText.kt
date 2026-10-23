@@ -61,3 +61,10 @@ internal expect object PlatformText {
 
 /** `i18n/<tag>.json` as the platform ships it (the classpath on the JVM), or null. */
 internal expect fun bundledCatalog(tag: String): String?
+
+/**
+ * A catalog's JSON as dotted keys to message text: [catalogFromJson] everywhere but the web
+ * player's rules (Kotlin/JS), which use the browser's own JSON.parse and so leave kotlinx's JSON
+ * decoder out of the worker.
+ */
+internal expect fun parseCatalog(json: String): Map<String, String>

@@ -623,6 +623,6 @@ object GlobalSearch {
 
     private const val EXTRA = "extra:"
     private val WHITESPACE = Regex("\\s+")
-    private val URL = Regex("""(?i)^(https?://|www\.|t\.me/|telegram\.me/)\S*$""")
+    private val URL = Regex("""^(https?://|www\.|t\.me/|telegram\.me/)\S*$""", RegexOption.IGNORE_CASE)
     private val EXTRA_WORDS = Regex("""(?<![a-z0-9])(trailer|teaser|sample|promo)(?![a-z0-9])""")
 }

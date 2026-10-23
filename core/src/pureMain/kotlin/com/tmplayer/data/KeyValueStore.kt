@@ -84,7 +84,8 @@ object KeyValueCodec {
             val pair = when (value) {
                 is String -> listOf(JsonPrimitive("s"), JsonPrimitive(value))
                 is Boolean -> listOf(JsonPrimitive("b"), JsonPrimitive(value))
-                is Int -> listOf(JsonPrimitive("i"), JsonPrimitive(value))
+                // On Kotlin/JS a Float or a Double passes `is Int` too: only a whole one is written as an Int.
+                is Int -> if (value.toDouble() % 1.0 == 0.0) listOf(JsonPrimitive("i"), JsonPrimitive(value)) else listOf(JsonPrimitive("d"), JsonPrimitive(value.toDouble()))
                 is Long -> listOf(JsonPrimitive("l"), JsonPrimitive(value.toString()))
                 is Float -> listOf(JsonPrimitive("f"), JsonPrimitive(value.toDouble()))
                 is Double -> listOf(JsonPrimitive("d"), JsonPrimitive(value))

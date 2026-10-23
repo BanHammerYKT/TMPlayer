@@ -746,7 +746,7 @@ private val SPACES = Regex("""[ \t]+""")
 
 /** TVmaze's summaries are HTML and AniList's carry `<br>`; both read as plain text here. */
 internal fun metaPlain(html: String): String = html
-    .replace(Regex("(?i)<br\\s*/?>"), "\n")
+    .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
     .replace(TAGS, "")
     .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&lt;", "<").replace("&gt;", ">")
     .replace("&nbsp;", " ")

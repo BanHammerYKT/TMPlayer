@@ -68,7 +68,8 @@ object TelegramLinks {
 
     /** Anything in a pasted text that looks like a Telegram address, for [find]. */
     private val IN_TEXT = Regex(
-        """(?i)(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>"']+|tg://[^\s<>"']+""",
+        """(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>"']+|tg://[^\s<>"']+""",
+        RegexOption.IGNORE_CASE,
     )
 
     /**

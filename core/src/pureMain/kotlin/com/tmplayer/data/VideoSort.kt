@@ -201,6 +201,6 @@ object VideoSorting {
     /** "Part 10b" as "Part ", "10", "b": letters and digits in runs. */
     private fun chunks(text: String): List<String> = DIGITS_OR_NOT.findAll(text).map { it.value }.toList()
 
-    private val ARTICLE = Regex("""^(?i)(the|a|an)\s+""")
+    private val ARTICLE = Regex("""^(the|a|an)\s+""", RegexOption.IGNORE_CASE)
     private val DIGITS_OR_NOT = Regex("""\d+|\D+""")
 }

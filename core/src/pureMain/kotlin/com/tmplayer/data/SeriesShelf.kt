@@ -700,6 +700,6 @@ object SeriesShelf {
     private val NOT_WORD = Regex("""[^\p{L}\p{M}\p{N}]+""")
 
     /** Something [MediaName.looseEpisode] could read: an "E" and a number, not inside a word. */
-    private val MAYBE_LOOSE = Regex("""(?i)(?<![a-z])e\d{1,3}(?!\d)""")
+    private val MAYBE_LOOSE = Regex("""(?<![a-z])e\d{1,3}(?!\d)""", RegexOption.IGNORE_CASE)
     private val SPACES = Regex("""\s+""")
 }

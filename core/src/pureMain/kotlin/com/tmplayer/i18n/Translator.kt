@@ -5,10 +5,6 @@ import kotlin.concurrent.Volatile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonObject
 
 /**
  * The UI language for the whole process. Catalogs are `i18n/<tag>.json` on the classpath (the
@@ -111,21 +107,7 @@ object Translator {
     }
 
     /** A catalog's JSON as dotted keys to message text. */
-    fun parse(json: String): Map<String, String> {
-        val out = LinkedHashMap<String, String>()
-        fun walk(prefix: String, node: JsonObject) {
-            for ((name, value) in node) {
-                val key = if (prefix.isEmpty()) name else "$prefix.$name"
-                when {
-                    value is JsonObject -> walk(key, value)
-                    value is JsonPrimitive && value.isString -> out[key] = value.content
-                    else -> throw IllegalArgumentException("$key is not text")
-                }
-            }
-        }
-        walk("", Json.parseToJsonElement(json).jsonObject)
-        return out
-    }
+    fun parse(json: String): Map<String, String> = parseCatalog(json)
 
     /** Copied on write, so a reader on another thread never sees it half changed. */
     @Volatile

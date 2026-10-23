@@ -68,5 +68,5 @@ object Chapters {
         chapters.map { it.startMs }.filter { it > 0 && (durationMs <= 0 || it < durationMs) }.distinct()
 
     /** "Chapter 03", "Chapter 3": a name that says nothing the count does not. */
-    private fun isGeneric(name: String): Boolean = Regex("(?i)chapter\\s*\\d+").matches(name)
+    private fun isGeneric(name: String): Boolean = Regex("chapter\\s*\\d+", RegexOption.IGNORE_CASE).matches(name)
 }

@@ -6,23 +6,23 @@ import kotlinx.coroutines.Dispatchers
 
 private fun jsNow(): Double = js("Date.now()")
 
-private fun jsYear(): Int = js("new Date().getFullYear()")
+private fun jsYear(): Int = js("(new Date()).getFullYear()")
 
 /** Days since the epoch of the local calendar date: the local midnight's own UTC fields. */
 private fun jsLocalEpochDay(millis: Double): Double =
     js("(() => { const d = new Date(millis); return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); })()")
 
-private fun jsLocalYear(millis: Double): Int = js("new Date(millis).getFullYear()")
+private fun jsLocalYear(millis: Double): Int = js("(new Date(millis)).getFullYear()")
 
 private fun jsDayMonth(tag: String, millis: Double, year: Boolean): String =
-    js("new Intl.DateTimeFormat(tag, year ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' }).format(new Date(millis))")
+    js("(new Intl.DateTimeFormat(tag, year ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' })).format(new Date(millis))")
 
 private fun jsStripMarks(text: String): String = js("text.normalize('NFD').replace(/\\p{M}/gu, '')")
 
 private fun jsIsOtherSymbol(code: Int): Boolean = js("/\\p{So}/u.test(String.fromCodePoint(code))")
 
 private fun jsCompare(tag: String, primary: Boolean, a: String, b: String): Int =
-    js("new Intl.Collator(tag, primary ? { sensitivity: 'base' } : {}).compare(a, b)")
+    js("(new Intl.Collator(tag, primary ? { sensitivity: 'base' } : {})).compare(a, b)")
 
 actual fun nowMillis(): Long = jsNow().toLong()
 
