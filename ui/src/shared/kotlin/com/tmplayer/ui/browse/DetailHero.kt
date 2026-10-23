@@ -595,6 +595,7 @@ internal fun roundLabel(row: DetailRow, s: Messages): String = when (row.action)
 /** The short word for a round button known only by its [label], as a series page's are. */
 internal fun roundLabel(label: String, s: Messages): String = when (label) {
     s.metadataTrailer -> s.detailRoundTrailer
+    s.detailStartOver -> s.detailRoundRestart
     s.metadataTurnOn -> s.detailRoundShowInfo
     s.seriesDownloadSeason -> s.detailRoundSeason
     s.seriesDownloadUnwatched -> s.detailRoundUnseen

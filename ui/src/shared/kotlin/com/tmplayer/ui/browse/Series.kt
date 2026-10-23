@@ -750,6 +750,12 @@ fun SeriesPanel(
     onBack: (() -> Unit)? = null,
     /** What the band keeps clear at the top: the status bar on a phone, nothing on the desktop. */
     barInsets: WindowInsets = WindowInsets(0),
+    /**
+     * Plays an episode from its first frame, forgetting where it stopped. Offered beside the play
+     * pill while that pill resumes an episode part way, as a video's own page offers it beside
+     * Resume; null leaves it out.
+     */
+    onStartOver: ((MediaItem) -> Unit)? = null,
 ) {
     val s = LocalStrings.current
     val tv = !isTouch()
@@ -1082,6 +1088,10 @@ fun SeriesPanel(
             val trailer = extras?.trailer
             val trailerGhost = trailer == null && holdTrailer
             val others = buildList {
+                // Beside a pill that resumes part way: the same episode from its first frame.
+                if (onStartOver != null && (watch.pointOf(target)?.positionMs ?: 0L) > 0L) {
+                    add(PageAction(s.detailStartOver, TmIcons.Refresh, { onStartOver(copyOf(target, next?.item ?: watch.pick(target, progress))) }))
+                }
                 if (trailer != null || holdTrailer) add(PageAction(s.metadataTrailer, TrailerIcon, { trailer?.let(trailers::open); Unit }))
                 if (downloads) {
                     add(

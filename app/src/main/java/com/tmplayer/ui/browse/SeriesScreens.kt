@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -109,7 +110,16 @@ internal fun SeriesOpened(
                 .mapTo(HashSet()) { "${it.chatId}:${it.messageId}" }
         }
     }
-    SeriesPage(whole, watch, onPlay, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle, downloadedIds)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    // The saved place goes first, so the player opening a moment later finds nothing to resume
+    // from, as the video page's Start over does.
+    val startOver: (MediaItem) -> Unit = { item ->
+        scope.launch {
+            runCatching { settings.clearResumePosition(item.chatId, item.messageId, item) }
+            onPlay(item)
+        }
+    }
+    SeriesPage(whole, watch, onPlay, startOver, onDismiss, onLongClick.takeIf { isTouch() }, onDownload, chatTitle, downloadedIds)
 }
 
 /**
@@ -123,6 +133,7 @@ private fun SeriesPage(
     series: Series,
     watch: SeriesWatch,
     onPlay: (MediaItem) -> Unit,
+    onStartOver: (MediaItem) -> Unit,
     onDismiss: () -> Unit,
     onLongClick: ((MediaItem) -> Unit)?,
     onDownload: ((SeasonDownloadRequest) -> Unit)?,
@@ -145,6 +156,7 @@ private fun SeriesPage(
                 // The page stays open under the player, so Back from an episode lands on the
                 // show again, with its progress and Continue line brought up to date.
                 onPlay = onPlay,
+                onStartOver = onStartOver,
                 onLongClick = onLongClick,
                 onDownload = onDownload,
                 downloadedIds = downloadedIds,
