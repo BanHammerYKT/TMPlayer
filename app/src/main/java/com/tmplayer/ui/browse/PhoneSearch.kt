@@ -109,6 +109,8 @@ import com.tmplayer.ui.theme.Tone
 import com.tmplayer.ui.theme.floatingBorder
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.tmplayer.ui.components.SlowAnswerNotice
 
 /**
@@ -177,9 +179,13 @@ internal fun PhoneSearchScreen(
 
     val query = text.text
     val byUsername = rememberUsernameChat(query)
-    val chatMatches = remember(chats, query, favourites, byUsername) {
-        withUsernameChat(GlobalSearch.localChats(chats, query, favourites), byUsername)
+    // Every chat's name matched off the main thread, the last answer kept up meanwhile, so the
+    // field never waits for it between letters.
+    var localChats by remember { mutableStateOf(emptyList<ChatSummary>()) }
+    LaunchedEffect(chats, query, favourites) {
+        localChats = if (query.isBlank()) emptyList() else withContext(Dispatchers.Default) { GlobalSearch.localChats(chats, query, favourites) }
     }
+    val chatMatches = remember(localChats, byUsername) { withUsernameChat(localChats, byUsername) }
     // A pasted post or invite link, or a public chat to join (CP79).
     val offer = rememberLinkOffer(query, byUsername)
     val recentChats = remember(chats, favourites) { GlobalSearch.recentChats(chats, favourites) }
@@ -537,12 +543,15 @@ private fun androidx.compose.foundation.lazy.LazyListScope.results(
     }
     val shown = state.shown
     when {
-        shown.isEmpty() && state.searching -> {
+        // While the typing settles too, rather than a heading over nothing until Telegram is asked.
+        shown.isEmpty() && (state.searching || state.settling) -> {
             items(SKELETONS, key = { "sk-$it" }) {
                 SearchResultSkeleton(Modifier.padding(horizontal = 8.dp))
             }
             // A first page that will not come: Telegram is slow, with Retry, after the usual wait.
-            item(key = "slow") { SlowAnswerNotice(key = state.query, onRetry = onRetry, modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) }
+            if (state.searching) {
+                item(key = "slow") { SlowAnswerNotice(key = state.query, onRetry = onRetry, modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp)) }
+            }
         }
         shown.isEmpty() && !state.busy && state.error == null -> item(key = "none") {
             val s = LocalStrings.current

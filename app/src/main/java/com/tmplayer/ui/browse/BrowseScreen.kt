@@ -896,7 +896,6 @@ internal fun BrowseScreen(
             onOpenSettings = onOpenSettings,
             onUpdate = onUpdate,
             search = search,
-            searchState = searchState,
             chats = (state as? UiState.Content)?.value?.chats.orEmpty(),
             continueWatching = continuing,
             watchLater = watchLater,

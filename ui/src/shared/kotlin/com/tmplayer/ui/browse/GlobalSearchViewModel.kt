@@ -26,6 +26,8 @@ import com.tmplayer.online.MetaQuery
 import com.tmplayer.online.MetaResult
 import com.tmplayer.online.OnlineMetadata
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Where the search across every chat gets its pages: Telegram in the app, a fixture in the promo build. */
 fun interface VideoSearchSource {
@@ -143,6 +146,11 @@ class GlobalSearchViewModel(
      * Telegram's own source only: a fixture's pages (the promo build, the tests) are not kept.
      */
     private val cache: QueryCache? = if (source === VideoSearchSource.Telegram) PageQueries.cache else null,
+    /**
+     * Where the local half, the merging and the ranking run: they read every known video's name,
+     * and on the main thread each letter typed on a phone waited for them (2026-10-23).
+     */
+    private val work: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     /** Telegram's pages for one query, as the [cache] keeps them: before the kids lock and hidden chats. */
@@ -172,6 +180,7 @@ class GlobalSearchViewModel(
     var alsoKnown: List<MediaItem> = emptyList()
 
     private var job: Job? = null
+    private var localJob: Job? = null
     private var rememberJob: Job? = null
     private var cursor = AllChatsCursor()
 
@@ -301,11 +310,17 @@ class GlobalSearchViewModel(
         if (!force && !query.isEmpty && query.server == now.query.server && (asked == query.server || now.settling) &&
             now.error == null && !now.offline && now.floodWait == 0
         ) {
-            localNow = GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames)
-            _state.update { s -> s.copy(query = query, groups = GlobalSearch.merge(GlobalSearch.order(s.groups, query, s.sort), localNow, query, s.sort, identity)) }
+            _state.update { it.copy(query = query) }
+            localJob?.cancel()
+            localJob = viewModelScope.launch {
+                val local = withContext(work) { GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames) }
+                localNow = local
+                regroup { s -> GlobalSearch.merge(GlobalSearch.order(s.groups, query, s.sort), local, query, s.sort, identity) }
+            }
             return
         }
         job?.cancel()
+        localJob?.cancel()
         rememberJob?.cancel()
         cursor = AllChatsCursor()
         asked = ""
@@ -316,39 +331,48 @@ class GlobalSearchViewModel(
             _state.value = GlobalSearchState(query = query, filters = now.filters, sort = now.sort)
             return
         }
-        // The local half, at once: no connection needed and no wait.
-        localNow = GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames)
-        // What was listed and still answers the new words stays up until Telegram's answer takes
-        // its place, so the list never flashes empty between one letter and the next.
-        val carried = GlobalSearch.order(
-            now.groups.filter { g -> g.copies.any { GlobalSearch.matchesLocally(it, query, onlineNames(it)) } },
-            query,
-            now.sort,
-        )
+        localNow = emptyList()
+        // The new words and what is going on at once; the cards stay as they were for the moment
+        // the local half takes, so the list never flashes empty between one letter and the next.
         _state.value = GlobalSearchState(
             query = query,
-            groups = GlobalSearch.merge(carried, localNow, query, now.sort, identity),
+            groups = now.groups,
             filters = now.filters,
             sort = now.sort,
             chats = now.chats,
             searching = settle <= 0,
             settling = settle > 0,
         )
-        // The same words searched before: Telegram's pages from then, listed at once through the
-        // kids lock and the hidden chats as they are now, and asked again only once stale.
         val kept = cache?.peek<Answer>(keyOf(query, now.filters), PageQueries.SEARCH_STALE_MS)
         if (kept != null) {
             serverQuery = kept.data.serverQuery
             cursor = kept.data.cursor
             asked = query.server
-            val hidden = com.tmplayer.data.HiddenChats.ids.value
-            kept.data.pages.forEachIndexed { index, page ->
-                absorb(page.copy(items = page.items.filter { KidsLock.allows(allowed, it.chatId) && it.chatId !in hidden }), keepTo = query, fresh = index == 0)
-            }
-            _state.update { it.copy(searching = false, settling = false, endReached = kept.data.cursor.done) }
-            if (!kept.stale) return
         }
         job = viewModelScope.launch {
+            // The local half, off the main thread: no connection needed and no wait. What was
+            // listed and still answers the new words stays up until Telegram's answer takes its
+            // place.
+            val local = withContext(work) { GlobalSearch.localVideos(known() + alsoKnown, query, allowed, ::onlineNames) }
+            localNow = local
+            regroup { s ->
+                val carried = GlobalSearch.order(
+                    s.groups.filter { g -> g.copies.any { GlobalSearch.matchesLocally(it, query, onlineNames(it)) } },
+                    query,
+                    s.sort,
+                )
+                GlobalSearch.merge(carried, local, query, s.sort, identity)
+            }
+            // The same words searched before: Telegram's pages from then, listed at once through
+            // the kids lock and the hidden chats as they are now, and asked again only once stale.
+            if (kept != null) {
+                val hidden = com.tmplayer.data.HiddenChats.ids.value
+                kept.data.pages.forEachIndexed { index, page ->
+                    absorb(page.copy(items = page.items.filter { KidsLock.allows(allowed, it.chatId) && it.chatId !in hidden }), keepTo = query, fresh = index == 0)
+                }
+                _state.update { it.copy(searching = false, settling = false, endReached = kept.data.cursor.done) }
+                if (!kept.stale) return@launch
+            }
             if (settle > 0) {
                 delay(settle)
                 // Asked only now, so only now does the screen say it is searching.
@@ -432,15 +456,26 @@ class GlobalSearchViewModel(
      * spelling. A [fresh] page is the first of a new answer: it starts again from the local half,
      * dropping the cards carried over from the words typed before.
      */
-    private fun absorb(page: AllChatsPage, keepTo: SearchQuery = _state.value.query, fresh: Boolean = false) {
+    private suspend fun absorb(page: AllChatsPage, keepTo: SearchQuery = _state.value.query, fresh: Boolean = false) {
         val fallback = serverQuery != keepTo.server
-        val kept = if (!fallback) page.items else page.items.filter { GlobalSearch.matchesLocally(it, keepTo, onlineNames(it)) }
-        _state.update { s ->
-            val base = if (fresh) GlobalSearch.merge(emptyList(), localNow, s.query, s.sort, identity) else s.groups
-            s.copy(
-                groups = GlobalSearch.merge(base, kept, s.query, s.sort, identity),
-                chats = s.chats + page.chats.associateBy { it.id },
-            )
+        val kept = if (!fallback) page.items else withContext(work) { page.items.filter { GlobalSearch.matchesLocally(it, keepTo, onlineNames(it)) } }
+        val local = localNow
+        regroup(chats = page.chats.associateBy { it.id }) { s ->
+            val base = if (fresh) GlobalSearch.merge(emptyList(), local, s.query, s.sort, identity) else s.groups
+            GlobalSearch.merge(base, kept, s.query, s.sort, identity)
+        }
+    }
+
+    /**
+     * The cards worked out again by [build] off the main thread, then set, unless the state moved
+     * meanwhile (the kids lock, a hidden chat, a card gone), in which case they are worked out
+     * again from the new state.
+     */
+    private suspend fun regroup(chats: Map<Long, ChatBrief> = emptyMap(), build: (GlobalSearchState) -> List<ResultGroup>) {
+        while (true) {
+            val s = _state.value
+            val groups = withContext(work) { build(s) }
+            if (_state.compareAndSet(s, s.copy(groups = groups, chats = if (chats.isEmpty()) s.chats else s.chats + chats))) return
         }
     }
 
