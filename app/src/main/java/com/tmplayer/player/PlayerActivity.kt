@@ -330,6 +330,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The byte runs seen downloaded since the video opened, merged. Main thread only. */
     private var trickplaySpans: List<Trickplay.Span> = emptyList()
 
+    /**
+     * Whether [trickplaySpans] are worth keeping: false once [startTrickplay] found the device too
+     * short of memory for scrub thumbnails, or the setting off. Every TDLib update of the file
+     * (ten to thirty a second while it streams) merged a fresh list there, on the main thread of
+     * the 1 GB sticks that never read it.
+     */
+    private var trickplaySpansWanted = true
+
     /** Subtitle files loaded from the phone; a field because its picker registers before start. */
     private val subtitleFiles = SubtitleFiles(this, { player }, { showGestureFeedback(it) })
 
@@ -4949,9 +4957,15 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * with too little memory to decode a second picture beside the film (a 1 GB stick).
      */
     private fun startTrickplay() {
-        if (!DeviceQuirks.trickplayMemory(this)) return
+        if (!DeviceQuirks.trickplayMemory(this)) {
+            stopTrickplaySpans()
+            return
+        }
         lifecycleScope.launch {
-            if (!runCatching { settings.trickplayNow() }.getOrDefault(true)) return@launch
+            if (!runCatching { settings.trickplayNow() }.getOrDefault(true)) {
+                stopTrickplaySpans()
+                return@launch
+            }
             val frames = TrickplayFrames(
                 scope = lifecycleScope,
                 // Not for a video joined from pieces: one piece's file is not the video's.
@@ -4964,6 +4978,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             trickplay = frames
             showScrubPictures()
         }
+    }
+
+    /** No scrub thumbnails from the video's own frames this time: their byte runs are not kept either. */
+    private fun stopTrickplaySpans() {
+        trickplaySpansWanted = false
+        trickplaySpans = emptyList()
     }
 
     /**
@@ -5003,7 +5023,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         if (fileSizeBytes <= 0 && file.size > 0) fileSizeBytes = file.size
         val local = file.local
         trickplayPath = local.path.takeIf { it.isNotBlank() }
-        if (local.downloadedPrefixSize > 0) {
+        if (trickplaySpansWanted && local.downloadedPrefixSize > 0) {
             val run = Trickplay.Span(local.downloadOffset, local.downloadOffset + local.downloadedPrefixSize)
             trickplaySpans = Trickplay.merge(trickplaySpans + run)
         }
