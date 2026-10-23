@@ -49,6 +49,9 @@ object FolderCopyIo {
         /** Removes a copy left part written by a cancel or a failure. */
         fun discard(handle: H)
 
+        /** A copy written whole: where a folder hides new files until they are done (the gallery), shown now. */
+        fun finish(handle: H) {}
+
         /** Whether [error] means the folder can no longer be written at all (gone, or its permission taken back). */
         fun lost(error: Throwable): Boolean
     }
@@ -135,8 +138,12 @@ object FolderCopyIo {
                 return outcome(FolderCopy.Stop.Cancelled, total - index)
             }
             when (runCatching { folder.size(handle) }.getOrNull()) {
-                null -> saved += source.title
+                null -> {
+                    runCatching { folder.finish(handle) }
+                    saved += source.title
+                }
                 length -> {
+                    runCatching { folder.finish(handle) }
                     saved += source.title
                     verified += source.key
                 }

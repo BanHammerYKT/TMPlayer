@@ -264,6 +264,10 @@ internal fun MediaDetailOpened(
         ),
     )
     val free = DiskInfo.freeLabel(freeBytes)
+    // A Save to gallery under way, for this video's ring, keyed as the Downloads screen keys its
+    // rows so a copy started there rings here too.
+    val exporting by com.tmplayer.data.FolderExport.state.collectAsStateWithLifecycle()
+    val exportKey = "kept_${item.chatId}_${item.messageId}"
     val rows = actions.map { action ->
         val run: () -> Unit = when (action) {
             // The page stays under the player, so Back from the video (or from a video that would
@@ -340,27 +344,37 @@ internal fun MediaDetailOpened(
             DetailAction.Rename -> { { renaming = true } }
             DetailAction.CommentVideos -> { { commentsOpen = true } }
             DetailAction.ExportCopy -> { {
-                com.tmplayer.ui.components.showMessage(context, s.keepExporting(item.title))
-                // Off the main thread, with the application's context: the file is looked up and
-                // copied on the disk, which held the screen, and the page (and its activity) may be
-                // gone long before a large copy ends.
-                val app = context.applicationContext
-                App.backgroundScope.launch(Dispatchers.IO) {
-                    val file = LocalDownloads.fileFor(settings, item.chatId, item.messageId)
-                    val said = when {
-                        file == null -> s.downloadsFileGone
-                        // Asked again at the copy: the chat may have restricted saving since.
-                        !Td.maySave(item.chatId, item.messageId) -> com.tmplayer.data.ContentProtection.NOT_SAVABLE
-                        else -> com.tmplayer.data.GalleryExport.copy(app, file, item.fileName.ifBlank { item.title }, item.mimeType)
-                            ?: s.keepExportedGallery
+                // A second press while this video is copying is the same press again.
+                if (exportKey !in exporting.keys) {
+                    com.tmplayer.ui.components.showMessage(context, s.keepExporting(item.title))
+                    // Through FolderExport's run, as the Downloads screen's Save to gallery: a
+                    // foreground service with the progress and Cancel in its notification, so the
+                    // copy goes on with the page (or the app) gone, and the end is said in a toast
+                    // and the shade. Off the main thread, with the application's context: the file
+                    // is looked up on the disk and the chat is asked whether it allows saving.
+                    val app = context.applicationContext
+                    App.backgroundScope.launch(Dispatchers.IO) {
+                        val record = runCatching { settings.downloadRecord(item.chatId, item.messageId) }.getOrNull()
+                        val said = if (record == null || LocalDownloads.presentFile(record) == null) {
+                            s.downloadsFileGone
+                        } else {
+                            com.tmplayer.data.FolderExport.saveToGalleryNow(
+                                app,
+                                com.tmplayer.data.FolderExport.Candidate(exportKey, record, item.fileId, item.title, whole = true),
+                                settings,
+                            )
+                        }
+                        if (said != null) withContext(Dispatchers.Main) { com.tmplayer.ui.components.showMessage(app, said) }
                     }
-                    withContext(Dispatchers.Main) { com.tmplayer.ui.components.showMessage(app, said) }
                 }
                 if (asMenu) onDismiss()
             } }
         }
         when {
             action == DetailAction.CancelDownload && downloading != null -> cancelRow(s, downloading, run)
+            // Being copied to the gallery: the button's ring fills as it goes.
+            action == DetailAction.ExportCopy && exportKey in exporting.keys && exporting.progress != null ->
+                detailRow(action, s, watched, chatTitle, run).copy(progress = exporting.progress?.overall ?: 0f)
             // Taken, and on its way to the queue: an empty ring at once, so the press shows.
             asking && (action == DetailAction.Download || action == DetailAction.SaveToDownloads) ->
                 detailRow(action, s, watched, chatTitle, run, free = free).copy(progress = 0f)

@@ -390,6 +390,9 @@ fun DownloadsScreen(
         touch && android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE)
             .resolveActivity(context.packageManager) != null
     }
+    // Save to gallery: Movies/TMPlayer through MediaStore, Android 10 and later, on a phone or
+    // tablet (a television has no gallery anyone looks at).
+    val canSaveToGallery = touch && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
     var explainingNoFolder by remember { mutableStateOf(false) }
     val folderPicker = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree(),
@@ -803,6 +806,30 @@ fun DownloadsScreen(
         }
     }
 
+    /**
+     * Save to gallery (one video or a selection): as Save to folder without the picker, so the
+     * confirmation with the sizes and the room left comes up at once, then the copy with its
+     * progress here and in the notification, then the same toast or summary.
+     */
+    fun saveToGallery(ticked: List<DownloadRow>) {
+        if (ticked.isEmpty() || !canSaveToGallery) return
+        if (FolderExport.busy) {
+            toast(L.downloadsSaveBusy)
+            return
+        }
+        val candidates = ticked.map { row ->
+            FolderExport.Candidate(row.key, row.record, row.fileId, row.title, whole = !row.cached && !row.missing && row.complete)
+        }
+        com.tmplayer.platform.Background.scope.launch {
+            // One video from a chat that forbids saving is said at once, with no question first.
+            if (ticked.size == 1 && !Td.maySave(ticked[0].record.chatId, ticked[0].record.messageId)) {
+                withContext(Dispatchers.Main) { toast(ContentProtection.NOT_SAVABLE) }
+                return@launch
+            }
+            FolderExport.prepare(context.applicationContext, null, candidates, settings)
+        }
+    }
+
     // The picker's answer, once the rows it was opened for are on the list again (after a
     // rotation they are measured afresh). A row deleted meanwhile is simply not in the plan.
     LaunchedEffect(pickedTree, counted) {
@@ -892,6 +919,7 @@ fun DownloadsScreen(
             // A phone's card has room for it as a square beside Delete; a television's card stays
             // Watch, Share and Delete, and its heading's Save to folder says why it cannot.
             onSaveToFolder = if (canSaveToFolder) ({ saveToFolder(listOf(row)) }) else null,
+            onSaveToGallery = if (canSaveToGallery) ({ saveToGallery(listOf(row)) }) else null,
             onDelete = {
                 if (row.missing) {
                     val before = keptOrder
@@ -1187,6 +1215,7 @@ fun DownloadsScreen(
             onSelectAll = { picked = shown.map { it.key }.toSet() },
             onShareChosen = { share(chosen) },
             onSaveChosen = { saveToFolder(chosen) },
+            onSaveChosenToGallery = if (canSaveToGallery) ({ saveToGallery(chosen) }) else null,
             chosenSize = chosenSize,
             chosenWarning = chosenWarning,
             onDeleteChosen = { confirmingDeleteMany = true },
@@ -1281,6 +1310,7 @@ fun DownloadsScreen(
                     ) {
                         PrimaryAction(L.commonShare, TmIcons.Share) { share(chosen) }
                         if (canSaveToFolder) SecondaryAction(L.downloadsSaveToFolder, TmIcons.Folder, { saveToFolder(chosen) })
+                        if (canSaveToGallery) SecondaryAction(L.downloadsSaveToGallery, TmIcons.Image, { saveToGallery(chosen) })
                         SecondaryAction(
                             label = L.commonDelete,
                             icon = TmIcons.Delete,
@@ -1325,8 +1355,8 @@ fun DownloadsScreen(
             },
         )
     }
-    if (folder.preparing) com.tmplayer.ui.components.FolderCopyPreparingDialog()
-    folder.progress?.let { progress -> FolderCopyProgressDialog(progress, onCancel = { FolderExport.cancel() }) }
+    if (folder.preparing) com.tmplayer.ui.components.FolderCopyPreparingDialog(gallery = folder.gallery)
+    folder.progress?.let { progress -> FolderCopyProgressDialog(progress, onCancel = { FolderExport.cancel() }, gallery = folder.gallery) }
     folder.outcome?.takeIf { !it.clean }?.let { outcome -> FolderCopyResultDialog(outcome, onClose = { FolderExport.consume() }) }
     if (explainingNoFolder) {
         TvConfirm(
@@ -1824,6 +1854,8 @@ private fun DownloadCard(
     onHold: (() -> Unit)?,
     /** Save to folder, for a finished download; null where there is no folder picker. */
     onSaveToFolder: (() -> Unit)? = null,
+    /** Save to gallery, for a finished download; null where there is no gallery. */
+    onSaveToGallery: (() -> Unit)? = null,
 ) {
     val touch = isTouch()
     // The phone's card plays on a tap and keeps the rest behind More: a whole download only.
@@ -1931,6 +1963,16 @@ private fun DownloadCard(
                                 onClick = {
                                     menuOpen = false
                                     onSaveToFolder()
+                                },
+                            )
+                        }
+                        if (onSaveToGallery != null) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text(s.downloadsSaveToGallery) },
+                                leadingIcon = { Icon(TmIcons.Image, contentDescription = null) },
+                                onClick = {
+                                    menuOpen = false
+                                    onSaveToGallery()
                                 },
                             )
                         }
@@ -2183,6 +2225,8 @@ private fun PhoneDownloads(
     onSelectAll: () -> Unit,
     onShareChosen: () -> Unit,
     onSaveChosen: () -> Unit,
+    /** Save to gallery for the selection; null where there is no gallery to save to. */
+    onSaveChosenToGallery: (() -> Unit)?,
     /** The selection's total size, and the line when it is more than the last folder has room for. */
     chosenSize: String?,
     chosenWarning: String?,
@@ -2282,6 +2326,7 @@ private fun PhoneDownloads(
                 TextButton(onClick = onSelectAll, enabled = !allChosen) { Text(s.downloadsSelectAll, maxLines = 1) }
                 FloatingBarIcon(TmIcons.Share, s.commonShare, onShareChosen, enabled = chosenCount > 0)
                 FloatingBarIcon(TmIcons.Folder, s.downloadsSaveToFolder, onSaveChosen, enabled = chosenCount > 0)
+                onSaveChosenToGallery?.let { FloatingBarIcon(TmIcons.Image, s.downloadsSaveToGallery, it, enabled = chosenCount > 0) }
                 FloatingBarIcon(TmIcons.Delete, s.commonDelete, onDeleteChosen, tint = MaterialTheme.colorScheme.error, enabled = chosenCount > 0)
             }
         } else if (!hosted && actions != null) {

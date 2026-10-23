@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -14,6 +15,7 @@ import android.os.Environment
 import android.os.IBinder
 import android.os.StatFs
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.util.Log
 import com.tmplayer.R
 import com.tmplayer.i18n.L
@@ -45,8 +47,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * notification; and the outcome waits in [state] for the Downloads screen to show. The folder's
  * grant is held from the pick to the end of the run and given back after.
  *
+ * Save to gallery runs the same way into Movies/TMPlayer through MediaStore (Android 10 and
+ * later, no permission needed for the app's own files): no picker, so [prepare] is called with no
+ * tree. From a video's page it starts at once with no confirmation ([saveToGalleryNow]), its
+ * progress on the page's button and in the notification, and its end said in a toast and the shade.
+ *
  * The rules (names, skips, the result) are [FolderCopy]'s and the loop is [FolderCopyIo]'s; this
- * is the folder as SAF reaches it.
+ * is the folder as SAF or MediaStore reaches it.
  */
 object FolderExport {
 
@@ -56,15 +63,23 @@ object FolderExport {
     /** A video that will be copied: the file and names, its record (for a removal), its size and age. */
     class Item(val source: FolderCopyIo.Source, val record: ResumeRecord, val sizeBytes: Long, val newest: Long)
 
-    /** The confirmation's question: the folder and the plan for it. */
-    class Offer(val tree: Uri, val plan: FolderCopy.Plan<Item>)
+    /** The confirmation's question: the folder (none for the gallery) and the plan for it. */
+    class Offer(val tree: Uri?, val plan: FolderCopy.Plan<Item>) {
+        val gallery: Boolean get() = tree == null
+    }
 
-    /** What the screen draws: the question, the progress while a run goes, or the outcome once it has ended. */
+    /**
+     * What the screen draws: the question, the progress while a run goes, or the outcome once it
+     * has ended; whether it is the gallery's, and while copying, the keys of the videos in the run
+     * (a video's page rings its button by them).
+     */
     data class State(
         val offer: Offer? = null,
         val preparing: Boolean = false,
         val progress: FolderCopy.Progress? = null,
         val outcome: FolderCopy.Outcome? = null,
+        val gallery: Boolean = false,
+        val keys: Set<String> = emptySet(),
     )
 
     private val _state = MutableStateFlow(State())
@@ -77,7 +92,22 @@ object FolderExport {
     private val running = AtomicBoolean(false)
     @Volatile private var run: Run? = null
 
-    private class Run(val tree: Uri, val items: List<Item>, val forbidden: Int, val unfinished: Int, val leftOut: Int, val remove: Boolean)
+    private class Run(
+        val tree: Uri?,
+        val items: List<Item>,
+        val forbidden: Int,
+        val unfinished: Int,
+        val leftOut: Int,
+        val remove: Boolean,
+        /** Started from a video's page, which shows no dialogs: its end is a toast and a notification. */
+        val detached: Boolean,
+    ) {
+        val keys: Set<String> = items.mapTo(HashSet()) { it.source.key }
+    }
+
+    /** Whether the run going now is to the gallery, and was started with no screen to show its end. */
+    internal val runningToGallery: Boolean get() = run?.tree == null
+    internal val runningDetached: Boolean get() = run?.detached == true
 
     /** Screens showing [state]; with none, the end of a run is said in a notification instead. */
     internal val watchers = AtomicInteger(0)
@@ -98,10 +128,10 @@ object FolderExport {
      * (unfinished, or from a chat that forbids saving, asked of Telegram now), adds up the sizes
      * and reads the room there, then puts the confirmation up.
      */
-    suspend fun prepare(context: Context, tree: Uri, chosen: List<Candidate>, settings: SettingsStore) {
+    suspend fun prepare(context: Context, tree: Uri?, chosen: List<Candidate>, settings: SettingsStore) {
         val app = context.applicationContext
-        _state.value = State(preparing = true)
-        runCatching { app.contentResolver.takePersistableUriPermission(tree, GRANT) }
+        _state.value = State(preparing = true, gallery = tree == null)
+        if (tree != null) runCatching { app.contentResolver.takePersistableUriPermission(tree, GRANT) }
         val offer = runCatching { plan(app, tree, chosen, settings) }.getOrElse { error ->
             // Cancelled is not a lost folder: nothing is said, and nothing is left preparing.
             if (error is kotlinx.coroutines.CancellationException) {
@@ -110,16 +140,39 @@ object FolderExport {
             }
             // Never left "preparing" (which would refuse every later Save to folder): said, and the grant given back.
             Log.w(TAG, "Save to folder could not be prepared", error)
-            runCatching { app.contentResolver.releasePersistableUriPermission(tree, GRANT) }
+            if (tree != null) runCatching { app.contentResolver.releasePersistableUriPermission(tree, GRANT) }
             _state.value = State(
                 outcome = FolderCopy.Outcome(folder = "", copied = 0, stop = FolderCopy.Stop.FolderLost, notReached = chosen.size),
+                gallery = tree == null,
             )
             return
         }
-        _state.value = State(offer = offer)
+        _state.value = State(offer = offer, gallery = tree == null)
     }
 
-    private suspend fun plan(app: Context, tree: Uri, chosen: List<Candidate>, settings: SettingsStore): Offer =
+    /**
+     * Save to gallery from a video's page: one video, no confirmation (nothing is removed, and a
+     * gallery without room for it stops before a byte is written and says so). Null when the copy
+     * has started, otherwise what to say instead: one already running, the file gone or not
+     * finished, or its chat not allowing saving.
+     */
+    suspend fun saveToGalleryNow(context: Context, candidate: Candidate, settings: SettingsStore): String? {
+        if (busy) return L.downloadsSaveBusy
+        val app = context.applicationContext
+        val plan = runCatching { plan(app, null, listOf(candidate), settings).plan }.getOrElse { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            Log.w(TAG, "Save to gallery could not be prepared", error)
+            return L.keepExportFailed(Failures.humanise(error))
+        }
+        return when {
+            plan.forbidden > 0 -> ContentProtection.NOT_SAVABLE
+            plan.items.isEmpty() -> L.downloadsFileGone
+            !start(app, Offer(null, plan), plan.items, remove = false, detached = true) -> L.downloadsSaveBusy
+            else -> null
+        }
+    }
+
+    private suspend fun plan(app: Context, tree: Uri?, chosen: List<Candidate>, settings: SettingsStore): Offer =
         withContext(Dispatchers.IO) {
             val withFiles = chosen.map { candidate ->
                 val path = if (candidate.whole) {
@@ -142,11 +195,13 @@ object FolderExport {
                     candidate.record.updatedAt,
                 )
             }
-            val label = runCatching { folderFor(app, tree)?.label }.getOrNull().orEmpty()
-            val free = freeBytes(tree)
-            pathOf(tree)?.let {
-                lastPath = it
-                lastLabel = label
+            val label = if (tree == null) GALLERY_LABEL else runCatching { folderFor(app, tree)?.label }.getOrNull().orEmpty()
+            val free = if (tree == null) statFree(galleryPath()) else freeBytes(tree)
+            if (tree != null) {
+                pathOf(tree)?.let {
+                    lastPath = it
+                    lastLabel = label
+                }
             }
             Offer(tree, FolderCopy.plan(items, label, free, sorted.forbidden, sorted.unfinished, { it.sizeBytes }, { it.newest }))
         }
@@ -154,7 +209,7 @@ object FolderExport {
     /** Cancel on the confirmation: nothing copied, the grant given back. */
     fun dismissOffer(context: Context) {
         val offer = _state.value.offer
-        offer?.let { runCatching { context.applicationContext.contentResolver.releasePersistableUriPermission(it.tree, GRANT) } }
+        offer?.tree?.let { tree -> runCatching { context.applicationContext.contentResolver.releasePersistableUriPermission(tree, GRANT) } }
         if (!running.get()) _state.value = State()
     }
 
@@ -164,14 +219,17 @@ object FolderExport {
     }
 
     /** Starts the confirmed run, or returns false when one is already going. */
-    fun start(context: Context, offer: Offer, items: List<Item>, remove: Boolean): Boolean {
+    fun start(context: Context, offer: Offer, items: List<Item>, remove: Boolean, detached: Boolean = false): Boolean {
         if (!running.compareAndSet(false, true)) return false
         val app = context.applicationContext
         cancel.set(false)
         val plan = offer.plan
-        run = Run(offer.tree, items, plan.forbidden, plan.unfinished, plan.items.size - items.size, remove)
+        val next = Run(offer.tree, items, plan.forbidden, plan.unfinished, plan.items.size - items.size, remove, detached)
+        run = next
         _state.value = State(
             progress = FolderCopy.Progress(0, items.size, items.firstOrNull()?.source?.title.orEmpty(), 0f, 0, items.sumOf { it.sizeBytes }),
+            gallery = offer.gallery,
+            keys = next.keys,
         )
         val started = runCatching {
             val intent = Intent(app, FolderExportService::class.java)
@@ -208,8 +266,9 @@ object FolderExport {
             return FolderCopy.Outcome(folder = "", copied = 0)
         }
         val resolver = context.contentResolver
+        val gallery = next.tree == null
         var outcome = try {
-            val folder = folderFor(context, next.tree)
+            val folder: FolderCopyIo.Folder<Uri>? = if (next.tree == null) GalleryFolder(resolver) else folderFor(context, next.tree)
             if (folder == null) {
                 FolderCopy.Outcome(
                     folder = "", copied = 0, forbidden = next.forbidden, unfinished = next.unfinished,
@@ -217,7 +276,7 @@ object FolderExport {
                 )
             } else {
                 FolderCopyIo.copyAll(folder, next.items.map { it.source }, next.forbidden, next.unfinished, { cancel.get() }) {
-                    _state.value = State(progress = it)
+                    _state.value = State(progress = it, gallery = gallery, keys = next.keys)
                     onProgress(it)
                 }
             }
@@ -230,9 +289,19 @@ object FolderExport {
         }
         if (next.leftOut > 0) outcome = outcome.copy(notReached = outcome.notReached + next.leftOut)
         if (next.remove) outcome = removeSaved(context, outcome, next.items.associate { it.source.key to it.record })
-        runCatching { resolver.releasePersistableUriPermission(next.tree, GRANT) }
+        next.tree?.let { tree -> runCatching { resolver.releasePersistableUriPermission(tree, GRANT) } }
         run = null
-        _state.value = State(outcome = outcome)
+        // A video's page shows no result dialog: the end is a toast here and a notification from
+        // the service, and nothing waits for the Downloads screen to show it later.
+        if (next.detached) {
+            _state.value = State()
+            val said = if (outcome.clean) outcome.headline else (listOf(outcome.headline) + outcome.lines.take(1)).joinToString(". ")
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                com.tmplayer.ui.components.showMessage(context, said)
+            }
+        } else {
+            _state.value = State(outcome = outcome, gallery = gallery)
+        }
         running.set(false)
         return outcome
     }
@@ -304,6 +373,71 @@ object FolderExport {
     }
 
     private const val EXTERNAL_STORAGE = "com.android.externalstorage.documents"
+
+    /** Where Save to gallery puts its copies, as MediaStore's relative path and as the viewer reads it. */
+    private val GALLERY_PATH = Environment.DIRECTORY_MOVIES + "/TMPlayer"
+    private val GALLERY_LABEL = GALLERY_PATH
+
+    @Suppress("DEPRECATION")
+    private fun galleryPath(): File = File(Environment.getExternalStorageDirectory(), GALLERY_PATH)
+
+    /**
+     * Movies/TMPlayer through MediaStore. Each copy is added hidden (IS_PENDING) so the gallery
+     * never lists a part written file, and shown by [finish] once it is whole; one left by a
+     * cancel or a failure is deleted, and MediaStore clears any a crash leaves behind.
+     */
+    private class GalleryFolder(private val resolver: ContentResolver) : FolderCopyIo.Folder<Uri> {
+
+        override val label: String = GALLERY_LABEL
+
+        // Only the app's own earlier copies are visible to it, which is all it needs: MediaStore
+        // renames any other clash itself.
+        override fun existing(): Collection<String> {
+            val names = ArrayList<String>()
+            resolver.query(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf("$GALLERY_PATH/"),
+                null,
+            )?.use { cursor -> while (cursor.moveToNext()) cursor.getString(0)?.let(names::add) }
+            return names
+        }
+
+        override fun freeBytes(): Long? = statFree(galleryPath())
+
+        // The type from the name's extension, as MediaStore otherwise renames the file to match
+        // the type it was given.
+        override fun create(name: String, mimeType: String): Uri {
+            val type = android.webkit.MimeTypeMap.getSingleton()
+                .getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase())
+                ?.takeIf { it.startsWith("video/") }
+                ?: mimeType
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, type)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, GALLERY_PATH)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            return resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: throw IOException(name)
+        }
+
+        override fun open(handle: Uri): OutputStream =
+            resolver.openOutputStream(handle, "w") ?: throw IOException(handle.toString())
+
+        override fun size(handle: Uri): Long? =
+            resolver.openFileDescriptor(handle, "r")?.use { it.statSize }?.takeIf { it >= 0 }
+
+        override fun discard(handle: Uri) {
+            resolver.delete(handle, null, null)
+        }
+
+        override fun finish(handle: Uri) {
+            resolver.update(handle, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        }
+
+        override fun lost(error: Throwable): Boolean = error is SecurityException
+    }
 
     private class SafFolder(
         private val resolver: ContentResolver,
@@ -400,6 +534,7 @@ class FolderExportService : Service() {
         }.onFailure { Log.w(TAG, "Android would not let Save to folder run in the foreground", it) }.isSuccess
         if (started) return START_NOT_STICKY
         started = true
+        val detached = FolderExport.runningDetached
         scope.launch {
             var lastShown = -1
             val outcome = FolderExport.run(applicationContext) { progress ->
@@ -411,8 +546,9 @@ class FolderExportService : Service() {
                 }
             }
             runCatching { stopForegroundRemoving() }
-            // Nobody on the Downloads screen to see the result: it is said in the shade instead.
-            if (FolderExport.watchers.get() == 0) {
+            // Nobody on the Downloads screen to see the result, or a copy started from a video's
+            // page, which has no dialog for it: it is said in the shade as well.
+            if (detached || FolderExport.watchers.get() == 0) {
                 runCatching {
                     notifier().notify(
                         DONE_ID,
@@ -443,8 +579,9 @@ class FolderExportService : Service() {
             Intent(this, FolderExportService::class.java).setAction(ACTION_CANCEL),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val title = if (FolderExport.runningToGallery) L.downloadsSaveToGalleryTitle else L.downloadsSaveToFolderTitle
         return builder()
-            .setContentTitle(progress?.line ?: L.downloadsSaveToFolderTitle)
+            .setContentTitle(progress?.line ?: title)
             .setContentText(listOfNotNull(progress?.title, progress?.bytesLine).joinToString("  ·  "))
             .setOngoing(true)
             .setProgress(1000, ((progress?.overall ?: 0f) * 1000).toInt(), progress == null)
