@@ -599,7 +599,6 @@ internal fun HomePane(
                                         item = item,
                                         watched = watch.point(item),
                                         onClick = { onOpenWatchLater(record) },
-                                        onFocused = {},
                                         // The detail panel, which offers Remove from Watch later.
                                         onLongClick = { onHoldMedia(item, record.chatTitle.ifEmpty { chatTitle(record.chatId) }) },
                                         dense = touch,
@@ -620,7 +619,6 @@ internal fun HomePane(
                                         watched = null,
                                         onClick = { onPlay(item, chatTitle(item.chatId)) },
                                         onLongClick = { onHoldMedia(item, chatTitle(item.chatId)) },
-                                        onFocused = {},
                                         dense = touch,
                                         title = if (episode.show.isBlank()) episode.code else "${episode.show}  ·  ${episode.code}",
                                         badge = { NewBadge(compact = touch) },
@@ -987,7 +985,6 @@ private fun ShelfTile(
             finished = watch.finished(entry.item),
             onClick = { onPlay(entry.item, chatTitle(entry.item.chatId)) },
             onLongClick = { onHold(entry.item, chatTitle(entry.item.chatId)) },
-            onFocused = {},
             dense = touch,
             poster = poster,
             // Its first bytes asked for while the card is in focus or under the finger.

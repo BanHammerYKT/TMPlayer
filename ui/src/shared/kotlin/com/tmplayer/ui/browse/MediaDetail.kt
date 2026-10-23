@@ -207,7 +207,8 @@ fun MediaDetailPanel(
     actionsAtFoot: Boolean = false,
 ) {
     val s = LocalStrings.current
-    val corrections by com.tmplayer.data.VideoCorrections.state.collectAsState()
+    // The screen's one collector when it has one, rather than a second of its own.
+    val corrections by com.tmplayer.ui.components.rememberCorrections()
     val parsed = remember(item, corrections) { com.tmplayer.data.SeriesShelf.episodeOf(item, corrections) }
     val matched = com.tmplayer.ui.online.rememberMatched(item)
     val meta = matched?.info
@@ -236,7 +237,10 @@ fun MediaDetailPanel(
     val source = remember(item.id, art, cover, meta?.wideUrl) { BackdropSource(art.miniThumbnail, art.thumbnailFileId, cover, meta?.wideUrl) }
     val facts = remember(item) { MediaFacts.of(item) }
     val online = OnlineMetadata.current
-    val metadataOff = online != null && poster == null && overview == null && !online.settings.collectAsState().value.enabled
+    // Collected once here: read behind the conditions below, a collector started and stopped as
+    // the poster or the overview came and went.
+    val metaEnabled = online?.let { com.tmplayer.ui.components.rememberMetaSettings(it) }?.value?.enabled
+    val metadataOff = online != null && poster == null && overview == null && metaEnabled != true
 
     Column(
         modifier
@@ -298,7 +302,7 @@ fun MediaDetailPanel(
                     modifier = Modifier.semantics { heading() },
                 )
                 // Where the name came from: the provider's match and what backed it, or the file.
-                if (online?.settings?.collectAsState()?.value?.enabled == true) {
+                if (metaEnabled == true) {
                     Text(
                         meta?.let { m -> m.year?.let { s.detailMatchedAs(m.title, it.toString()) } ?: s.detailMatchedAsNoYear(m.title) }
                             ?: s.detailFromFileName,

@@ -795,22 +795,36 @@ fun SeriesPanel(
     val downloads = onDownload != null && SeasonDownload.anySavable(shown)
     // What each button stands for now, from the download index and the queue, so a season kept
     // already says Downloaded and does nothing, and one coming down says so with its ring.
-    val queue by com.tmplayer.data.OfflineDownloads.active.collectAsState()
-    val seasonState = if (!downloads) SeasonDownload.State.Nothing else watch.downloadState(
-        series, shown, SeasonDownload.Which.Season, { it.id in downloadedIds }, { queue.containsKey(it.fileId) },
-    )
+    // Derived rather than read here: the queue ticks every second for any download's progress,
+    // and the panel only has to compose again when what a button says changes.
+    val queue = com.tmplayer.ui.components.rememberDownloadQueue()
+    val seasonState by remember(downloads, watch, series, shown, downloadedIds, queue) {
+        derivedStateOf {
+            if (!downloads) SeasonDownload.State.Nothing else watch.downloadState(
+                series, shown, SeasonDownload.Which.Season, { it.id in downloadedIds }, { queue.value.containsKey(it.fileId) },
+            )
+        }
+    }
     val bothDownloads = downloads && SeasonDownload.unwatchedDiffers(shown, watch.finished)
     // Nothing left in the season means nothing left in its unwatched part either. That button
     // stays where it is, dimmed, rather than going (which would drop a remote's focus off the
     // row); the season's button beside it is the one that says Downloaded or Downloading.
-    val unwatchedLeft = seasonState == SeasonDownload.State.Fetch && watch.downloadState(
-        series, shown, SeasonDownload.Which.Unwatched, { it.id in downloadedIds }, { queue.containsKey(it.fileId) },
-    ) == SeasonDownload.State.Fetch
+    val unwatchedLeft by remember(downloads, watch, series, shown, downloadedIds, queue) {
+        derivedStateOf {
+            seasonState == SeasonDownload.State.Fetch && watch.downloadState(
+                series, shown, SeasonDownload.Which.Unwatched, { it.id in downloadedIds }, { queue.value.containsKey(it.fileId) },
+            ) == SeasonDownload.State.Fetch
+        }
+    }
     // How far the season's downloads have come, for the ring while it is coming down.
-    val seasonProgress = if (seasonState != SeasonDownload.State.Coming) null else {
-        val entries = shown.episodes.flatMap { it.copies }.mapNotNull { queue[it.fileId] }
-        val total = entries.sumOf { it.totalBytes }
-        if (total > 0) (entries.sumOf { it.downloadedBytes }.toFloat() / total).coerceIn(0f, 1f) else 0f
+    val seasonProgress by remember(downloads, watch, series, shown, downloadedIds, queue) {
+        derivedStateOf {
+            if (seasonState != SeasonDownload.State.Coming) null else {
+                val entries = shown.episodes.flatMap { it.copies }.mapNotNull { queue.value[it.fileId] }
+                val total = entries.sumOf { it.totalBytes }
+                if (total > 0) (entries.sumOf { it.downloadedBytes }.toFloat() / total).coerceIn(0f, 1f) else 0f
+            }
+        }
     }
     // Pressed, and on its way to the queue: an empty ring at once, so the press shows before the
     // queue does. Let go after a few seconds, in case nothing was queued (no room).

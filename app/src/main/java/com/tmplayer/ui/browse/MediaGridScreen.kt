@@ -1078,7 +1078,7 @@ fun MediaGridScreen(
             // Fetch the next page well before the user reaches the bottom row. The lead is counted
             // in items, so it has to follow the arrangement: two rows of the grid is eight videos,
             // while two rows of the list is two.
-            val nearEnd by remember(list.items.size, layout, columns) {
+            val nearEnd by remember(list.items.size, layout, columns, feed) {
                 derivedStateOf {
                     // The two states report the same figure through unrelated item types, so the
                     // index comes out of each branch rather than the item it came from.
@@ -1095,7 +1095,9 @@ fun MediaGridScreen(
                     last >= feed.size - lead
                 }
             }
-            LaunchedEffect(gridState, listState, list.items.size, layout) {
+            // Keyed on the feed as well: a filter, a search or the grouping changes it without a page
+            // arriving, and a short grid left that way has to ask for more by itself.
+            LaunchedEffect(gridState, listState, list.items.size, layout, columns, feed) {
                 snapshotFlow { nearEnd }.collect { if (it) viewModel.loadMore() }
             }
             }
@@ -2121,7 +2123,8 @@ internal fun MediaCard(
     item: MediaItem,
     watched: WatchPoint?,
     onClick: () -> Unit,
-    onFocused: () -> Unit,
+    /** Null for a card nothing listens to, which then keeps no watcher on its focus. */
+    onFocused: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     /** On the Watched list, or marked watched: the tick in the art's corner. */
     finished: Boolean = false,
@@ -2200,7 +2203,8 @@ internal fun VideoTile(
     dense: Boolean = false,
     poster: Boolean = false,
     onLongClick: (() -> Unit)? = null,
-    onFocused: () -> Unit = {},
+    /** Null for a tile nothing listens to, which then keeps no watcher on its focus. */
+    onFocused: (() -> Unit)? = null,
     selected: Boolean? = null,
     meta: (@Composable (ink: androidx.compose.ui.graphics.ColorProducer) -> Unit)? = null,
     /** False for a card that writes its name on the art (Home's Continue watching), keeping only [meta] under it. */
@@ -2215,8 +2219,10 @@ internal fun VideoTile(
     val focusedState = interactions.collectIsFocusedAsState()
     val still = rememberReducedMotion()
     val latestOnFocused = androidx.compose.runtime.rememberUpdatedState(onFocused)
-    LaunchedEffect(focusedState) {
-        snapshotFlow { focusedState.value }.collect { if (it) latestOnFocused.value() }
+    if (onFocused != null) {
+        LaunchedEffect(focusedState) {
+            snapshotFlow { focusedState.value }.collect { if (it) latestOnFocused.value?.invoke() }
+        }
     }
     val accent = Tone.accent
     val text = Tone.text
@@ -2866,23 +2872,26 @@ private fun MetaLine(
     poster: Boolean = false,
 ) {
     val s = LocalStrings.current
-    val year = if (poster) remember(item) { item.parsedName.year } else null
-    val duration = s.formatter.duration(item.durationSec.toLong())
-    // A tile standing for several copies says how many rather than one copy's size.
-    val size = if (item.versions.size > 1) s.detailVersions(item.versions.size) else com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(item.sizeBytes))
-    val resume = watched
-        ?.takeIf { it.positionMs > 0 }
-        ?.let { s.gridStoppedAt(s.formatter.clock(it.positionMs)) }
-        ?: s.commonWatched.takeIf { finished }
-    val text = listOfNotNull(
-        year?.toString(),
-        // A poster is narrow: the year and the size or the copies say most, and the detail the rest.
-        duration.ifEmpty { null }?.takeIf { !poster },
-        size.ifEmpty { null },
-        // On a video's card the quality is here rather than a second badge on the picture.
-        item.qualityTags.firstOrNull()?.takeIf { !poster },
-        resume,
-    ).joinToString("  ·  ")
+    // Worked out once per change of what it says, not on every composition of the tile.
+    val text = remember(item, watched, finished, poster, s) {
+        val year = if (poster) item.parsedName.year else null
+        val duration = s.formatter.duration(item.durationSec.toLong())
+        // A tile standing for several copies says how many rather than one copy's size.
+        val size = if (item.versions.size > 1) s.detailVersions(item.versions.size) else com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(item.sizeBytes))
+        val resume = watched
+            ?.takeIf { it.positionMs > 0 }
+            ?.let { s.gridStoppedAt(s.formatter.clock(it.positionMs)) }
+            ?: s.commonWatched.takeIf { finished }
+        listOfNotNull(
+            year?.toString(),
+            // A poster is narrow: the year and the size or the copies say most, and the detail the rest.
+            duration.ifEmpty { null }?.takeIf { !poster },
+            size.ifEmpty { null },
+            // On a video's card the quality is here rather than a second badge on the picture.
+            item.qualityTags.firstOrNull()?.takeIf { !poster },
+            resume,
+        ).joinToString("  ·  ")
+    }
     val style = if (isTouch()) {
         if (poster) M3MaterialTheme.typography.labelSmall else M3MaterialTheme.typography.labelMedium
     } else {

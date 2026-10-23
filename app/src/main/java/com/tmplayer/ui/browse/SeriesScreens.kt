@@ -46,7 +46,7 @@ internal fun SeriesCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     dense: Boolean = false,
-    onFocused: () -> Unit = {},
+    onFocused: (() -> Unit)? = null,
     badge: (@Composable () -> Unit)? = null,
     /** A 2:3 poster card, in a grid of films and shows; a 16:9 card in a row of videos. */
     poster: Boolean = false,
