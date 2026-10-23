@@ -396,6 +396,11 @@ internal fun BrowseScreen(
         if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onResumeMedia
     val openLater: (WatchLaterRecord) -> Unit =
         if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onOpenWatchLater
+    // The Watched list follows the same rule as Continue watching: OK on a row opened the
+    // player at once while a Continue row opened the page, so the two lists of History answered
+    // the same press differently (user, 2026-10-23). Play again stays in the hold menu.
+    val openWatched: (WatchedRecord) -> Unit =
+        if (detailFirst) ({ record -> showDetail(record.toMediaItem(), record.chatTitle) }) else onOpenWatched
 
     // The chips over Chats and History, remembered across launches like the card layout.
     val browseSettings = remember(panelContext) { SettingsStore(panelContext) }
@@ -686,7 +691,7 @@ internal fun BrowseScreen(
                                     autoFocus = !touch,
                                     mayTakeFocus = listMayTakeFocus,
                                     pageOpen = details.top != null,
-                                    onResume = onOpenWatched,
+                                    onResume = openWatched,
                                     onHold = { watchedMenu = it },
                                     dayOf = { it.watchedAt },
                                     dayText = { record, day -> record.cardText(now, day) },

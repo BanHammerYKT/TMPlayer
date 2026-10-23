@@ -1,7 +1,10 @@
 package com.tmplayer.ui.browse
 
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
+import androidx.compose.ui.unit.offset
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -153,50 +156,37 @@ internal fun TvFeaturedCarousel(
 
         val still = rememberReducedMotion() || Motion.reduced
         val auto = count > 1 && !still
-        var focusedIn by remember { mutableStateOf(false) }
-        val paused = focusedIn || !active
-        // Changes only when the pages stop for want of a key and when the next key comes.
-        val resting = idle?.resting == true
-        // The carousel coming back into view (the player closed, a sheet gone, the remote off it)
-        // counts as the viewer being here: the wait for a key starts again from now.
-        LaunchedEffect(paused, idle) { if (!paused) idle?.touched() }
-        // The time a page has stood, kept as a number rather than animated: nothing draws it, and
-        // an animation woke the main thread every frame of the seven seconds.
-        val spent = remember { longArrayOf(0L) }
-        var progressKey by remember { mutableStateOf<String?>(null) }
-        LaunchedEffect(currentKey, paused, auto, count, resting) {
-            // A new page starts its time from empty; a pause keeps it where it stopped.
-            if (progressKey != currentKey) {
-                spent[0] = 0L
-                progressKey = currentKey
-            }
-            if (!auto || paused || resting) return@LaunchedEffect
-            val began = System.currentTimeMillis()
-            try {
-                kotlinx.coroutines.delay((ADVANCE_MS - spent[0]).coerceAtLeast(0L))
-            } finally {
-                spent[0] += System.currentTimeMillis() - began
-            }
-            if (idle != null && idle.quietFor() >= IDLE_MS) {
-                // Nobody has pressed a key for a while: stay on this page, and give it a whole
-                // turn once a key starts the pages again.
-                spent[0] = 0L
-                idle.rest()
-                return@LaunchedEffect
-            }
-            // The page after the one up now, found in the pages as they are now: they may have
-            // refilled while this page stood.
-            val now = latest
-            if (now.isEmpty()) return@LaunchedEffect
-            val at = now.indexOfFirst { it.key == currentKey }
-            currentKey = now[(at + 1).mod(now.size)].key
-        }
+        // Whether the remote is on Play or Details. Read only by [CarouselTurns]: read here, the
+        // first Down from Play to the rows composed the whole carousel again, its page, its buttons
+        // and its dots, in the frame the remote moved (Mi TV, 2026-10-23).
+        val focusedIn = remember { mutableStateOf(false) }
+        CarouselTurns(
+            pageKey = currentKey,
+            focusedIn = focusedIn,
+            active = active,
+            auto = auto,
+            count = count,
+            idle = idle,
+            onTurn = {
+                // The page after the one up now, found in the pages as they are now: they may have
+                // refilled while this page stood.
+                val now = latest
+                if (now.isNotEmpty()) {
+                    val at = now.indexOfFirst { it.key == currentKey }
+                    currentKey = now[(at + 1).mod(now.size)].key
+                }
+            },
+        )
 
+        // The heading's height for the page's fades and its title's room, read where they are laid
+        // out and drawn: handed over as a number, the heading's first measure composed the page
+        // again a frame after Home appeared.
+        val headerFade: () -> Float = remember(header != null) { if (header != null) ({ headerPx.toFloat() }) else ({ 0f }) }
         // A page turns at once on a television: no two pages drawn together for a fade.
         Crossfade(targetState = pick, animationSpec = if (Motion.television) androidx.compose.animation.core.snap() else Motion.standard(), label = "tvFeatured", modifier = Modifier.matchParentSize()) { shown ->
             // The heading's words over any picture: a fade from the top, deeper than the heading,
             // under the page's own words.
-            TvFeaturedArt(shown, chatTitle, start = start, headerFade = if (header != null) headerPx.toFloat() else 0f)
+            TvFeaturedArt(shown, chatTitle, start = start, headerFade = headerFade)
         }
 
         // What Play starts, worked out as the phone's page does.
@@ -219,7 +209,7 @@ internal fun TvFeaturedCarousel(
             Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = start, bottom = PAGE_PAD)
-                .onFocusChanged { focusedIn = it.hasFocus },
+                .onFocusChanged { focusedIn.value = it.hasFocus },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -262,9 +252,59 @@ internal fun TvFeaturedCarousel(
     }
 }
 
+/**
+ * The carousel's clock: it turns the page every [ADVANCE_MS] while [active] and the remote is not
+ * on Play or Details ([focusedIn]), and stops once [idle] says nobody has pressed a key for a
+ * while. A composable of its own so the remote coming and going composes only this, not the page.
+ */
+@Composable
+private fun CarouselTurns(
+    pageKey: String,
+    focusedIn: androidx.compose.runtime.State<Boolean>,
+    active: Boolean,
+    auto: Boolean,
+    count: Int,
+    idle: HomeIdle?,
+    onTurn: () -> Unit,
+) {
+    val paused = focusedIn.value || !active
+    // Changes only when the pages stop for want of a key and when the next key comes.
+    val resting = idle?.resting == true
+    // The carousel coming back into view (the player closed, a sheet gone, the remote off it)
+    // counts as the viewer being here: the wait for a key starts again from now.
+    LaunchedEffect(paused, idle) { if (!paused) idle?.touched() }
+    // The time a page has stood, kept as a number rather than animated: nothing draws it, and
+    // an animation woke the main thread every frame of the seven seconds.
+    val spent = remember { longArrayOf(0L) }
+    val progressKey = remember { arrayOfNulls<String>(1) }
+    val turn by rememberUpdatedState(onTurn)
+    LaunchedEffect(pageKey, paused, auto, count, resting) {
+        // A new page starts its time from empty; a pause keeps it where it stopped.
+        if (progressKey[0] != pageKey) {
+            spent[0] = 0L
+            progressKey[0] = pageKey
+        }
+        if (!auto || paused || resting) return@LaunchedEffect
+        val began = System.currentTimeMillis()
+        try {
+            kotlinx.coroutines.delay((ADVANCE_MS - spent[0]).coerceAtLeast(0L))
+        } finally {
+            spent[0] += System.currentTimeMillis() - began
+        }
+        if (idle != null && idle.quietFor() >= IDLE_MS) {
+            // Nobody has pressed a key for a while: stay on this page, and give it a whole
+            // turn once a key starts the pages again.
+            spent[0] = 0L
+            idle.rest()
+            return@LaunchedEffect
+        }
+        turn()
+    }
+}
+
 /** A page's picture, the fades that let its words read, and the name at its start. */
 @Composable
-private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start: Dp, headerFade: Float) {
+private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start: Dp, headerFade: () -> Float) {
     val s = LocalStrings.current
     val item = pick.item
     val series = pick.series
@@ -288,7 +328,7 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
             Modifier.fillMaxSize(),
             // The picture melts into the page's ground towards the top, across the whole width, so
             // every item of the top bar reads over it in every theme.
-            topFade = with(LocalDensity.current) { (headerFade * BAR_FADE_REACH).toDp() },
+            topFadePx = { headerFade() * BAR_FADE_REACH },
             onPictured = HomeFirstPaint::markReady,
         )
         // Over Play and Details: the title's logo where TMDB has one (the name in type until then
@@ -296,12 +336,19 @@ private fun TvFeaturedArt(pick: FeaturedPick, chatTitle: (Long) -> String, start
         // Never higher than [TITLE_TOP_GAP] under the top bar: a tall logo over two lines of
         // overview climbed to the bar's foot and read as part of it (user, 2026-10-23), where
         // Netflix and Google TV keep the title block clear in the picture's lower part.
-        val barDp = with(LocalDensity.current) { headerFade.toDp() }
         Column(
             Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth(TEXT_SHARE)
-                .padding(start = start, top = barDp + TITLE_TOP_GAP, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP),
+                .padding(start = start, bottom = PAGE_PAD + HERO_PILL_HEIGHT + TITLE_GAP)
+                // The room above, as padding would keep it, worked out as the column is measured.
+                .layout { measurable, constraints ->
+                    val top = (headerFade().toDp() + TITLE_TOP_GAP).roundToPx().coerceAtLeast(0)
+                    val placeable = measurable.measure(constraints.offset(vertical = -top))
+                    layout(constraints.constrainWidth(placeable.width), constraints.constrainHeight(placeable.height + top)) {
+                        placeable.place(0, top)
+                    }
+                },
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
         ) {
             com.tmplayer.ui.online.TitleArt(meta, maxWidth = TV_LOGO_MAX_WIDTH, maxHeight = TV_LOGO_MAX_HEIGHT) {
