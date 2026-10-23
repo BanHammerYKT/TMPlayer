@@ -117,7 +117,20 @@ fun EdgeBackdrop(
                     }
                 }
                 val sized = with(density) { Modifier.size(w.toDp(), h.toDp()) }
-                val fades = Modifier
+                val ground = Tone.background
+                // A television paints the page's colour over the picture's edges instead: the
+                // same look on the page's plain ground, without an offscreen layer two thirds of
+                // the screen in size, which a TV stick's GPU filled again with every new picture.
+                val fades = if (Motion.television) Modifier.drawWithContent {
+                    drawContent()
+                    if (wide) {
+                        val across = fadeOut(START_FADE)
+                        drawRect(Brush.horizontalGradient(*(if (rtl) across.reversedStops(ground) else across.inStops(ground))))
+                    }
+                    drawRect(Brush.verticalGradient(*fadeOut(FOOT_FADE).reversedStops(ground)))
+                    val reach = if (small) FOOT_FADE else (topFadePx / size.height).coerceIn(0f, 1f)
+                    if (reach > 0f) drawRect(Brush.verticalGradient(*fadeOut(reach).inStops(ground)))
+                } else Modifier
                     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                     .drawWithContent {
                         drawContent()
@@ -204,6 +217,14 @@ private fun List<Pair<Float, Float>>.inStops(): Array<Pair<Float, Color>> =
 /** The stops mirrored, clear at the end of the gradient. */
 private fun List<Pair<Float, Float>>.reversedStops(): Array<Pair<Float, Color>> =
     map { (at, alpha) -> (1f - at) to Color.Black.copy(alpha = alpha) }.reversed().toTypedArray()
+
+/** As [inStops], drawn over the picture in the [ground] colour: solid where the mask is clear. */
+private fun List<Pair<Float, Float>>.inStops(ground: Color): Array<Pair<Float, Color>> =
+    map { (at, alpha) -> at to ground.copy(alpha = 1f - alpha) }.toTypedArray()
+
+/** As [reversedStops], in the [ground] colour. */
+private fun List<Pair<Float, Float>>.reversedStops(ground: Color): Array<Pair<Float, Color>> =
+    map { (at, alpha) -> (1f - at) to ground.copy(alpha = 1f - alpha) }.reversed().toTypedArray()
 
 private val EASE = listOf(0f to 0f, 0.2f to 0.06f, 0.4f to 0.24f, 0.6f to 0.52f, 0.8f to 0.82f, 1f to 1f)
 

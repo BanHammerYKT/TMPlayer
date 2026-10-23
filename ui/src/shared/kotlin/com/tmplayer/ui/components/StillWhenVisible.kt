@@ -33,6 +33,14 @@ fun StillWhenVisible(enabled: Boolean, content: @Composable () -> Unit) {
 /** The rule itself, apart from composition so a test can ask it directly. */
 @OptIn(ExperimentalFoundationApi::class)
 fun stillWhenVisible(platform: BringIntoViewSpec): BringIntoViewSpec = object : BringIntoViewSpec {
+    // On a television the list moves at once: a slide to the next row of a chat's grid drew a
+    // dozen frames or more on a 1 GB stick, where each frame takes 20 to 40 ms, so the grid swam
+    // after every press. Elsewhere the platform's own motion.
+    @Suppress("DEPRECATION")
+    @Deprecated("Matches the interface.")
+    override val scrollAnimationSpec: androidx.compose.animation.core.AnimationSpec<Float> =
+        if (com.tmplayer.ui.theme.Motion.television) androidx.compose.animation.core.snap() else platform.scrollAnimationSpec
+
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         if (offset >= 0f && offset + size <= containerSize) 0f
         else platform.calculateScrollDistance(offset, size, containerSize)

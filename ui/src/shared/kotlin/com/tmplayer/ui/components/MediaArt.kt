@@ -61,14 +61,16 @@ fun MediaArt(
     // view is a dozen of them in a single frame, plus a hash of each byte array to key the cache,
     // which is a dropped frame on a stick every time the list moves. Null while that is under way,
     // so the stand-in is not flashed for a frame under a picture that is about to arrive.
+    var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
+    // Not at all when the sharp thumbnail is already in memory: a tile scrolling back into view
+    // would decode and hash a preview it never shows.
     val mini by produceState(
-        initialValue = if (miniThumbnail == null || miniThumbnail.isEmpty()) NoMini else null,
+        initialValue = if (miniThumbnail == null || miniThumbnail.isEmpty() || full != null) NoMini else null,
         miniThumbnail,
     ) {
+        if (value === NoMini) return@produceState
         value = Decoded(withContext(Dispatchers.Default) { Thumbnails.mini(miniThumbnail) })
     }
-
-    var full by remember(thumbnailFileId) { mutableStateOf(Thumbnails.peekFull(thumbnailFileId)) }
     // Retried when the connection comes back, but only a tile that still has no thumbnail collects
     // [Td.connected]: TDLib on a stick flaps often, and twenty collectors would mean the effect
     // restarting under every visible tile at once.

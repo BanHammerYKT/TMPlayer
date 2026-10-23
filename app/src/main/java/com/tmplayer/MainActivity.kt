@@ -1813,6 +1813,7 @@ private fun Root() {
                     onToggleLayout = { scope.launch { settings.setChatLayout(chatLayout.toggled()) } },
                     layout = chatLayout,
                     homeRows = homeRows,
+                    homeRowsReady = homeViewModel.rowsSettled,
                     homeArt = homeViewModel.art.collectAsStateWithLifecycle().value,
                     homeWatch = homeWatch,
                     onHomeRowShown = { row ->

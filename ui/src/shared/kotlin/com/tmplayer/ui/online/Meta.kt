@@ -269,7 +269,10 @@ fun MetaPicture(
     val still = com.tmplayer.ui.theme.Motion.television || com.tmplayer.ui.theme.rememberReducedMotion() || com.tmplayer.ui.theme.Motion.reduced
     LaunchedEffect(url, wanted) {
         val have = bitmap
-        if (have != null && have.width >= wanted) return@LaunchedEffect
+        // Against the width it would be decoded at: on a television (or under Lighter pictures)
+        // that is three fifths of [wanted], so comparing with [wanted] itself sent every cached
+        // poster back through the loader each time its tile was composed.
+        if (have != null && have.width >= Thumbnails.lighter(wanted)) return@LaunchedEffect
         val started = System.nanoTime()
         coroutineScope {
             val early = if (have == null && tiny == null && tinyUrl != null) {

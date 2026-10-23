@@ -150,6 +150,7 @@ fun HomePage(state: ShellState, chats: ChatListViewModel) {
         return
     }
     HomeRowsView(
+        rowsReady = model.rowsSettled,
         state = state,
         rows = rows,
         chats = list,
@@ -194,6 +195,8 @@ internal fun HomeRowsView(
     onLaterArtWanted: (WatchLaterRecord) -> Unit = {},
     /** A row's See all page read on through its chats ([HomeViewModel.seeAll]); null keeps it to what Home holds. */
     seeAll: (HomeRow) -> com.tmplayer.ui.browse.RowFeed? = { null },
+    /** False while the rows have not been built from an answer yet ([HomeViewModel.rowsSettled]). */
+    rowsReady: Boolean = true,
 ) {
     val s = LocalStrings.current
     var openSeries by remember { mutableStateOf<Series?>(null) }
@@ -257,6 +260,15 @@ internal fun HomeRowsView(
                 Box(Modifier.fillMaxWidth().height(TOP_DRAG).windowDrag()) {
                     HomeBrand(Modifier.align(Alignment.TopStart).padding(start = side, top = BRAND_TOP))
                 }
+                // Rows still being built off the main thread: the brand over a blank page, not the
+                // first run's card, which flashed up at every start for accounts full of videos.
+                // Given up after a while, so a first run without a connection still says what to do.
+                var waitedOut by remember { mutableStateOf(false) }
+                if (!rowsReady) LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(10_000)
+                    waitedOut = true
+                }
+                if (!rowsReady && !waitedOut) return@Column
                 // Nothing played and nothing starred: a first run, so say how to get a first video in:
                 // forward it to Saved Messages, which the button opens.
                 Box(

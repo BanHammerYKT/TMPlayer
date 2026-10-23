@@ -5,6 +5,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tmplayer.data.ChatRepository
@@ -202,6 +203,15 @@ class HomeViewModel(
 
     /** The rows [rememberHomeRows] built last, drawn again at once when Home comes back. */
     var lastRows: List<HomeRow> = emptyList()
+        internal set
+
+    /**
+     * True once the rows have been built from an answer about the chats' videos: until then an
+     * empty Home means "not built yet", not "nothing to show". Since the rows are built off the
+     * main thread, Home opened empty for a moment on every cold start and showed the first run's
+     * "Open Saved Messages" card to accounts full of videos.
+     */
+    var rowsSettled: Boolean by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
     private val _loaded = MutableStateFlow<Map<Long, List<MediaItem>>>(emptyMap())
@@ -835,6 +845,9 @@ fun rememberHomeRows(
         homeMemo.built = inputs
         model.lastRows = built
         value = built
+        // Rows that are there, or a list of where the videos are that has come back: either way
+        // what Home shows now is the answer. Starred chats alone need no such list.
+        if (built.isNotEmpty() || recent != null || !autoFill) model.rowsSettled = true
     }
     PrefetchHomeArt(rows)
     return rows

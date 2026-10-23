@@ -97,7 +97,6 @@ import com.tmplayer.ui.theme.Corner
 import com.tmplayer.ui.theme.Tone
 import com.tmplayer.ui.theme.Tv
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.material3.MaterialTheme as M3MaterialTheme
 import androidx.compose.material3.Text as M3Text
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -145,6 +144,8 @@ internal fun HomePane(
      * Not needed when [rows] is empty: the empty state already says the same.
      */
     noFavourites: Boolean = false,
+    /** False while the rows have not been built from an answer yet ([HomeViewModel.rowsSettled]). */
+    rowsReady: Boolean = true,
     /** What the first-run state says and where its button goes: Saved Messages, or a folder. */
     /** Opens the first-run state's target. */
     onOpenSection: (BrowseSection) -> Unit = {},
@@ -184,6 +185,21 @@ internal fun HomePane(
     val under = if (touch) LocalUnderStatusBar.current else 0.dp
     if (rows.isEmpty()) {
         LaunchedEffect(Unit) { HomeFirstPaint.markReady() }
+        // Rows still being built: the page's heading over a blank page, not the first run's card.
+        // A list of the chats' videos that never comes back gives way to the card after a while,
+        // so a first run without a connection still says what to do.
+        var waitedOut by remember { mutableStateOf(false) }
+        if (!rowsReady) LaunchedEffect(Unit) {
+            kotlinx.coroutines.delay(ROWS_WAIT_MS)
+            waitedOut = true
+        }
+        if (!rowsReady && !waitedOut) {
+            Column(Modifier.fillMaxSize().padding(top = under)) {
+                tvHeader?.invoke(false)
+                if (touch) PhoneHomeBrand(Modifier.padding(start = start, top = BRAND_TOP), onArt = false)
+            }
+            return
+        }
         // Nothing played and nothing starred: a first run, so say how to get a first video in.
         Column(Modifier.fillMaxSize().padding(top = under)) {
             tvHeader?.invoke(false)
@@ -217,7 +233,7 @@ internal fun HomePane(
     val seeAllRow = seeAllKey?.let { key -> rows.firstOrNull { it.key == key } as? HomeRow.Across }
     // The row whose tiles the remote goes back to once its page closes.
     var returnTo by remember { mutableStateOf<String?>(null) }
-    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState(column = true)
     // Home pressed again on the bar: back to the top, the featured carousel whole.
     ScrollToTopOnReselect(TouchDestination.Home) { animate -> listState.toTop(animate) }
     // Back from Home's rows to the TV top bar: the same, as Home looks when it opens.
@@ -389,11 +405,14 @@ internal fun HomePane(
                         // the carousel at the top made the usual case on Home: the list then moves
                         // down by a row's height and the remote follows into the row that appeared.
                         Modifier.onPreviewKeyEvent { event ->
-                            if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            if ((event.key == Key.DirectionDown || event.key == Key.DirectionUp) && staleRepeat(event)) return@onPreviewKeyEvent true
+                            if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
                             if (focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)) return@onPreviewKeyEvent true
                             if (!listState.canScrollForward) return@onPreviewKeyEvent false
                             scope.launch {
-                                listState.animateScrollBy(rowStep)
+                                // In one step, as the rows move: a slide here drew a dozen slow frames.
+                                listState.scrollBy(rowStep)
                                 focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
                             }
                             true
@@ -520,7 +539,7 @@ internal fun HomePane(
                         Modifier.onFocusChanged { state ->
                             if (state.hasFocus) scope.launch {
                                 withFrameNanos {}
-                                listState.animateScrollToItem(0)
+                                listState.scrollToItem(0)
                             }
                         }
                     } else {
@@ -852,7 +871,7 @@ private fun AcrossSeeAll(
     LaunchedEffect(feed, row) { feed?.reshape(row) }
     val entries = fed?.entries ?: row.entries
     val poster = remember(entries) { SeriesShelf.posterKeys(entries).isNotEmpty() }
-    val grid = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val grid = com.tmplayer.ui.components.rememberAheadGridState()
     if (feed != null) {
         com.tmplayer.ui.components.LoadMoreAhead(grid, enabled = fed == null || fed.wants(scrolling = grid.isScrollInProgress)) { feed.loadMore() }
     }
@@ -992,7 +1011,6 @@ private fun TileRow(
         // each, so a press held the screen for a third of a second (measured on a Mi TV, 1 GB).
         val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
         val rtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
-        val scope = rememberCoroutineScope()
         val inside = remember { booleanArrayOf(false) }
         val stepping = Modifier
             .onFocusChanged { state ->
@@ -1000,7 +1018,7 @@ private fun TileRow(
                 // at the start, in case the row moved meanwhile (new videos at its front).
                 if (state.hasFocus && !inside[0]) {
                     if (at[0] < 0) at[0] = row.firstVisibleItemIndex
-                    else if (row.firstVisibleItemIndex != at[0]) scope.launch { row.scrollToItem(at[0].coerceAtMost((row.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))) }
+                    else if (row.firstVisibleItemIndex != at[0]) row.requestScrollToItem(at[0].coerceAtMost((row.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)))
                 }
                 inside[0] = state.hasFocus
             }
@@ -1008,6 +1026,9 @@ private fun TileRow(
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val right = event.key == Key.DirectionRight
                 if (!right && event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
+                // A held button's repeats queue up behind slow frames; one already stale is
+                // dropped, so the row stops where the viewer let go instead of running on.
+                if (staleRepeat(event)) return@onPreviewKeyEvent true
                 val forward = right != rtl
                 if (at[0] < 0) at[0] = row.firstVisibleItemIndex
                 val target = at[0] + if (forward) 1 else -1
@@ -1016,7 +1037,9 @@ private fun TileRow(
                     return@onPreviewKeyEvent false
                 }
                 at[0] = target
-                scope.launch { row.scrollToItem(target) }
+                // Applied at the next measure, the same frame the focus moves in, rather than a
+                // frame later from a coroutine.
+                row.requestScrollToItem(target)
                 true
             }
         AnchoredAtStart(start, instant = true) {
@@ -1277,6 +1300,9 @@ private fun AnchoredAtStart(start: Dp, instant: Boolean = false, content: @Compo
 }
 
 
+/** How long an empty Home waits for its rows before it takes itself for a first run. */
+private const val ROWS_WAIT_MS = 10_000L
+
 /** How long Home without a carousel waits for one to turn up before the cold start's loader lifts. */
 private const val NO_CAROUSEL_SETTLE_MS = 1_500L
 
@@ -1344,12 +1370,32 @@ private fun SeeAllLink(label: String, onClick: () -> Unit, modifier: Modifier = 
 
 
 /**
+ * A held D-pad's repeat that has waited longer than a couple of frames to be handled. Leanback
+ * caps the moves it queues the same way (GridLayoutManager's pending moves): on a stick whose
+ * frames take 40 ms, repeats pile up, and once the button is let go the focus kept moving.
+ */
+private fun staleRepeat(event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+    val native = event.nativeKeyEvent
+    return native.repeatCount > 0 && android.os.SystemClock.uptimeMillis() - native.eventTime > STALE_REPEAT_MS
+}
+
+/** How old a repeat may be and still move the focus: about two frames on a slow stick. */
+private const val STALE_REPEAT_MS = 80L
+
+/**
  * Home's vertical list under the TV top bar: a focused item already standing between the bar's foot
  * ([barPx]) and three fifths of the way down stays where it is; anything above that band, under
  * the bar, or below it is brought to three tenths of the way down, as the television does.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 private fun calmVertical(barPx: Float) = object : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    // At once rather than slid: a slide down to the next row drew some seventeen frames on the
+    // 1 GB stick, each 20 to 130 ms, so the page swam for half a second after every Up and Down.
+    // The rows already move in one step ([AnchoredAtStart]); the page now does too.
+    @Deprecated("Matches the interface; the snap is the point.")
+    override val scrollAnimationSpec: androidx.compose.animation.core.AnimationSpec<Float> =
+        androidx.compose.animation.core.snap()
+
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
         val lead = containerSize * 0.3f
         return when {

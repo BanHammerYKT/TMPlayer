@@ -284,6 +284,7 @@ internal fun BrowseScreen(
     onUpdate: () -> Unit = {},
     /** Home's rows, built by [com.tmplayer.data.HomeRows] from what has loaded so far. */
     homeRows: List<HomeRow> = emptyList(),
+    homeRowsReady: Boolean = true,
     /** Continue watching videos as Telegram describes them, by progress key, for their pictures. */
     homeArt: Map<String, MediaItem> = emptyMap(),
     homeWatch: SeriesWatch = SeriesWatch.None,
@@ -543,6 +544,7 @@ internal fun BrowseScreen(
                         Box(Modifier.fillMaxSize()) {
                             HomePane(
                                 rows = homeRows,
+                                rowsReady = homeRowsReady,
                                 watch = homeWatch,
                                 art = homeArt,
                                 chatTitle = { titles[it].orEmpty() },
@@ -1434,7 +1436,7 @@ private fun <T : Any> ContinueSection(
         bottom = insets.bottom,
     )
 
-    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState(column = true)
     val gridState = com.tmplayer.ui.components.rememberAheadGridState()
     Box(Modifier.fillMaxSize()) {
         when (layout) {
@@ -2223,7 +2225,7 @@ private fun ChatSection(
         else -> Modifier
     }
 
-    val listState = com.tmplayer.ui.components.rememberAheadListState()
+    val listState = com.tmplayer.ui.components.rememberAheadListState(column = true)
     val gridState = com.tmplayer.ui.components.rememberAheadGridState()
     // Telegram's older chats read as the end of the list comes near, a screen ahead.
     val readMore = paging.more && !paging.loading && paging.failure == null

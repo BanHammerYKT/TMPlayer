@@ -34,7 +34,9 @@ internal fun decodeImageFile(path: String, maxWidth: Int, alpha: Boolean = false
             inTargetDensity = maxWidth
         }
     }
-    return BitmapFactory.decodeFile(path, options)?.asImageBitmap()
+    // prepareToDraw lets the render thread upload the texture while it is idle, ahead of the frame
+    // that first shows the tile, rather than inside it: Coil and Glide do the same.
+    return BitmapFactory.decodeFile(path, options)?.also { it.prepareToDraw() }?.asImageBitmap()
 }
 
 internal fun ImageBitmap.byteCount(): Int = asAndroidBitmap().byteCount

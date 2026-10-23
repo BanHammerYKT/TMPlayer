@@ -60,9 +60,6 @@ object TvChannelsPublisher {
     private const val EXTRA_SERIES = "ch_series"
     private const val EXTRA_TITLE = "ch_title"
 
-    /** Appended to the stored fingerprint of a card written without its picture, so the next pass tries again. */
-    private const val NO_ART = "\u001fnoart"
-
     private const val LOGO_SIZE = 256
     private const val ART_TIMEOUT_MS = 20_000L
 
@@ -243,17 +240,12 @@ object TvChannelsPublisher {
     }.getOrDefault(emptyMap())
 
     /**
-     * What one publish may still ask of the network for pictures ([ONLINE_PER_RUN]), and whether
-     * the card being written had to go without what it wanted, so it is tried again later.
+     * What one publish may still ask of the network for pictures ([ONLINE_PER_RUN]). A card the
+     * run cannot afford is left out and asked for again on the next run.
      */
-    private class OnlineBudget(var left: Int, val quiet: Boolean) {
-        var deferred = false
-
+    private class OnlineBudget(var left: Int) {
         fun take(): Boolean {
-            if (left <= 0) {
-                deferred = true
-                return false
-            }
+            if (left <= 0) return false
             left--
             return true
         }
@@ -263,7 +255,7 @@ object TvChannelsPublisher {
         val channels = ownChannels(context)
         val quiet = runCatching { SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() < START_QUIET_MS }
             .getOrDefault(false)
-        val budget = OnlineBudget(if (quiet) 0 else ONLINE_PER_RUN, quiet)
+        val budget = OnlineBudget(if (quiet) 0 else ONLINE_PER_RUN)
         val byChannel = programs.groupBy { it.channel }
         val keptArt = HashSet<String>()
         for (channel in Channel.entries) {
@@ -281,12 +273,17 @@ object TvChannelsPublisher {
             val deleted = diff.delete.toHashSet()
             existing.values.filter { it.existing.rowId !in deleted }.mapNotNullTo(keptArt) { artName(context, it.art) }
             for (program in diff.insert) {
-                val values = values(context, channelId, program, keptArt, budget)
+                // A card without a real picture is left out, and asked for again on the next run.
+                val values = values(context, channelId, program, keptArt, budget) ?: continue
                 runCatching { context.contentResolver.insert(TvContract.PreviewPrograms.CONTENT_URI, values) }
                     .onFailure { Log.w(TAG, "card not added", it) }
             }
             for ((id, program) in diff.update) {
                 val values = values(context, channelId, program, keptArt, budget)
+                if (values == null) {
+                    runCatching { context.contentResolver.delete(TvContract.buildPreviewProgramUri(id), null, null) }
+                    continue
+                }
                 runCatching { context.contentResolver.update(TvContract.buildPreviewProgramUri(id), values, null, null) }
                     .onFailure { Log.w(TAG, "card not updated", it) }
             }
@@ -303,13 +300,13 @@ object TvChannelsPublisher {
         program: TvChannels.Program,
         keptArt: MutableSet<String>,
         budget: OnlineBudget,
-    ): ContentValues {
-        budget.deferred = false
-        val art = withTimeoutOrNull(ART_TIMEOUT_MS) { resolveArt(context, program.art, budget) }
-        art?.let { keptArt += it.first }
-        // A card that settled for less than it wanted because the run's budget was spent is
-        // written as one without its picture, so a later refresh gives it the better one.
-        val fingerprint = program.fingerprint + if (art == null || budget.deferred) NO_ART else ""
+    ): ContentValues? {
+        // Only cards with the film's or show's own artwork go on the home screen (user,
+        // 2026-10-23): a frame from the file or the app's stand-in picture looked unfinished
+        // beside them. One whose picture is not known yet stays off until a later run finds it.
+        val art = withTimeoutOrNull(ART_TIMEOUT_MS) { resolveArt(context, program.art, budget) } ?: return null
+        keptArt += art.first
+        val fingerprint = program.fingerprint
         return ContentValues().apply {
             put(TvContract.PreviewPrograms.COLUMN_CHANNEL_ID, channelId)
             put(TvContract.PreviewPrograms.COLUMN_INTERNAL_PROVIDER_ID, program.internalId)
@@ -330,13 +327,8 @@ object TvChannelsPublisher {
                     program.positionMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 )
             }
-            if (art != null) {
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI, TvArtProvider.uriFor(context, art.first).toString())
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, art.second)
-            } else {
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI, WatchNextPublisher.poster(context).toString())
-                put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, TvContract.PreviewPrograms.ASPECT_RATIO_16_9)
-            }
+            put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_URI, TvArtProvider.uriFor(context, art.first).toString())
+            put(TvContract.PreviewPrograms.COLUMN_POSTER_ART_ASPECT_RATIO, art.second)
             put(TvContract.PreviewPrograms.COLUMN_INTENT_URI, intentFor(context, program.target).toUri(Intent.URI_INTENT_SCHEME))
         }
     }
@@ -353,7 +345,7 @@ object TvChannelsPublisher {
 
     // ---- pictures -------------------------------------------------------------------------------
 
-    /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without a picture. */
+    /** The copy's name in [TvArtProvider.dir] and its aspect ratio, or null without the title's own artwork. */
     private suspend fun resolveArt(context: Context, art: TvChannels.Art, budget: OnlineBudget): Pair<String, Int>? {
         found(art, budget)?.let { info ->
             // The wide picture (a film's or show's backdrop), a better card than a frame from the
@@ -366,9 +358,8 @@ object TvChannelsPublisher {
         fixtureArt?.invoke(art)?.let { file ->
             return copyIn(context, file, "f_${sha1(art.key)}.jpg")?.let { it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
         }
-        val path = Thumbnails.file(art.thumbnailFileId) ?: return null
-        val name = "t_${Integer.toHexString(art.thumbnailFileId)}.jpg"
-        return copyIn(context, File(path), name)?.let { it to TvContract.PreviewPrograms.ASPECT_RATIO_16_9 }
+        // No frame from the file: a card without the title's own artwork stays off the home screen.
+        return null
     }
 
     /** What the online lookups know of the film or show, when the viewer turned them on. */

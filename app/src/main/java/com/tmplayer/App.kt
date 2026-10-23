@@ -103,6 +103,8 @@ class App : Application() {
         // Before the promo return, so the fixture shows a screen as a low-end device draws it.
         backgroundScope.launch {
             val store = SettingsStore(this@App)
+            // First, so the first frame finds the interface size without reading the file itself.
+            launch { runCatching { com.tmplayer.ui.theme.primeUiScale(store.uiScale.first()) } }
             launch { store.lighterPictures.collect { Thumbnails.light = it } }
             launch { store.reduceMotion.collect { com.tmplayer.ui.theme.Motion.reduced = it } }
             // "Vibrate on tap" covers the app's toggles as well as the player's.

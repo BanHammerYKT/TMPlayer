@@ -672,7 +672,7 @@ fun MediaGridScreen(
             // same pages at the same place ([MediaListViewModel.restoredScroll]); written as it goes.
             val restored = remember(viewModel) { viewModel.restoredScroll }
             val gridState = com.tmplayer.ui.components.rememberAheadGridState(restored.first, restored.second)
-            val listState = com.tmplayer.ui.components.rememberAheadListState(restored.first, restored.second)
+            val listState = com.tmplayer.ui.components.rememberAheadListState(restored.first, restored.second, column = true)
             DisposableEffect(viewModel, layout) {
                 onDispose {
                     if (layout == CardLayout.List) viewModel.rememberScroll(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
@@ -717,12 +717,14 @@ fun MediaGridScreen(
                             // Only when the list has moved off its start: asked again on every
                             // press along a row already at the top, it pulled the grid back up
                             // after each step and the row jumped.
+                            // At once on a television, as every other move of the remote is there.
+                            val tv = com.tmplayer.ui.theme.Motion.television
                             if (layout == CardLayout.Grid) {
                                 if (gridState.firstVisibleItemIndex != 0 || gridState.firstVisibleItemScrollOffset != 0) {
-                                    gridState.animateScrollToItem(0)
+                                    if (tv) gridState.scrollToItem(0) else gridState.animateScrollToItem(0)
                                 }
                             } else if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
-                                listState.animateScrollToItem(0)
+                                if (tv) listState.scrollToItem(0) else listState.animateScrollToItem(0)
                             }
                         }
                     }
@@ -857,6 +859,9 @@ fun MediaGridScreen(
                                         is MediaFeedEntry.Sponsored -> "sponsor-${it.item.messageId}"
                                     }
                                 },
+                                // A row of a kind is reused for the next one of that kind as the list
+                                // scrolls, rather than torn down and built again.
+                                contentType = { feedContentType(it, emptySet()) },
                             ) { entry ->
                               Box(if (animateCards) Modifier.animateItem() else Modifier, propagateMinConstraints = true) {
                                 when (entry) {
@@ -2960,6 +2965,7 @@ internal fun LazyGridScope.shelfGrid(
                 is MediaFeedEntry.Sponsored -> "sponsor-${it.item.messageId}"
             }
         },
+        contentType = { feedContentType(it, posterKeys) },
         span = {
             when {
                 it is MediaFeedEntry.Sponsored -> GridItemSpan(maxLineSpan)
@@ -3021,5 +3027,15 @@ internal fun FilterNote(label: String, shown: Int, total: Int, onClear: () -> Un
             modifier = Modifier.weight(1f, fill = false),
         )
         com.tmplayer.ui.components.TmSecondaryButton(onClick = onClear) { Text(s.gridFilterClear) }
+    }
+}
+
+/** What a feed's cell is drawn as, so the lazy layout reuses a poster for a poster, a show for a show. */
+private fun feedContentType(entry: MediaFeedEntry<ShelfEntry>, posterKeys: Set<String>): Int = when (entry) {
+    is MediaFeedEntry.Sponsored -> 0
+    is MediaFeedEntry.Media -> when {
+        entry.item is ShelfEntry.Show -> 1
+        entry.item.key in posterKeys -> 2
+        else -> 3
     }
 }
