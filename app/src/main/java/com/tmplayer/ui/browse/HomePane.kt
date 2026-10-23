@@ -974,7 +974,17 @@ private fun AcrossSeeAll(
             if (fed != null && (fed.loading || fed.failure != null)) {
                 item(key = "more-foot", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }, contentType = "more-foot") {
                     com.tmplayer.ui.components.PageFoot(fed.loading, fed.failure, onRetry = { feed.loadMore() }) {
-                        PlaceholderTile(if (poster) posterWidth(touch) else wideWidth(touch), touch, poster)
+                        // A whole row of placeholders, as many as the grid fits across and as wide
+                        // as its cells, so the next page arrives in the shape it is waiting in
+                        // (user, 2026-10-23), rather than one card alone at the start of a line.
+                        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val least = if (poster) posterWidth(touch) else wideWidth(touch)
+                            val across = ((maxWidth + gap) / (least + gap)).toInt().coerceAtLeast(1)
+                            val cell = (maxWidth - gap * (across - 1)) / across
+                            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                                repeat(across) { PlaceholderTile(cell, touch, poster) }
+                            }
+                        }
                     }
                 }
             }

@@ -849,6 +849,12 @@ fun MediaGridScreen(
                                         )
                                     }
                             }
+                            // The next page on its way: a row of placeholder tiles where it will land.
+                            if (list.loadingMore) {
+                                item(key = "more-skeleton", span = { GridItemSpan(maxLineSpan) }, contentType = "more-skeleton") {
+                                    com.tmplayer.ui.components.MediaGridSkeletonRow(wideColumns, gap, dense)
+                                }
+                            }
                         }
     
                         CardLayout.List -> LazyColumn(
@@ -923,6 +929,11 @@ fun MediaGridScreen(
                                     )
                                 }
                               }
+                            }
+                            if (list.loadingMore) {
+                                item(key = "more-skeleton", contentType = "more-skeleton") {
+                                    com.tmplayer.ui.components.MediaListSkeletonRow()
+                                }
                             }
                         }
                     }
@@ -1018,12 +1029,13 @@ fun MediaGridScreen(
                         }
                     }
                 }
-                // Floated over the grid; a reserved band cost a whole row on a 540dp panel.
+                // The next page's placeholder row is in the listing itself; a page that will not
+                // come says so over the foot, with a way to ask again.
                 if (list.loadingMore && atEnd) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Tone.surfaceHigh,
-                        contentColor = Tone.muted,
+                    com.tmplayer.ui.components.SlowAnswerNotice(
+                        key = list.items.size,
+                        onRetry = viewModel::retryMore,
+                        card = true,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             // Above the name strip when there is one, rather than through it.
@@ -1034,22 +1046,7 @@ fun MediaGridScreen(
                                     (if (standing) 46.dp else 0.dp) +
                                     connectionOffset,
                             ),
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Spinner(size = 18.dp, strokeWidth = 2.dp)
-                            Text(
-                                s.gridLoadingMore,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Tone.muted,
-                            )
-                            // A page that will not come says so, with a way to ask again.
-                            SlowAnswerNotice(key = list.items.size, onRetry = viewModel::retryMore)
-                        }
-                    }
+                    )
                 }
                 // The last page failed: said where the chip was, with Try again, rather than the
                 // listing quietly stopping short.

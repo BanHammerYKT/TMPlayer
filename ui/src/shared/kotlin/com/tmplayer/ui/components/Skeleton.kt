@@ -342,6 +342,47 @@ fun MediaGridSkeleton(modifier: Modifier = Modifier, layout: CardLayout = CardLa
     }
 }
 
+/**
+ * One row of the video grid's placeholder tiles, at the end of a listing while its next page is
+ * read: the viewer sees more is on its way in the shape it will take, rather than a spinner
+ * floated over the last row (user, 2026-10-23). [columns] and [gap] are the grid's own.
+ */
+@Composable
+fun MediaGridSkeletonRow(columns: Int, gap: androidx.compose.ui.unit.Dp, dense: Boolean, modifier: Modifier = Modifier) {
+    val shimmer = rememberShimmer()
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+        repeat(columns.coerceAtLeast(1)) {
+            if (dense) DenseTileSkeleton(shimmer, Modifier.weight(1f)) else MediaTileSkeleton(shimmer, Modifier.weight(1f))
+        }
+    }
+}
+
+/** The list layout's one placeholder row, for the same wait as [MediaGridSkeletonRow]. */
+@Composable
+fun MediaListSkeletonRow(modifier: Modifier = Modifier) {
+    val shimmer = rememberShimmer()
+    val touch = isTouch()
+    Row(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Corner.Medium))
+            .background(Tone.surface)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SkeletonBox(
+            shimmer,
+            (if (touch) Modifier.weight(TOUCH_ART_SHARE) else Modifier.width(ROW_ART_WIDTH)).aspectRatio(16f / 9f),
+            RoundedCornerShape(Corner.Small),
+        )
+        Column(Modifier.weight(if (touch) 1f - TOUCH_ART_SHARE else 1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SkeletonBox(shimmer, Modifier.fillMaxWidth(TITLE_FRACTIONS[0]).height(18.dp))
+            SkeletonBox(shimmer, Modifier.fillMaxWidth(0.55f).height(12.dp))
+        }
+    }
+}
+
 /** The phone's tile: art, the two lines of name it always reserves room for, and its facts. */
 @Composable
 private fun DenseTileSkeleton(shimmer: Shimmer, modifier: Modifier = Modifier) {
