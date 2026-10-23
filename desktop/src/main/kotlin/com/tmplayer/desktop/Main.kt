@@ -148,8 +148,14 @@ fun main(args: Array<String>) {
             (Runtime.getRuntime().maxMemory() / 6).coerceIn(64L shl 20, 256L shl 20).toInt(),
         )
         Background.scope.launch { settings.lighterPictures.collect { com.tmplayer.data.Thumbnails.light = it } }
-        // The stream warm-up stays out of Low storage mode ([com.tmplayer.player.StreamWarmup]).
-        Background.scope.launch { settings.lowStorageMode.collect { low -> com.tmplayer.player.StreamWarmup.allowed = { !low } } }
+        // In Low storage mode the stream warm-up brings the head and the index only
+        // ([com.tmplayer.player.StreamWarmup]). Allowed once the setting is known.
+        Background.scope.launch {
+            settings.lowStorageMode.collect { low ->
+                com.tmplayer.player.StreamWarmup.lowStorage = { low }
+                com.tmplayer.player.StreamWarmup.allowed = { true }
+            }
+        }
         Background.scope.launch { settings.reduceMotion.collect { com.tmplayer.ui.theme.Motion.reduced = it } }
         // `-Dtmplayer.lowend=true`: the low-end verdict, short of storage, for checking the card and the step.
         if (System.getProperty("tmplayer.lowend") == "true") {
