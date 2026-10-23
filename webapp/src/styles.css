@@ -11,7 +11,7 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
+  :root:not([data-theme="dark"]):not([data-theme="black"]) {
     --bg: #f6f6fa;
     --surface: #ffffff;
     --surface-2: #eceef3;
@@ -24,6 +24,19 @@
     color-scheme: light;
   }
 }
+:root[data-theme="light"] {
+  --bg: #f6f6fa;
+  --surface: #ffffff;
+  --surface-2: #eceef3;
+  --fg: #15161c;
+  --muted: #5c5e6c;
+  --accent: #00677f;
+  --on-accent: #ffffff;
+  --error: #ba1a1a;
+  --line: #dcdee6;
+  color-scheme: light;
+}
+:root[data-theme="black"] { --bg: #000; --surface: #0e0f13; --surface-2: #181a20; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
 body {
@@ -67,18 +80,23 @@ input:not([type=range]):focus { border-color: var(--accent); }
 .pick header { display: flex; align-items: center; gap: 16px; padding: 4px 0 12px; }
 .brand { font-weight: 700; font-size: 18px; }
 .tabs { display: flex; gap: 4px; flex: 1; }
-.tabs button { background: none; border: 0; padding: 8px 12px; border-radius: 999px; color: var(--muted); }
-.tabs button.on { background: var(--surface-2); color: var(--fg); }
+.tabs a { padding: 8px 12px; border-radius: 999px; color: var(--muted); text-decoration: none; }
+.tabs a.on { background: var(--surface-2); color: var(--fg); }
 .search { margin-bottom: 12px; }
 .videos, .chats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.video { display: flex; gap: 12px; align-items: center; width: 100%; text-align: start; background: none; border: 0; padding: 8px; border-radius: 12px; }
-.video:hover, .video:focus-visible, .chats button:hover { background: var(--surface); }
+.video { color: inherit; text-decoration: none; display: flex; gap: 12px; align-items: center; width: 100%; text-align: start; background: none; border: 0; padding: 8px; border-radius: 12px; }
+.video:hover, .video:focus-visible, .chats a:hover { background: var(--surface); }
 .thumb { flex: none; width: 128px; aspect-ratio: 16 / 9; border-radius: 8px; background: var(--surface-2); overflow: hidden; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; animation: fade 200ms ease-out; }
 @keyframes fade { from { opacity: 0; } }
 .meta { min-width: 0; }
 .name { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.chats button { width: 100%; text-align: start; background: none; border: 0; padding: 12px; border-radius: 10px; }
+.chats a { display: block; color: inherit; text-decoration: none; padding: 12px; border-radius: 10px; }
+a.link { color: var(--accent); text-decoration: none; display: inline-block; padding: 8px 0; }
+.settings { display: flex; flex-direction: column; align-items: start; gap: 14px; }
+.settings fieldset { border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 16px; padding: 10px 16px 14px; }
+.settings label { display: flex; gap: 6px; align-items: center; }
+.settings p { margin: 0; }
 .pick h2 { margin: 4px 0 12px; font-size: 20px; }
 
 /* Player */

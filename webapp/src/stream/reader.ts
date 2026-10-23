@@ -1,5 +1,4 @@
-import type { tl } from '@mtcute/web'
-import { tg } from '../tg/client'
+import { api, call } from '../tg/rpc'
 
 const KiB = 1024
 const MiB = 1024 * KiB
@@ -42,8 +41,7 @@ export class TgFile {
     received = 0
 
     constructor(
-        private location: tl.TypeInputFileLocation,
-        private dcId: number,
+        readonly key: string,
         readonly size: number,
         durationSec: number,
     ) {
@@ -165,17 +163,11 @@ export class TgFile {
 
     private async fetch(job: Job) {
         const offset = job.index * this.chunk
-        const limit = Math.min(this.chunk, this.size - offset)
         const startedAt = performance.now()
         for (let attempt = 0; ; attempt++) {
             try {
                 // One aligned request per chunk; Telegram returns fewer bytes for the file's tail.
-                const res = await tg.call(
-                    { _: 'upload.getFile', location: this.location, offset, limit: this.chunk },
-                    { dcId: this.dcId, kind: 'download', abortSignal: job.abort.signal, floodSleepThreshold: 30 },
-                )
-                if (res._ !== 'upload.file') throw new Error('Telegram sent a CDN redirect, which browsers cannot follow.')
-                const out = res.bytes.length > limit ? res.bytes.subarray(0, limit) : res.bytes
+                const out = new Uint8Array(await call('chunk', [this.key, offset, this.chunk], { signal: job.abort.signal }))
                 if (location.hostname === 'localhost') console.debug('[read]', job.index, job.urgent ? 'wait' : 'ahead', Math.round(performance.now() - startedAt), 'ms')
                 const at = out.length
                 this.received += at
@@ -184,12 +176,7 @@ export class TgFile {
                 job.resolve(this.cache.get(job.index) ?? out)
                 break
             } catch (e) {
-                const migrate = /^FILE_MIGRATE_(\d+)$/.exec((e as { text?: string }).text ?? '')
-                if (migrate) {
-                    this.dcId = Number(migrate[1])
-                    continue
-                }
-                if (job.abort.signal.aborted || this.closed || attempt >= 3) {
+                if (job.abort.signal.aborted || this.closed || attempt >= 3 || (e as Error).message === 'gone') {
                     this.jobs.delete(job.index)
                     job.reject(e)
                     break
@@ -229,8 +216,6 @@ const warm = new Map<string, { file: TgFile; timer: number }>()
 
 export interface FileRef {
     key: string
-    location: tl.TypeInputFileLocation
-    dcId: number
     size: number
     duration: number
 }
@@ -243,7 +228,7 @@ export function warmFile(ref: FileRef) {
         existing.timer = window.setTimeout(() => dropWarm(ref.key), 60_000)
         return
     }
-    const file = new TgFile(ref.location, ref.dcId, ref.size, ref.duration)
+    const file = new TgFile(ref.key, ref.size, ref.duration)
     file.wantAhead = false
     file.warmUp()
     warm.set(ref.key, { file, timer: window.setTimeout(() => dropWarm(ref.key), 60_000) })
@@ -263,21 +248,13 @@ export function openFile(ref: FileRef): TgFile {
         w.file.wantAhead = true
         return w.file
     }
-    return new TgFile(ref.location, ref.dcId, ref.size, ref.duration)
+    return new TgFile(ref.key, ref.size, ref.duration)
 }
 
-/**
- * Opens the connection to each data centre holding the listed files (one 4 KB read), so the first
- * Play does not pay for the handshake. Once per data centre per session; skipped with Save-Data.
- */
-const warmedDcs = new Set<number>()
+/** Connects to the data centres holding the listed files ahead of Play (see the worker's `warmDcs`); skipped with Save-Data. */
 export function warmDataCentres(refs: FileRef[]) {
     if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return
-    for (const ref of refs) {
-        if (warmedDcs.has(ref.dcId)) continue
-        warmedDcs.add(ref.dcId)
-        tg.call({ _: 'upload.getFile', location: ref.location, offset: 0, limit: 4096 }, { dcId: ref.dcId, kind: 'download' }).catch(() => warmedDcs.delete(ref.dcId))
-    }
+    api.warmDcs(refs.map((r) => r.key)).catch(() => {})
 }
 
 function evict() {

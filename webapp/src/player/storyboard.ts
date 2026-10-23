@@ -1,8 +1,8 @@
 import { TgFile } from '../stream/reader'
-import type { FileLoc, Storyboard } from '../tg/media'
+import type { FileRef, Storyboard } from '../tg/types'
 
-async function readWhole(f: FileLoc): Promise<Uint8Array> {
-    const file = new TgFile(f.location, f.dcId, f.size, 0)
+async function readWhole(f: FileRef): Promise<Uint8Array> {
+    const file = new TgFile(f.key, f.size, 0)
     file.wantAhead = false
     try {
         return await file.read(0, f.size)

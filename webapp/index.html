@@ -10,7 +10,11 @@
   <style>
     html,body{margin:0;height:100%;background:#0e0f13;color:#eceef3;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
     #boot{display:grid;place-items:center;height:100%;opacity:.6}
+    @media (prefers-color-scheme:light){html:not([data-theme=dark]):not([data-theme=black]) body{background:#f6f6fa;color:#15161c}}
+    html[data-theme=light] body{background:#f6f6fa;color:#15161c}
+    html[data-theme=black] body{background:#000}
   </style>
+  <script>try{var t=localStorage.getItem('tmplayer-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
 <body>
   <div id="app"><div id="boot">TMPlayer</div></div>

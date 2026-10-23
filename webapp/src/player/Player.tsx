@@ -2,26 +2,9 @@ import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import type { InputAudioTrack } from 'mediabunny'
 import { openFile, streams } from '../stream/reader'
 import { nativeEngine, probe, RemuxEngine, Unplayable, type Engine, type Probe } from './engines'
-import { errorText } from '../tg/client'
-import type { VideoItem } from '../screens/Pick'
-
-const RESUME_KEY = 'resume:'
-
-function loadResume(key: string): number {
-    try {
-        return Number(localStorage.getItem(RESUME_KEY + key)) || 0
-    } catch {
-        return 0
-    }
-}
-
-function saveResume(key: string, t: number, duration: number) {
-    try {
-        // Near the end counts as watched: next time starts from the beginning.
-        if (duration > 0 && t > duration - 30) localStorage.removeItem(RESUME_KEY + key)
-        else if (t > 10) localStorage.setItem(RESUME_KEY + key, String(Math.floor(t)))
-    } catch {}
-}
+import { errorText } from '../tg/rpc'
+import { getResume, saveResume as storeResume } from '../store'
+import type { VideoItem } from '../tg/types'
 
 export function clock(s: number): string {
     if (!isFinite(s) || s < 0) s = 0
@@ -57,11 +40,8 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
     const [scrub, setScrub] = createSignal<number | null>(null)
     const [switchable, setSwitchable] = createSignal(false)
 
-    const resumeAt = (() => {
-        const t = loadResume(item.key)
-        // A few seconds back, so the scene is recognised.
-        return t > 10 ? Math.max(0, t - 5) : 0
-    })()
+    // Near the end counts as watched (the store drops the position): next time starts from the beginning.
+    const saveResume = (t: number, length: number) => storeResume({ chatId: item.chatId, messageId: item.messageId, position: t, length })
 
     let hideTimer = 0
     const poke = () => {
@@ -74,6 +54,9 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
 
     const start = async () => {
         try {
+            const left = (await getResume(item.chatId, item.messageId))?.position ?? 0
+            // A few seconds back, so the scene is recognised.
+            const resumeAt = left > 10 ? Math.max(0, left - 5) : 0
             info = await probe(file, item.duration)
             if (info.duration > 0) setDuration(info.duration)
             setAudios(info.audios)
@@ -131,7 +114,7 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
     onMount(() => {
         start()
         poke()
-        saveTimer = window.setInterval(() => saveResume(item.key, video.currentTime, duration()), 10_000)
+        saveTimer = window.setInterval(() => saveResume(video.currentTime, duration()), 10_000)
         if ('mediaSession' in navigator) {
             navigator.mediaSession.metadata = new MediaMetadata({ title: item.title, artist: item.chat })
             navigator.mediaSession.setActionHandler('seekbackward', () => seekBy(-10))
@@ -143,7 +126,7 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
     })
 
     onCleanup(() => {
-        saveResume(item.key, video.currentTime, duration())
+        saveResume(video.currentTime, duration())
         clearInterval(saveTimer)
         clearTimeout(hideTimer)
         clearTimeout(pauseTimer)
@@ -231,7 +214,7 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
                 }}
                 onPause={() => {
                     sync()
-                    saveResume(item.key, video.currentTime, duration())
+                    saveResume(video.currentTime, duration())
                     setShown(true)
                     // Paused for a minute: stop reading ahead.
                     pauseTimer = window.setTimeout(() => (file.wantAhead = false), 60_000)
@@ -248,7 +231,7 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
                 onCanPlay={() => setWaiting(false)}
                 onSeeked={() => setWaiting(video.readyState < 3)}
                 onError={onVideoError}
-                onEnded={() => saveResume(item.key, duration(), duration())}
+                onEnded={() => saveResume(duration(), duration())}
                 onClick={toggle}
                 onDblClick={fullscreen}
             />

@@ -1,12 +1,15 @@
 import { createSignal, Match, onCleanup, onMount, Show, Switch } from 'solid-js'
 import { renderSVG } from 'uqr'
-import type { User } from '@mtcute/web'
-import { errorText, tg } from '../tg/client'
+import { api, call, errorText } from '../tg/rpc'
+import { setMe } from '../session'
+import type { Me, QrEvent } from '../tg/types'
 
 type Step = 'qr' | 'phone' | 'code' | 'password'
 
 /** Sign in: the QR code first (scan it with Telegram on the phone), or a phone number and code. */
-export function SignIn(props: { onDone: (user: User) => void }) {
+export function SignIn() {
+    // The shell sees the user and leaves this page for the one asked for.
+    const done = (user: Me) => setMe(user)
     const [step, setStep] = createSignal<Step>('qr')
     const [qr, setQr] = createSignal<string | null>(null)
     const [scanned, setScanned] = createSignal(false)
@@ -28,16 +31,17 @@ export function SignIn(props: { onDone: (user: User) => void }) {
         setQr(null)
         setScanned(false)
         setError(null)
-        tg.signInQr({
-            abortSignal: abort.signal,
-            onUrlUpdated: (url, expires) => (console.debug('[qr] new code until', expires.toISOString()), setQr(renderSVG(url, { pixelSize: 6, border: 2, whiteColor: '#fff', blackColor: '#0e0f13' }))),
-            onQrScanned: () => (console.debug('[qr] scanned'), setScanned(true)),
-            password: () => askPassword(),
-            invalidPasswordCallback: () => {
-                setError('That password is not right.')
+        call('signInQr', [], {
+            signal: abort.signal,
+            onEvent: (data) => {
+                const e = data as QrEvent
+                if (e.kind === 'url') setQr(renderSVG(e.url, { pixelSize: 6, border: 2, whiteColor: '#fff', blackColor: '#0e0f13' }))
+                else if (e.kind === 'scanned') setScanned(true)
+                else if (e.kind === 'password') return askPassword(e.hint)
+                else if (e.kind === 'badPassword') setError('That password is not right.')
             },
         })
-            .then(props.onDone)
+            .then(done)
             .catch((e) => {
                 if (abort.signal.aborted) return
                 console.error('[qr]', e)
@@ -45,8 +49,8 @@ export function SignIn(props: { onDone: (user: User) => void }) {
             })
     }
 
-    const askPassword = async () => {
-        setHint(await tg.getPasswordHint().catch(() => null))
+    const askPassword = (h: string | null) => {
+        setHint(h)
         setStep('password')
         setBusy(false)
         return new Promise<string>((resolve) => (passwordWaiter = resolve))
@@ -73,12 +77,12 @@ export function SignIn(props: { onDone: (user: User) => void }) {
         setBusy(true)
         setError(null)
         try {
-            const sent = await tg.sendCode({ phone: number })
-            if ('phoneCodeHash' in sent) {
-                codeHash = sent.phoneCodeHash
+            const sent = await api.sendCode(number)
+            if ('hash' in sent) {
+                codeHash = sent.hash
                 setStep('code')
             } else {
-                props.onDone(sent as User)
+                done(sent.me)
             }
         } catch (err) {
             setError(errorText(err))
@@ -92,10 +96,10 @@ export function SignIn(props: { onDone: (user: User) => void }) {
         setBusy(true)
         setError(null)
         try {
-            props.onDone(await tg.signIn({ phone: phone().replace(/[^\d+]/g, ''), phoneCodeHash: codeHash, phoneCode: code().trim() }))
+            done(await api.signIn(phone().replace(/[^\d+]/g, ''), codeHash, code().trim()))
         } catch (err) {
             if (errorText(err).includes('SESSION_PASSWORD_NEEDED')) {
-                setHint(await tg.getPasswordHint().catch(() => null))
+                setHint(await api.passwordHint())
                 setStep('password')
             } else {
                 setError(errorText(err) === 'PHONE_CODE_INVALID' ? 'That code is not right.' : errorText(err))
@@ -118,7 +122,7 @@ export function SignIn(props: { onDone: (user: User) => void }) {
             return
         }
         try {
-            props.onDone(await tg.checkPassword(password()))
+            done(await api.checkPassword(password()))
         } catch (err) {
             setError(errorText(err) === 'PASSWORD_HASH_INVALID' ? 'That password is not right.' : errorText(err))
         } finally {
