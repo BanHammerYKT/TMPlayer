@@ -77,7 +77,13 @@ import kotlinx.coroutines.withContext
  *   The page stays open for it (the button turns into the download's own state where it is);
  *   only the hold menu closes, as it does for every line.
  * @param onRemoved a download was removed from here, so a tile's badge is out of date.
- * @param onOpenItem opens another video's detail in place of this one, for "More like this".
+ * @param onOpenItem opens another video's page over this one, for "More like this" and a show's
+ *   episodes; the host stacks it ([DetailBackStack]) so Back comes back here.
+ * @param onTurnTo turns this page to another copy of the same film, in place.
+ * @param onBack set while a page lies under this one: Back, Close and the lines that used to close
+ *   the page go back down to it. Null closes the page, as [onDismiss] does.
+ * @param returnTo the tile on this page the remote's focus goes back to, after Back from a video
+ *   opened by it.
  */
 @Composable
 internal fun MediaDetailOpened(
@@ -95,7 +101,12 @@ internal fun MediaDetailOpened(
     onOpenItem: ((MediaItem) -> Unit)? = null,
     asMenu: Boolean = false,
     onOpenDetails: (() -> Unit)? = null,
+    onTurnTo: ((MediaItem) -> Unit)? = onOpenItem,
+    onBack: (() -> Unit)? = null,
+    returnTo: DetailReturn? = null,
 ) {
+    // Done with this page: back to the one under it, or closed when there is none.
+    val leave: () -> Unit = onBack ?: onDismiss
     val s = LocalStrings.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -147,9 +158,9 @@ internal fun MediaDetailOpened(
     // so the page, its facts and Play all speak of the same file. Settled by the time it has run
     // once: the copy it turns to picks itself again.
     androidx.compose.runtime.LaunchedEffect(item.id) {
-        if (item.versions.size <= 1 || onOpenItem == null) return@LaunchedEffect
+        if (item.versions.size <= 1 || onTurnTo == null) return@LaunchedEffect
         val pick = runCatching { settings.copyToPlay(item) }.getOrNull() ?: return@LaunchedEffect
-        if (pick.id != item.id) onOpenItem(pick)
+        if (pick.id != item.id) onTurnTo(pick)
     }
     var confirmingRemove by remember { mutableStateOf(false) }
     // The prompt stays up until the file has gone, and a second press on Remove meanwhile deleted
@@ -168,7 +179,8 @@ internal fun MediaDetailOpened(
                     val removed = record != null && LocalDownloads.delete(settings, record)
                     com.tmplayer.ui.components.showMessage(context, if (removed) s.gridRemovedDownload else s.gridRemoveDownloadFailed)
                     onRemoved()
-                    onDismiss()
+                    // The hold menu is gone already; the page goes, back to the one under it.
+                    if (asMenu) onDismiss() else leave()
                 }
             },
             // Keep it is a change of mind, not a way out: the page comes back, where it was
@@ -194,7 +206,7 @@ internal fun MediaDetailOpened(
                 App.backgroundScope.launch {
                     runCatching { settings.correct(com.tmplayer.data.VideoCorrections.filesOf(item)) { it.copy(title = text.trim().ifEmpty { null }) } }
                 }
-                onDismiss()
+                leave()
             },
             // Backing out of the name leaves the page as it was, rather than closing it too.
             onDismiss = { if (asMenu) onDismiss() else renaming = false },
@@ -297,9 +309,9 @@ internal fun MediaDetailOpened(
             // On the page it only says how things stand; the copy that is kept opens from it.
             DetailAction.InDownloads -> when {
                 asMenu -> onDismiss
-                kept.copy != null && onOpenItem != null -> { {
+                kept.copy != null && onTurnTo != null -> { {
                     val copy = kept.copy
-                    if (copy != null) scope.launch { runCatching { settings.setCopyPick(copy) }; onOpenItem(copy) }
+                    if (copy != null) scope.launch { runCatching { settings.setCopyPick(copy) }; onTurnTo(copy) }
                 } }
                 else -> { {} }
             }
@@ -318,12 +330,12 @@ internal fun MediaDetailOpened(
             DetailAction.SplitCopy, DetailAction.JoinCopies -> { {
                 val apart = action == DetailAction.SplitCopy
                 App.backgroundScope.launch { runCatching { settings.correct(listOf(item)) { it.copy(separate = apart) } } }
-                onDismiss()
+                leave()
             } }
             DetailAction.WrongMatch, DetailAction.UseMatch -> { {
                 val wrong = action == DetailAction.WrongMatch
                 App.backgroundScope.launch { runCatching { settings.correct(com.tmplayer.data.VideoCorrections.filesOf(item)) { it.copy(wrongMatch = wrong) } } }
-                onDismiss()
+                leave()
             } }
             DetailAction.Rename -> { { renaming = true } }
             DetailAction.CommentVideos -> { { commentsOpen = true } }
@@ -355,7 +367,7 @@ internal fun MediaDetailOpened(
             // Kept already: said, dimmed, and pressing it does nothing (it stays reachable, so the
             // remote's focus stays on it once Download has turned into it). Another copy that is
             // kept is the exception, being a way to that copy.
-            action == DetailAction.InDownloads && !asMenu && !(kept.copy != null && onOpenItem != null) ->
+            action == DetailAction.InDownloads && !asMenu && !(kept.copy != null && onTurnTo != null) ->
                 detailRow(action, s, watched, chatTitle, run).copy(label = s.downloadsDownloaded, enabled = false)
             else -> detailRow(action, s, watched, chatTitle, run, free = free)
         }
@@ -369,11 +381,11 @@ internal fun MediaDetailOpened(
             .collectAsStateWithLifecycle(initialValue = emptyList())
         val progress by remember(settings) { settings.watchProgress }.collectAsStateWithLifecycle(initialValue = emptyMap())
         // Remembered for the video before the page turns, or the turn would pick the old copy again.
-        val onPickCopy: ((MediaItem) -> Unit)? = onOpenItem?.let { open ->
+        val onPickCopy: ((MediaItem) -> Unit)? = onTurnTo?.let { open ->
             { copy: MediaItem -> scope.launch { runCatching { settings.setCopyPick(copy) }; open(copy) }; Unit }
         }
         val started: (MediaItem) -> Boolean = { SettingsStore.progressKey(it.chatId, it.messageId) in progress }
-        DetailScreen(item, chatTitle, watched, finished, rows, onDismiss, onOpenItem, bookmarks, onPickCopy, started) { mark ->
+        DetailScreen(item, chatTitle, watched, finished, rows, onDismiss, onBack, returnTo, onOpenItem, bookmarks, onPickCopy, started) { mark ->
             // The player takes the position on opening this video, in place of its resume point.
             BookmarkJump.request(item.chatId, item.messageId, mark.positionMs)
             // The page stays under the player, as it does for Play.
@@ -457,6 +469,8 @@ private fun DetailScreen(
     finished: Boolean,
     rows: List<DetailRow>,
     onDismiss: () -> Unit,
+    onBack: (() -> Unit)?,
+    returnTo: DetailReturn?,
     onOpenItem: ((MediaItem) -> Unit)?,
     bookmarks: List<Bookmark>,
     onPickCopy: ((MediaItem) -> Unit)?,
@@ -467,21 +481,26 @@ private fun DetailScreen(
     val first = remember { FocusRequester() }
     // On a phone the page grows out of the tile that was tapped, and folds back towards it.
     val motion = com.tmplayer.ui.components.rememberPageMotion(onDismiss)
+    // With a page under this one, Back turns straight to it, in the same window: the fold back
+    // towards the tile is for leaving the last page.
+    val back = onBack ?: motion.close
     Dialog(
-        onDismissRequest = motion.close,
+        onDismissRequest = back,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
         motion.Frame {
         androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
-        // Keyed by the video, so one opened from "More like this" starts at its top.
+        // Keyed by the video, so one opened from "More like this" starts at its top, and the one
+        // Back comes down to starts afresh, its focus on the tile it was left by.
         androidx.compose.runtime.key(item.id) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalDetailReturn provides returnTo) {
             MediaDetailScreen(
                 item = item,
                 chatTitle = chatTitle,
                 watched = watched,
                 finished = finished,
                 rows = rows,
-                onClose = motion.close,
+                onClose = back,
                 modifier = if (touch) Modifier else Modifier.ignoreStrayRelease(),
                 firstAction = if (touch) null else first,
                 onOpenItem = onOpenItem,
@@ -493,6 +512,7 @@ private fun DetailScreen(
                 // on a tablet: picked here, Play then goes straight to the TV.
                 topEndAction = if (touch) ({ com.tmplayer.cast.CastPageButton() }) else null,
             )
+            }
         }
         // Over the page, which is a window of its own above the app's.
         TopMessageHost()

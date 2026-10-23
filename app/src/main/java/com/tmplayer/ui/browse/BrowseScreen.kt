@@ -358,8 +358,9 @@ internal fun BrowseScreen(
     var confirmClearHistory by remember { mutableStateOf(false) }
     var confirmClearWatched by remember { mutableStateOf(false) }
     var confirmClearFavorites by remember { mutableStateOf(false) }
-    // The video whose detail panel is open, with its chat's name, from Home or the search.
-    var detail by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }
+    // The video whose detail panel is open, with its chat's name, from Home or the search, over
+    // the pages "More like this" was taken from, so Back walks back through them.
+    val details = remember { DetailBackStack<Pair<MediaItem, String>>({ it.first }) }
     // The search across every chat (CP73): the phone's search page and the television's.
     val search: GlobalSearchViewModel = viewModel(
         key = "global-search",
@@ -386,7 +387,7 @@ internal fun BrowseScreen(
     // A hold, the info key or a right click: the quick menu, which leads to the page by Details.
     var held by remember { mutableStateOf<Pair<MediaItem, String>?>(null) }
     val holdMedia: (MediaItem, String) -> Unit = { item, title -> held = item to title }
-    val showDetail: (MediaItem, String) -> Unit = { item, title -> detail = item to title }
+    val showDetail: (MediaItem, String) -> Unit = { item, title -> details.open(item to title) }
     // A tap or OK on a video opens its page first, as a streaming app's title does, unless
     // Settings says to play at once; the page is then still a hold and Details away.
     val detailFirst by remember(panelContext) { SettingsStore(panelContext).detailFirst }.collectAsState(initial = true)
@@ -778,10 +779,12 @@ internal fun BrowseScreen(
                 onOpenChat = chatsNow.firstOrNull { it.id == item.chatId }?.let { chat -> { onOpenChat(chat) } },
                 onDismiss = { held = null },
                 asMenu = true,
-                onOpenDetails = { detail = item to title },
+                onOpenDetails = { details.open(item to title) },
             )
         }
-        detail?.let { (item, title) ->
+        details.top?.let { entry ->
+            val (item, title) = entry.page
+            fun titled(other: MediaItem) = other to (chatsNow.firstOrNull { it.id == other.chatId }?.title ?: "")
             MediaDetailOpened(
                 item = item,
                 chatTitle = title,
@@ -795,8 +798,11 @@ internal fun BrowseScreen(
                     }
                 },
                 onOpenChat = chatsNow.firstOrNull { it.id == item.chatId }?.let { chat -> { onOpenChat(chat) } },
-                onDismiss = { detail = null },
-                onOpenItem = { other -> detail = other to (chatsNow.firstOrNull { it.id == other.chatId }?.title ?: "") },
+                onDismiss = { details.clear() },
+                onOpenItem = { other -> details.push(titled(other)) },
+                onTurnTo = { other -> details.turn(titled(other)) },
+                onBack = if (details.canGoBack) ({ details.back() }) else null,
+                returnTo = entry.returnTo,
             )
         }
     }

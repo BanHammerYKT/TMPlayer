@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.unit.Dp
 import com.tmplayer.ui.theme.Tone
+import com.tmplayer.ui.browse.tookFocus
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
@@ -114,7 +115,7 @@ fun BoxScope.DetailPaneHost(state: ShellState) {
             Modifier
                 .fillMaxSize()
                 .background(FloatingTone.scrim)
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.closeDetail() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { state.closeAllDetails() },
         )
     }
     BoxWithConstraints(Modifier.matchParentSize()) {
@@ -209,6 +210,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
         value = withContext(Dispatchers.IO) { DiskInfo.of(DesktopPaths.downloadsDir).freeBytes }
     }
     val first = remember(item.id) { FocusRequester() }
+    val back = state.detailReturn
     val bookmarks by remember(item.chatId, item.messageId) {
         state.bookmarks?.bookmarks(item.chatId, item.messageId) ?: kotlinx.coroutines.flow.flowOf(emptyList())
     }.collectAsState(initial = emptyList())
@@ -391,7 +393,7 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
     Box(Modifier.fillMaxSize()) {
         // A film posted more than once opens on the copy that would play, and a copy chosen from
         // its list is remembered for the video before the pane turns to it.
-        fun turnTo(copy: MediaItem) = state.openDetail(
+        fun turnTo(copy: MediaItem) = state.turnDetail(
             DetailRequest(copy, state.chatTitleOf(copy.chatId).ifBlank { request.chatTitle }, request.outsideChat, request.selectThis, request.onClosed),
         )
         LaunchedEffect(item.id) {
@@ -399,8 +401,10 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
             val pick = runCatching { state.settings.copyToPlay(item) }.getOrNull() ?: return@LaunchedEffect
             if (pick.id != item.id) turnTo(pick)
         }
-        // Keyed by the video, so "More like this" opening another starts it at the top.
+        // Keyed by the video, so "More like this" opening another starts it at the top, and the
+        // one Back comes down to starts afresh, its focus on the poster it was left by.
         androidx.compose.runtime.key(item.id) {
+            androidx.compose.runtime.CompositionLocalProvider(com.tmplayer.ui.browse.LocalDetailReturn provides back) {
             WideDetailPanel(
                 item = item,
                 chatTitle = title,
@@ -409,8 +413,9 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                 rows = rows,
                 onClose = { close() },
                 firstAction = first,
+                // Over this pane, so Esc or Back comes back to it.
                 onOpenItem = { other ->
-                    state.openDetail(DetailRequest(other, state.chatTitleOf(other.chatId), outsideChat = true, onClosed = request.onClosed))
+                    state.pushDetail(DetailRequest(other, state.chatTitleOf(other.chatId), outsideChat = true, onClosed = request.onClosed))
                 },
                 bookmarks = bookmarks,
                 // The player takes the position on opening this video, in place of its resume point.
@@ -427,11 +432,14 @@ private fun DetailPane(state: ShellState, request: DetailRequest) {
                 },
                 copyStarted = { SettingsStore.progressKey(it.chatId, it.messageId) in progress },
             )
+            }
         }
     }
     // Play takes focus once it is placed: the sheet lays its page out to its own size, so Play
-    // is composed a frame after this effect starts, and a request before then is lost.
+    // is composed a frame after this effect starts, and a request before then is lost. Back from
+    // a video opened by "More like this" leaves it to the poster that opened it.
     LaunchedEffect(item.id) {
+        if (back.tookFocus()) return@LaunchedEffect
         repeat(FOCUS_TRIES) {
             androidx.compose.runtime.withFrameNanos { }
             if (runCatching { first.requestFocus() }.isSuccess) return@LaunchedEffect

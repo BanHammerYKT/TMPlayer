@@ -350,8 +350,11 @@ private fun CinemaLayout(page: DetailPage, holds: Holds, height: Dp) {
     }
     // Focus on the first action shows the first screen whole (see revealFromTop); the return to
     // the top once it has settled stays as a guard for a picture or a title that arrives late
-    // and changes the height under it.
+    // and changes the height under it. Back from a video opened from this page leaves both to the
+    // tile it was opened by, which takes the focus and shows its row (see DetailBackStack).
+    val back = LocalDetailReturn.current
     LaunchedEffect(page.item.id) {
+        if (back.tookFocus()) return@LaunchedEffect
         runCatching { page.firstAction?.requestFocus() }
         kotlinx.coroutines.delay(FOCUS_SETTLE_MS)
         scroll.scrollTo(0)
