@@ -2525,7 +2525,24 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun buildPlayer(client: TdlClient): ExoPlayer {
         // Hardware decoders first; NextLib's FFmpeg renderers pick up the audio codecs a TV stick
         // has no silicon for: DTS and TrueHD tracks are common in video remuxes.
+        // Read once here, outside the factory, so nothing depends on when the factory's own
+        // constructor gets round to it.
+        val maskHdr10Plus = HevcHdr10PlusMasker.affectedDevice(android.os.Build.MANUFACTURER, android.os.Build.MODEL)
+        val fireTv = DeviceQuirks.isFireTv(this@PlayerActivity)
         val renderers = object : NextRenderersFactory(this@PlayerActivity) {
+            /**
+             * The stock codec adapters, except on the Fire TV sticks with the MediaTek MT8696
+             * decoder, where a Dolby Vision profile 8 decoder gets [Hdr10PlusMaskingCodecAdapterFactory]:
+             * a file that carries HDR10+ next to the Dolby Vision RPU plays as a black screen there
+             * otherwise. Wrapping the factory's adapters, not its renderers, keeps every renderer
+             * option Media3 and NextLib set. Elsewhere the HDR10+ layer can be what a screen without
+             * Dolby Vision shows, so it is left alone.
+             */
+            override fun getCodecAdapterFactory(): androidx.media3.exoplayer.mediacodec.MediaCodecAdapter.Factory {
+                val stock = super.getCodecAdapterFactory()
+                return if (maskHdr10Plus) Hdr10PlusMaskingCodecAdapterFactory(stock) else stock
+            }
+
             /**
              * The stock sink, plus the stereo fold described in [AudioDownmix].
              *
@@ -2609,8 +2626,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     .build()
                 // The provider goes to the AudioTrack output rather than to the sink itself, which
                 // is where Media3 1.11 moved it; otherwise this is the output the sink would build.
+                // On a Fire TV a bitstream track is held under its AudioFlinger's 2 MB line, see
+                // [PassthroughBufferCap]; elsewhere nothing has been seen refusing the larger size.
                 val output = AudioTrackAudioOutputProvider.Builder(context)
-                    .setAudioTrackBufferSizeProvider(audioBuffers)
+                    .setAudioTrackBufferSizeProvider(if (fireTv) PassthroughBufferCap(audioBuffers) else audioBuffers)
                     .build()
                 return DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(enableFloatOutput)
