@@ -240,7 +240,10 @@ object HomeRows {
         val shownCopies = resume.mapNotNullTo(HashSet()) { record -> copyKeyOf(record) }
         // And by the film's name and year, for a copy whose file name does not tie it to them.
         resume.mapNotNullTo(shownCopies) { record -> if (record.fileName != null) SameTitle.filmKey(record.toMediaItem()) else null }
-        distinct.forEach { record -> if (listOf(copyKeyOf(record), foldKeyOf(record)).any { it != null && it in shownCopies }) seen += keyOf(record.chatId, record.messageId) }
+        distinct.forEach { record ->
+            val copy = copyKeyOf(record)
+            if ((copy != null && copy in shownCopies) || foldKeyOf(record)?.let { it in shownCopies } == true) seen += keyOf(record.chatId, record.messageId)
+        }
         if (resume.isNotEmpty()) add(HomeRow.Continue(resume, everyResume.drop(LIMIT)))
         val inContinue = HashSet(seen)
 
@@ -416,8 +419,11 @@ object HomeRows {
     private fun markSeen(entries: List<ShelfEntry>, seen: MutableSet<String>) {
         entries.forEach { entry ->
             when (entry) {
-                is ShelfEntry.File -> (listOf(entry.item) + entry.item.versions).forEach { seen += keyOf(it.chatId, it.messageId) }
-                is ShelfEntry.Show -> entry.series.episodes.flatMap { it.copies }.forEach { seen += keyOf(it.chatId, it.messageId) }
+                is ShelfEntry.File -> {
+                    seen += entry.item.progressKey
+                    entry.item.versions.forEach { seen += it.progressKey }
+                }
+                is ShelfEntry.Show -> entry.series.episodes.forEach { episode -> episode.copies.forEach { seen += it.progressKey } }
             }
         }
     }
@@ -449,20 +455,31 @@ object HomeRows {
                     SameTitle.filmKey(item)?.let { it in continuing } == true
                 )
         fun episode(item: MediaItem): Boolean = SeriesShelf.episodeOf(item).episode != null
-        val fresh = items
-            .filterNot { item ->
-                val key = keyOf(item.chatId, item.messageId)
-                val partOfAShow = episode(item) && (key in inProgress || copyOfContinuing(item))
-                !partOfAShow && (key in seen || copyOfContinuing(item))
-            }
-            .distinctBy { it.id }
-            .sortedWith(compareByDescending<MediaItem> { it.date }.thenByDescending { it.messageId })
+        // One pass, each item's keys read once: Home runs this for every row on every build.
+        val fresh = ArrayList<MediaItem>(items.size)
+        val ids = HashSet<String>()
+        for (item in items) {
+            val key = item.progressKey
+            val copy = copyOfContinuing(item)
+            val partOfAShow = episode(item) && (key in inProgress || copy)
+            if (!partOfAShow && (key in seen || copy)) continue
+            if (ids.add(item.id)) fresh += item
+        }
+        fresh.sortWith(NEWEST_FIRST)
         // One tile per title in a row: copies the shelf did not fold, across chats or by their
         // online match, are folded here, the best copy leading ([SameTitle]).
         return SameTitle.dedupe(SeriesShelf.arrange(fresh))
             .filterNot { entry ->
-                entry is ShelfEntry.File && entry.item.let { keyOf(it.chatId, it.messageId) in inProgress || copyOfContinuing(it) }
+                entry is ShelfEntry.File && entry.item.let { it.progressKey in inProgress || copyOfContinuing(it) }
             }
+    }
+
+    /** Newest first, the later message first on the same second; compared without boxing either. */
+    private val NEWEST_FIRST = Comparator<MediaItem> { a, b ->
+        when {
+            a.date != b.date -> b.date.compareTo(a.date)
+            else -> b.messageId.compareTo(a.messageId)
+        }
     }
 
     /** A chat's videos that none of the row's tiles stands for, newest first: what See all adds. */
@@ -476,7 +493,7 @@ object HomeRows {
         }
         return items
             .filterNot { it.id in shown }
-            .sortedWith(compareByDescending<MediaItem> { it.date }.thenByDescending { it.messageId })
+            .sortedWith(NEWEST_FIRST)
     }
 
     /**
