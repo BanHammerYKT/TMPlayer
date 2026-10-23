@@ -168,7 +168,9 @@ fun SearchResultCard(
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AvatarStack(group.chatIds, chats, Modifier.weight(1f, fill = false))
-                if (group.copies.size > 1 && !group.isShow) CopiesChip(group.copies.size)
+                // Files, as the page counts its versions: the same file in two chats is one.
+                val files = remember(group.copies) { group.fileCount }
+                if (files > 1 && !group.isShow) CopiesChip(files)
                 if (group.copies.any { it.onDevice }) {
                     Icon(TmIcons.Download, contentDescription = s.searchOnDevice, tint = Tone.accent, modifier = Modifier.size(14.dp))
                 }

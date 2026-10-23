@@ -506,7 +506,8 @@ private fun videoFacts(page: DetailPage, year: Int?, s: Messages): List<Fact> {
     return listOfNotNull(
         year?.let { Fact(it.toString()) },
         item.durationSec.takeIf { it > 0 }?.let { Fact(s.formatter.duration(it.toLong())) },
-        facts.resolution?.let { Fact(it, chip = true) },
+        // As the copy under Play names it, so the badge and the copy line never disagree.
+        (com.tmplayer.data.VideoCopies.qualityLabel(item) ?: facts.resolution)?.let { Fact(it, chip = true) },
         item.sizeBytes.takeIf { it > 0 }?.let { Fact(com.tmplayer.data.SplitPieces.sizeFact(item, s.formatter.size(it))) },
         page.chatTitle.takeIf { it.isNotBlank() }?.let { Fact(it) },
         Fact(s.detailWatchedLine, accent = true).takeIf { page.finished },
