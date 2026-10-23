@@ -59,10 +59,9 @@ class BrandLoaderRenderTest {
 
     @Test
     fun `the mark stands still`() {
-        // One line, so nothing steps: the lines change on real time. Two frames well apart, after
-        // one that lets anything still loading (a font on a slow runner) arrive.
-        val oneLine = listOf(L.stateConnectingSession)
-        val still = scene(1366, 768, dark = true, lines = oneLine) { scene ->
+        // Two frames well apart, after one that lets anything still loading (a font on a slow
+        // runner) arrive.
+        val still = scene(1366, 768, dark = true) { scene ->
             frames(scene, listOf(700L))
             Thread.sleep(1_500)
             listOf(1_400L, 2_100L).map { scene.render(it * 1_000_000L).encodeToData(EncodedImageFormat.PNG)!!.bytes }
@@ -127,20 +126,15 @@ class BrandLoaderRenderTest {
         h: Int,
         dark: Boolean,
         sweepAt: Float? = null,
-        lines: List<String>? = null,
         block: (ImageComposeScene) -> T,
     ): T =
         ImageComposeScene(w, h, Density(1f)) {
-            TmMaterialTheme(dark = dark) { Loader(sweepAt, lines) }
+            TmMaterialTheme(dark = dark) { Loader(sweepAt) }
         }.use(block)
 
     @Composable
-    private fun Loader(sweepAt: Float?, lines: List<String>?) {
-        if (lines == null) {
-            BrandLoader(label = L.signinConnecting, sweepAt = sweepAt)
-        } else {
-            BrandLoader(label = L.signinConnecting, lines = lines, sweepAt = sweepAt)
-        }
+    private fun Loader(sweepAt: Float?) {
+        BrandLoader(label = L.signinConnecting, sweepAt = sweepAt)
     }
 
     private fun frames(scene: ImageComposeScene, millis: List<Long>): List<ByteArray> {

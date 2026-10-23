@@ -205,7 +205,6 @@ fun DesktopShell(
                         null
                     },
                     modifier = Modifier.windowDrag(),
-                    lines = emptyList(),
                 ) {
                     com.tmplayer.ui.connect.ConnectingHelp(
                         onOpenProxies = { com.tmplayer.ui.connect.ProxyScreenState.open = true },

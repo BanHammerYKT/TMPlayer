@@ -44,7 +44,8 @@ class ConnectHelpRenderTest {
     @Test
     fun `the connecting help draws, waiting and stalled`() {
         for (dark in listOf(true, false)) {
-            shot("connect-waiting-${theme(dark)}", 1366, 768, dark) { Loader(stalled = false) }
+            // Waiting is the spinner alone, a few dozen pixels at this sampling.
+            shot("connect-waiting-${theme(dark)}", 1366, 768, dark, least = 5) { Loader(stalled = false) }
             shot("connect-stalled-${theme(dark)}", 1366, 768, dark) { Loader(stalled = true) }
             shot("connect-stalled-small-${theme(dark)}", 960, 600, dark) { Loader(stalled = true, hint = ConnectHint.Vpn) }
         }
@@ -64,7 +65,7 @@ class ConnectHelpRenderTest {
 
     @Composable
     private fun Loader(stalled: Boolean, hint: ConnectHint = ConnectHint.MaybeBlocked) {
-        BrandLoader(label = L.signinConnecting, lines = emptyList(), sweepAt = 0.5f) {
+        BrandLoader(label = L.signinConnecting, sweepAt = 0.5f) {
             ConnectingHelpView(
                 status = connectStepLabel(ConnectStep.Connecting, s),
                 stalled = stalled,
@@ -78,7 +79,7 @@ class ConnectHelpRenderTest {
         }
     }
 
-    private fun shot(name: String, w: Int, h: Int, dark: Boolean, content: @Composable () -> Unit) {
+    private fun shot(name: String, w: Int, h: Int, dark: Boolean, least: Int = 50, content: @Composable () -> Unit) {
         val png = ImageComposeScene(w, h, Density(1f)) {
             TmMaterialTheme(dark = dark) { content() }
         }.use { scene ->
@@ -89,7 +90,7 @@ class ConnectHelpRenderTest {
         val ground = TmSchemes.of(dark).background.toArgb()
         var drawn = 0
         for (y in 0 until bitmap.height step 4) for (x in 0 until bitmap.width step 4) if (bitmap.getColor(x, y) != ground) drawn++
-        assertTrue("$name has something on it", drawn > 50)
+        assertTrue("$name has something on it", drawn > least)
         val out = System.getenv("TMPLAYER_SHOTS")?.takeIf { it.isNotBlank() } ?: return
         File(out).apply { mkdirs() }.resolve("$name.png").writeBytes(png)
     }

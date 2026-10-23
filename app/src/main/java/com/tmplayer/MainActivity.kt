@@ -1357,8 +1357,6 @@ private fun Root() {
             label = com.tmplayer.ui.auth.loaderLabel(shownAuth, LocalStrings.current)
                 ?: if (holdForHome) LocalStrings.current.loginGettingReady else null,
             modifier = Modifier.zIndex(1f),
-            // The second line is the live step, drawn by ConnectingHelp under it.
-            lines = emptyList(),
         ) {
             // What it is doing now, and past the long wait, why it may be stuck with Retry, a
             // proxy and the logs: the desktop's help, on the phone and the TV too.
