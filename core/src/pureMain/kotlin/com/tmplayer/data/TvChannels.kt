@@ -7,9 +7,10 @@ package com.tmplayer.data
  * A channel is a row of cards the launcher draws under the app's name; the app writes the cards
  * through the TV provider and the launcher reads them. The cards come from Home's rows as
  * [HomeRows] already built them, nothing is fetched for them alone:
- * - [Channel.Recent], the default channel: Home's "Recently added in starred chats". With a single
- *   starred chat, which has no such row ([HomeRows.RECENT_MIN_STARRED]), that chat's own row
- *   stands in. With none it is empty, and a launcher hides an empty channel.
+ * - [Channel.Recent], the default channel: the first few of Home's Recently added ([RECENT_LIMIT]),
+ *   drawn from the chats Home picks for itself ([HomeRows.homeChats]), so it fills with nothing
+ *   starred (user, 2026-10-23: it stayed empty without favourites). With no Recently added it is
+ *   empty, and a launcher hides an empty channel.
  * - [Channel.WatchLater] and [Channel.NewEpisodes], which the viewer can add from the launcher's
  *   own channel list: Home's rows of the same names.
  *
@@ -99,6 +100,9 @@ object TvChannels {
     /** Cards per channel: Home's own row length. */
     const val LIMIT = HomeRows.LIMIT
 
+    /** Cards in the default channel: a few of the newest, not a whole row (user, 2026-10-23). */
+    const val RECENT_LIMIT = 6
+
     private const val SEPARATOR = "\u001f"
 
     /**
@@ -108,7 +112,6 @@ object TvChannels {
      * Recently added settling is what says Home has loaded: it comes from a search, so by then the
      * stores Watch later and New episodes are drawn from have long been read.
      *
-     * @param starred how many chats are starred, which decides where Recently added comes from.
      * @param allowed the kids lock's chats, or null while it is off.
      * @param chatTitle a chat's name, for the line under a card.
      * @param progress where the viewer stopped in a video, when they did.
@@ -116,15 +119,14 @@ object TvChannels {
      */
     fun plan(
         rows: List<HomeRow>,
-        starred: Int,
         allowed: Set<Long>?,
         chatTitle: (Long) -> String,
         progress: (chatId: Long, messageId: Long) -> WatchPoint? = { _, _ -> null },
         art: Map<String, MediaItem> = emptyMap(),
     ): List<Program>? {
-        val recentEntries = recentEntries(rows, starred) ?: return null
+        val recentEntries = recentEntries(rows) ?: return null
         return buildList {
-            addAll(entries(Channel.Recent, recentEntries, chatTitle, progress))
+            addAll(entries(Channel.Recent, recentEntries, chatTitle, progress, RECENT_LIMIT))
             rows.filterIsInstance<HomeRow.WatchLater>().firstOrNull()?.let { row ->
                 addAll(watchLater(row.records, art, progress))
             }
@@ -135,17 +137,10 @@ object TvChannels {
     }
 
     /** Recently added's tiles, or null while they are loading. */
-    private fun recentEntries(rows: List<HomeRow>, starred: Int): List<ShelfEntry>? {
-        if (starred >= HomeRows.RECENT_MIN_STARRED) {
-            // Built as a placeholder while the search runs, and left out once it found nothing.
-            val row = rows.filterIsInstance<HomeRow.Recent>().firstOrNull() ?: return emptyList()
-            return if (row.loaded) row.entries else null
-        }
-        if (starred == 1) {
-            val row = rows.filterIsInstance<HomeRow.Chat>().firstOrNull() ?: return emptyList()
-            return if (row.loaded) row.entries else null
-        }
-        return emptyList()
+    private fun recentEntries(rows: List<HomeRow>): List<ShelfEntry>? {
+        // Built as a placeholder while the search runs, and left out once it found nothing.
+        val row = rows.filterIsInstance<HomeRow.Recent>().firstOrNull() ?: return emptyList()
+        return if (row.loaded) row.entries else null
     }
 
     private fun entries(
@@ -153,6 +148,7 @@ object TvChannels {
         entries: List<ShelfEntry>,
         chatTitle: (Long) -> String,
         progress: (Long, Long) -> WatchPoint?,
+        limit: Int = LIMIT,
     ): List<Program> {
         val saveable = entries.filter { entry ->
             when (entry) {
@@ -168,7 +164,7 @@ object TvChannels {
                 is ShelfEntry.Show -> true
             }
         }
-        val kept = titled.ifEmpty { saveable }.take(LIMIT)
+        val kept = titled.ifEmpty { saveable }.take(limit)
         return kept.mapIndexed { index, entry ->
             val weight = kept.size - index
             when (entry) {

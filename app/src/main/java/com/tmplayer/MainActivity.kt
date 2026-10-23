@@ -1646,7 +1646,6 @@ private fun Root() {
             model = homeViewModel,
             rows = homeRows,
             chats = chats,
-            favourites = favorites,
             watchProgress = watchProgress,
             signedIn = auth is AuthState.Ready,
             enabled = tvChannelsOn,

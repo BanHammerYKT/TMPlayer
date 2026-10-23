@@ -10,7 +10,6 @@ import com.tmplayer.App
 import com.tmplayer.data.ChatGate
 import com.tmplayer.data.ChatSummary
 import com.tmplayer.data.HomeRow
-import com.tmplayer.data.HomeRows
 import com.tmplayer.data.SettingsStore
 import com.tmplayer.data.TvChannels
 import com.tmplayer.data.TvChannelsPublisher
@@ -54,8 +53,10 @@ object HomeLaunch {
  * [TvChannels] for what goes in them, [TvChannelsPublisher] for how and when). Draws nothing, and
  * does nothing at all on a phone, a Fire TV or the promo build's fixture-only screens.
  *
- * - Asks Home for Recently added (or the single starred chat's row) as soon as the viewer is signed
- *   in, so the channel fills even when Home itself is not opened.
+ * - Asks Home for Recently added as soon as the viewer is signed in, so the channel fills even
+ *   when Home itself is not opened. Home picks its own chats, so nothing needs starring.
+ * - Waits for Home's rows to be built from an answer ([HomeViewModel.rowsSettled]): the empty rows
+ *   of a cold start would otherwise empty the channel until Home had loaded.
  * - Writes half a minute after the rows settle, so a Home filling row by row is one write, made
  *   after its pictures rather than among them.
  * - Takes every card out when the kids lock goes on, then puts back what the lock allows; empties the
@@ -68,7 +69,6 @@ fun TvHomeChannels(
     model: HomeViewModel,
     rows: List<HomeRow>,
     chats: List<ChatSummary>,
-    favourites: Set<Long>,
     watchProgress: Map<String, WatchPoint>,
     signedIn: Boolean,
     enabled: Boolean?,
@@ -78,7 +78,7 @@ fun TvHomeChannels(
     if (!supported) return
     val allowed by ChatGate.allowed.collectAsStateWithLifecycle()
     val art by model.art.collectAsStateWithLifecycle()
-    val starred = remember(chats, favourites) { HomeRows.favouriteChats(chats, favourites) }
+    val settled = model.rowsSettled
 
     // The last plan written, so the same cards are not written again; forgotten whenever the
     // channels are emptied, so they are filled again after.
@@ -92,15 +92,12 @@ fun TvHomeChannels(
         if (enabled == false) App.backgroundScope.launch { TvChannelsPublisher.clearPrograms(context) }
     }
 
-    // What the default channel is drawn from, asked for whether or not Home is on screen. Both are
-    // asked once per Home, so this costs nothing once Home has asked for itself.
-    val starredIds = remember(starred) { starred.map { it.id } }
-    LaunchedEffect(enabled, signedIn, starredIds) {
+    // What the default channel is drawn from, asked for whether or not Home is on screen: the
+    // search across chats, from which Home picks its chats and builds Recently added. Asked once
+    // per Home, so this costs nothing once Home has asked for itself.
+    LaunchedEffect(enabled, signedIn) {
         if (enabled != true || !signedIn) return@LaunchedEffect
-        // Home fills itself from the search across chats, which with one starred chat or none is
-        // where the default channel's videos come from too.
         model.requestRecent()
-        starredIds.singleOrNull()?.let(model::request)
     }
     // Watch later's records keep no picture; Home looks each one up for its tile, and so do the cards.
     val later = remember(rows) { rows.filterIsInstance<HomeRow.WatchLater>().firstOrNull()?.records.orEmpty() }
@@ -120,8 +117,8 @@ fun TvHomeChannels(
     // The plan is worked out off the main thread, and only once the rows have been still for
     // [SETTLE_MS]: worked out in composition it ran on every chat, picture and progress change,
     // all of them while Home was opening and its posters were being decoded.
-    LaunchedEffect(rows, starred.size, allowed, art, watchProgress, chats, enabled, signedIn) {
-        if (enabled != true || !signedIn) return@LaunchedEffect
+    LaunchedEffect(rows, settled, allowed, art, watchProgress, chats, enabled, signedIn) {
+        if (enabled != true || !signedIn || !settled) return@LaunchedEffect
         // Rows arrive one after another as Home fills; the write waits for them to settle.
         delay(SETTLE_MS)
         // Never while a video plays: the write uploads every card's picture to the launcher, and
@@ -136,7 +133,6 @@ fun TvHomeChannels(
                 val titles = chats.associate { it.id to it.title }
                 TvChannels.plan(
                     rows = rows,
-                    starred = starred.size,
                     allowed = allowed,
                     chatTitle = { titles[it].orEmpty() },
                     progress = { chat, message -> watchProgress[SettingsStore.progressKey(chat, message)] },

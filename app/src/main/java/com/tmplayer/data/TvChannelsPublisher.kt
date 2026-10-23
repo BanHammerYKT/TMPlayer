@@ -39,7 +39,7 @@ import java.security.MessageDigest
  * signed in TDLib, and TDLib lives in this process. A periodic background job would have to start
  * the process and open the Telegram session just to refresh a row of pictures, which a 1 GB stick
  * should not pay for. So the channels are refreshed when the app opens, whenever Home's rows change
- * while it runs (a post in a starred chat, a video saved for later), and after playback, which
+ * while it runs (a new post in one of Home's chats, a video saved for later), and after playback, which
  * changes Continue watching and with it Recently added.
  *
  * **Pictures.** A card's picture must be a URI the launcher's process can read. With the online
