@@ -358,7 +358,21 @@ internal fun HomePane(
         // (the carousel's Play, the first row): the television's default moved every focused item
         // to a fixed height, which scrolled Home down and back each time Play took the remote.
         val barPx = with(density) { TV_BAR_HEIGHT.toPx() }
-        val calm = remember(barPx) { calmVertical(barPx) }
+        // The first row under the carousel holds the list at its top rather than being brought to
+        // three tenths of the way down: that moved Home down a third of the screen on the first
+        // Down from Play, composing the rows it uncovered, and [keepCarousel] took it back up a frame
+        // later, one frame of 150 ms on the Mi TV (2026-10-23). Found by where the request lands:
+        // inside the first row's own place while the carousel is the list's first item.
+        val firstRowKey by androidx.compose.runtime.rememberUpdatedState(listed.firstOrNull()?.key.takeIf { carousel })
+        val calm = remember(barPx, listState) {
+            calmVertical(barPx) { offset, size ->
+                val key = firstRowKey ?: return@calmVertical null
+                if (listState.firstVisibleItemIndex != 0) return@calmVertical null
+                val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return@calmVertical null
+                if (offset < row.offset - 1f || offset + size > row.offset + row.size + 1f) return@calmVertical null
+                -listState.firstVisibleItemScrollOffset.toFloat()
+            }
+        }
         val platformSpec = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
         // The states every tile reads, collected once for Home rather than per tile ([LocalTileShared]).
         val tileShared = com.tmplayer.ui.components.rememberTileShared()
@@ -546,7 +560,10 @@ internal fun HomePane(
                         Modifier.onFocusChanged { state ->
                             if (state.hasFocus) scope.launch {
                                 withFrameNanos {}
-                                listState.scrollToItem(0)
+                                // Already whole at the top (the usual case, now that [calm] keeps it
+                                // there): no scroll, which would measure the list again for nothing.
+                                val atTop = listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+                                if (!atTop || listState.isScrollInProgress) listState.scrollToItem(0)
                             }
                         }
                     } else {
@@ -1450,7 +1467,11 @@ private const val STALE_REPEAT_MS = 80L
  * the bar, or below it is brought to three tenths of the way down, as the television does.
  */
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-private fun calmVertical(barPx: Float) = object : androidx.compose.foundation.gestures.BringIntoViewSpec {
+private fun calmVertical(
+    barPx: Float,
+    /** A distance of its own for a request (the first row under the carousel), or null for the band's. */
+    held: (offset: Float, size: Float) -> Float? = { _, _ -> null },
+) = object : androidx.compose.foundation.gestures.BringIntoViewSpec {
     // At once rather than slid: a slide down to the next row drew some seventeen frames on the
     // 1 GB stick, each 20 to 130 ms, so the page swam for half a second after every Up and Down.
     // The rows already move in one step ([AnchoredAtStart]); the page now does too.
@@ -1459,6 +1480,7 @@ private fun calmVertical(barPx: Float) = object : androidx.compose.foundation.ge
         androidx.compose.animation.core.snap()
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        held(offset, size)?.let { return it }
         val lead = containerSize * 0.3f
         return when {
             offset < barPx -> offset - lead

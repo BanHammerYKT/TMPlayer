@@ -153,44 +153,27 @@ internal fun TvFeaturedCarousel(
 
         val still = rememberReducedMotion() || Motion.reduced
         val auto = count > 1 && !still
-        var focusedIn by remember { mutableStateOf(false) }
-        val paused = focusedIn || !active
-        // Changes only when the pages stop for want of a key and when the next key comes.
-        val resting = idle?.resting == true
-        // The carousel coming back into view (the player closed, a sheet gone, the remote off it)
-        // counts as the viewer being here: the wait for a key starts again from now.
-        LaunchedEffect(paused, idle) { if (!paused) idle?.touched() }
-        // The time a page has stood, kept as a number rather than animated: nothing draws it, and
-        // an animation woke the main thread every frame of the seven seconds.
-        val spent = remember { longArrayOf(0L) }
-        var progressKey by remember { mutableStateOf<String?>(null) }
-        LaunchedEffect(currentKey, paused, auto, count, resting) {
-            // A new page starts its time from empty; a pause keeps it where it stopped.
-            if (progressKey != currentKey) {
-                spent[0] = 0L
-                progressKey = currentKey
-            }
-            if (!auto || paused || resting) return@LaunchedEffect
-            val began = System.currentTimeMillis()
-            try {
-                kotlinx.coroutines.delay((ADVANCE_MS - spent[0]).coerceAtLeast(0L))
-            } finally {
-                spent[0] += System.currentTimeMillis() - began
-            }
-            if (idle != null && idle.quietFor() >= IDLE_MS) {
-                // Nobody has pressed a key for a while: stay on this page, and give it a whole
-                // turn once a key starts the pages again.
-                spent[0] = 0L
-                idle.rest()
-                return@LaunchedEffect
-            }
-            // The page after the one up now, found in the pages as they are now: they may have
-            // refilled while this page stood.
-            val now = latest
-            if (now.isEmpty()) return@LaunchedEffect
-            val at = now.indexOfFirst { it.key == currentKey }
-            currentKey = now[(at + 1).mod(now.size)].key
-        }
+        // Whether the remote is on Play or Details. Read only by [CarouselTurns]: read here, the
+        // first Down from Play to the rows composed the whole carousel again, its page, its buttons
+        // and its dots, in the frame the remote moved (Mi TV, 2026-10-23).
+        val focusedIn = remember { mutableStateOf(false) }
+        CarouselTurns(
+            pageKey = currentKey,
+            focusedIn = focusedIn,
+            active = active,
+            auto = auto,
+            count = count,
+            idle = idle,
+            onTurn = {
+                // The page after the one up now, found in the pages as they are now: they may have
+                // refilled while this page stood.
+                val now = latest
+                if (now.isNotEmpty()) {
+                    val at = now.indexOfFirst { it.key == currentKey }
+                    currentKey = now[(at + 1).mod(now.size)].key
+                }
+            },
+        )
 
         // A page turns at once on a television: no two pages drawn together for a fade.
         Crossfade(targetState = pick, animationSpec = if (Motion.television) androidx.compose.animation.core.snap() else Motion.standard(), label = "tvFeatured", modifier = Modifier.matchParentSize()) { shown ->
@@ -219,7 +202,7 @@ internal fun TvFeaturedCarousel(
             Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = start, bottom = PAGE_PAD)
-                .onFocusChanged { focusedIn = it.hasFocus },
+                .onFocusChanged { focusedIn.value = it.hasFocus },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -259,6 +242,56 @@ internal fun TvFeaturedCarousel(
                 .align(Alignment.BottomEnd)
                 .padding(end = end, bottom = PAGE_PAD + (HERO_PILL_HEIGHT - TV_DOTS_HEIGHT) / 2),
         )
+    }
+}
+
+/**
+ * The carousel's clock: it turns the page every [ADVANCE_MS] while [active] and the remote is not
+ * on Play or Details ([focusedIn]), and stops once [idle] says nobody has pressed a key for a
+ * while. A composable of its own so the remote coming and going composes only this, not the page.
+ */
+@Composable
+private fun CarouselTurns(
+    pageKey: String,
+    focusedIn: androidx.compose.runtime.State<Boolean>,
+    active: Boolean,
+    auto: Boolean,
+    count: Int,
+    idle: HomeIdle?,
+    onTurn: () -> Unit,
+) {
+    val paused = focusedIn.value || !active
+    // Changes only when the pages stop for want of a key and when the next key comes.
+    val resting = idle?.resting == true
+    // The carousel coming back into view (the player closed, a sheet gone, the remote off it)
+    // counts as the viewer being here: the wait for a key starts again from now.
+    LaunchedEffect(paused, idle) { if (!paused) idle?.touched() }
+    // The time a page has stood, kept as a number rather than animated: nothing draws it, and
+    // an animation woke the main thread every frame of the seven seconds.
+    val spent = remember { longArrayOf(0L) }
+    val progressKey = remember { arrayOfNulls<String>(1) }
+    val turn by rememberUpdatedState(onTurn)
+    LaunchedEffect(pageKey, paused, auto, count, resting) {
+        // A new page starts its time from empty; a pause keeps it where it stopped.
+        if (progressKey[0] != pageKey) {
+            spent[0] = 0L
+            progressKey[0] = pageKey
+        }
+        if (!auto || paused || resting) return@LaunchedEffect
+        val began = System.currentTimeMillis()
+        try {
+            kotlinx.coroutines.delay((ADVANCE_MS - spent[0]).coerceAtLeast(0L))
+        } finally {
+            spent[0] += System.currentTimeMillis() - began
+        }
+        if (idle != null && idle.quietFor() >= IDLE_MS) {
+            // Nobody has pressed a key for a while: stay on this page, and give it a whole
+            // turn once a key starts the pages again.
+            spent[0] = 0L
+            idle.rest()
+            return@LaunchedEffect
+        }
+        turn()
     }
 }
 
