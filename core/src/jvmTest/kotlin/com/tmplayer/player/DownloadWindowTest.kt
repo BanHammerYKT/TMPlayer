@@ -487,6 +487,30 @@ class DownloadWindowTest {
     }
 
     @Test
+    fun `a probe hands its read the bytes once enough at the read's byte is on the disk`() {
+        val mb = 1024L * 1024
+        val ready = 64L * 1024
+        // An MKV's Cues 300 KB into a two megabyte probe: 300 KB before the byte, 64 KB after it.
+        assertEquals(300 * 1024 + ready, DownloadWindow.probeReady(10 * mb, 12 * mb, 10 * mb + 300 * 1024, ready))
+        // At the probe's first byte: only the first 64 KB.
+        assertEquals(ready, DownloadWindow.probeReady(10 * mb, 11 * mb, 10 * mb, ready))
+    }
+
+    @Test
+    fun `a probe that ends sooner than the ready amount waits for all of itself`() {
+        val start = 50L * 1024 * 1024
+        // The last 20 KB of the file: the probe is cut at its end, so the whole of it is the amount.
+        val end = start + 120 * 1024
+        assertEquals(end - start, DownloadWindow.probeReady(start, end, end - 20 * 1024, 64L * 1024))
+    }
+
+    @Test
+    fun `the ready amount never runs outside the probe`() {
+        assertEquals(1_000L, DownloadWindow.probeReady(0, 1_000, 5_000, 64L * 1024))
+        assertEquals(64L * 1024, DownloadWindow.probeReady(100, 1_000_000, 0, 64L * 1024))
+    }
+
+    @Test
     fun `the back buffer and its alignment stay inside the seek slack`() {
         assertTrue(LowStorageWindow.BACK_BYTES + LowStorageWindow.ALIGN_BYTES <= DownloadWindow.FORWARD_SLACK_BYTES)
     }
