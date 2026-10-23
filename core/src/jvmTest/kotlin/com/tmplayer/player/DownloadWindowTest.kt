@@ -371,6 +371,121 @@ class DownloadWindowTest {
         assertEquals(30 * mb, LowStorageWindow.roomNeeded(30 * mb, w))
     }
 
+    // --- Low storage mode: bytes TDLib already has on the disk ---
+
+
+    @Test
+    fun `a head on the disk at the start is read and the window carries on from its end`() {
+        val answer = LowStorageWindow.onDisk(emptyList(), 0, 1 * mb, film, w)
+        assertEquals(LowStorageWindow.OnDisk.Use.ReadAndFollow, answer.use)
+        assertEquals(listOf(r(0, 1 * mb)), answer.ranges)
+        // The request from its end that follows fits, and the stretch joins it: no roll at once.
+        val follow = LowStorageWindow.plan(answer.ranges, 1 * mb, film, w)
+        assertFalse(follow.deleteFirst)
+        assertFalse(LowStorageWindow.shouldRoll(0, follow.ranges, film))
+        assertTrue(LowStorageWindow.bytes(follow.ranges) <= w + LowStorageWindow.SLACK_BYTES)
+    }
+
+    @Test
+    fun `an index at the end of the file on the disk is read without moving the download`() {
+        val held = listOf(r(0, w))
+        val answer = LowStorageWindow.onDisk(held, film - 300 * 1024, 300 * 1024, film, w)
+        assertEquals(LowStorageWindow.OnDisk.Use.Read, answer.use)
+        // Counted against the budget, and never a reason to roll.
+        assertEquals(w + 300 * 1024, LowStorageWindow.bytes(answer.ranges))
+        assertFalse(LowStorageWindow.shouldRoll(film - 100 * 1024, answer.ranges, film))
+        // The jump back to the picture is inside what is held, and deletes nothing.
+        assertFalse(LowStorageWindow.plan(answer.ranges, 2 * mb, film, w).deleteFirst)
+    }
+
+    @Test
+    fun `an index part way through the last megabytes is held to the end, so reading it never rolls`() {
+        // Cues on the disk, Tags after them not: the stretch stops short of the end.
+        val start = film - 3 * mb
+        val answer = LowStorageWindow.onDisk(listOf(r(0, w)), start, 512 * 1024, film, w)
+        assertEquals(LowStorageWindow.OnDisk.Use.Read, answer.use)
+        assertTrue(answer.ranges.contains(r(start, film)))
+        assertFalse(LowStorageWindow.shouldRoll(start + 400 * 1024, answer.ranges, film))
+    }
+
+    @Test
+    fun `a long stretch on the disk from an earlier play is read, and the window rolls near its end`() {
+        // 300 MB of the film from a play without the mode, the window full elsewhere.
+        val held = listOf(r(1_000 * mb, 1_000 * mb + w))
+        val answer = LowStorageWindow.onDisk(held, 0, 300 * mb, film, w)
+        assertEquals(LowStorageWindow.OnDisk.Use.ReadThenRoll, answer.use)
+        assertFalse(LowStorageWindow.shouldRoll(10 * mb, answer.ranges, film))
+        assertTrue(LowStorageWindow.shouldRoll(298 * mb, answer.ranges, film))
+        // The roll there starts afresh, back within the window.
+        val roll = LowStorageWindow.plan(answer.ranges, LowStorageWindow.rollStart(298 * mb), film, w, roll = true)
+        assertTrue(roll.deleteFirst)
+        assertTrue(LowStorageWindow.bytes(roll.ranges) <= w)
+    }
+
+    @Test
+    fun `a scrap on the disk where the window cannot carry on is fetched the ordinary way`() {
+        val held = listOf(r(0, w + LowStorageWindow.SLACK_BYTES / 2))
+        val answer = LowStorageWindow.onDisk(held, 2_000 * mb, 1 * mb, film, w)
+        assertEquals(LowStorageWindow.OnDisk.Use.Fetch, answer.use)
+        // Nothing recorded for it: the seek's own request deletes and starts afresh.
+        assertEquals(held, answer.ranges)
+        assertTrue(LowStorageWindow.plan(answer.ranges, 2_000 * mb, film, w).deleteFirst)
+    }
+
+    @Test
+    fun `nothing on the disk is nothing to read`() {
+        assertEquals(LowStorageWindow.OnDisk.Use.Fetch, LowStorageWindow.onDisk(listOf(r(0, w)), 5 * mb, 0, film, w).use)
+    }
+
+    @Test
+    fun `a seek back into the window's own stretch is read from the disk`() {
+        val held = listOf(r(0, w))
+        // TDLib's download had reached 120 MB: the window grows from there within its budget.
+        val answer = LowStorageWindow.onDisk(held, 50 * mb, 70 * mb, film, w)
+        assertEquals(LowStorageWindow.OnDisk.Use.ReadAndFollow, answer.use)
+        assertEquals(held, answer.ranges)
+        // Had it reached the end of the window, there is no room to grow: read, then roll.
+        assertEquals(LowStorageWindow.OnDisk.Use.ReadThenRoll, LowStorageWindow.onDisk(held, 50 * mb, w - 50 * mb, film, w).use)
+    }
+
+    @Test
+    fun `an index probe is held to the end of the file and fits only within the budget`() {
+        val tail = film - 2 * mb
+        assertEquals(r(tail, film), LowStorageWindow.indexRange(tail, tail + 1 * mb, film))
+        // Away from the end, a probe is held as fetched.
+        assertEquals(r(100 * mb, 101 * mb), LowStorageWindow.indexRange(100 * mb, 101 * mb, film))
+        assertTrue(LowStorageWindow.probeFits(listOf(r(0, w)), tail, tail + 1 * mb, film, w))
+        val full = listOf(r(0, w + LowStorageWindow.SLACK_BYTES - 1 * mb))
+        assertFalse(LowStorageWindow.probeFits(full, tail, tail + 1 * mb, film, w))
+    }
+
+    @Test
+    fun `only the last megabytes of a file count as its index`() {
+        assertTrue(LowStorageWindow.nearTheEnd(film - 1, film))
+        assertTrue(LowStorageWindow.nearTheEnd(film - LowStorageWindow.INDEX_TAIL_BYTES, film))
+        assertFalse(LowStorageWindow.nearTheEnd(film - LowStorageWindow.INDEX_TAIL_BYTES - 1, film))
+        assertFalse(LowStorageWindow.nearTheEnd(film, film))
+        assertFalse(LowStorageWindow.nearTheEnd(5, 0))
+        assertTrue(LowStorageWindow.INDEX_TAIL_BYTES <= LowStorageWindow.SLACK_BYTES)
+    }
+
+    @Test
+    fun `a start, its index and a seek to the end keep the disk within the budget`() {
+        // Head found on the disk, the window followed from it, the Cues read at the end, the jump
+        // back, then the viewer jumps to the last minutes: never more than the window and slack,
+        // save what was on the disk before the mode began.
+        var ranges = LowStorageWindow.onDisk(emptyList(), 0, 1 * mb, film, w).ranges
+        ranges = LowStorageWindow.plan(ranges, 1 * mb, film, w).ranges
+        ranges = LowStorageWindow.onDisk(ranges, film - 400 * 1024, 400 * 1024, film, w).ranges
+        assertTrue(LowStorageWindow.bytes(ranges) <= w + LowStorageWindow.SLACK_BYTES)
+        val back = LowStorageWindow.plan(ranges, 2 * mb, film, w)
+        assertFalse(back.deleteFirst)
+        ranges = back.ranges
+        val toTheEnd = LowStorageWindow.plan(ranges, film - 30 * mb, film, w)
+        assertTrue(toTheEnd.deleteFirst)
+        assertTrue(LowStorageWindow.bytes(toTheEnd.ranges) <= w + LowStorageWindow.SLACK_BYTES)
+    }
+
     @Test
     fun `the back buffer and its alignment stay inside the seek slack`() {
         assertTrue(LowStorageWindow.BACK_BYTES + LowStorageWindow.ALIGN_BYTES <= DownloadWindow.FORWARD_SLACK_BYTES)

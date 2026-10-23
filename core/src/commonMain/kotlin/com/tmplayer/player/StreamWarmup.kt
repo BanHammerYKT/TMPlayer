@@ -51,17 +51,32 @@ import java.io.RandomAccessFile
  * is always the last word. A claim also stops the warm-ups of every other file, which would share
  * the line with the stream. Skipped for a file already whole, one the viewer is downloading (that
  * download is not to be moved), a cut video's pieces or a film in parts, and wherever [allowed]
- * says no (Low storage mode, "Save mobile data" on a metered line).
+ * says no ("Save mobile data" on a metered line).
+ *
+ * In Low storage mode ([lowStorage]) only the head and the index come, a few megabytes that the
+ * mode's window counts once the player finds them ([LowStorageStreams.onDisk]): no download is
+ * left running after them, no resumed place is fetched, and a file that had nothing on the disk
+ * before and is not played within [LOW_STORAGE_KEEP_MS] is deleted again, so a card the focus
+ * passed over leaves nothing behind. Without them the player waited on Telegram for the index at
+ * the far end of the file and then for the way back, which is most of why a start in that mode
+ * took so much longer.
  */
 object StreamWarmup {
 
     /**
-     * The platform's say: false in Low storage mode or with "Save mobile data" on a metered line.
-     * False until the platform has read its settings, so nothing is warmed in
-     * Low storage mode in the moments before they arrive.
+     * The platform's say: false with "Save mobile data" on a metered line. False until the
+     * platform has read its settings, so nothing is warmed before it knows whether Low storage
+     * mode ([lowStorage]) is on.
      */
     @Volatile
     var allowed: () -> Boolean = { false }
+
+    /** Whether Low storage mode is on, which keeps a warm-up to the head and the index. */
+    @Volatile
+    var lowStorage: () -> Boolean = { false }
+
+    /** How long a Low storage warm-up's bytes wait for a player before they are deleted again. */
+    private const val LOW_STORAGE_KEEP_MS = 5 * 60_000L
 
     /** How much of the start to bring: what the demuxer reads before the first frame. */
     const val HEAD_BYTES = 1L * 1024 * 1024
@@ -91,6 +106,9 @@ object StreamWarmup {
     private val claimed = HashSet<Int>()
     private val warmedAt = LinkedHashMap<Int, Long>()
     private val jobs = LinkedHashMap<Int, Job>()
+
+    /** When each file was last claimed by a player, so a Low storage clean-up spares a played one. */
+    private val claimedAt = LinkedHashMap<Int, Long>()
 
     /**
      * Warms [item]'s file; see the class. Does nothing for a cut video or a film in parts.
@@ -133,6 +151,8 @@ object StreamWarmup {
         lock.withLock {
             synchronized(this) {
                 val starting = claimed.add(fileId)
+                claimedAt[fileId] = System.currentTimeMillis()
+                if (claimedAt.size > 64) claimedAt.remove(claimedAt.keys.first())
                 jobs.remove(fileId)?.cancel()
                 // A play starting has the line to itself: every other warm-up stops, and its
                 // download with it (see [run]). Only at the start, so the next episode's warm-up
@@ -160,6 +180,9 @@ object StreamWarmup {
         if (file.local.isDownloadingCompleted || OfflineDownloads.isDownloading(fileId)) return
         val size = if (file.size > 0) file.size else file.expectedSize.takeIf { it > 0 } ?: sizeHint
         if (size <= 0) return
+        val light = runCatching { lowStorage() }.getOrDefault(true)
+        // Only a file this warm-up starts from nothing is its own to delete again.
+        if (light && file.local.downloadedSize <= 0L) cleanUpLater(td, fileId, started)
         // TDLib's updates for the file wake the waits below as the bytes land.
         val heard = Channel<Unit>(Channel.CONFLATED)
         val listener = Background.scope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -172,6 +195,8 @@ object StreamWarmup {
             val index = StreamIndex.locate(bytes, size)
             val indexHere = index != null && fetch(td, fileId, index.start, index.length, heard)
             Logger.i(TAG, "Warmed file $fileId: head ${head / 1024} KB${index?.let { ", index ${it.length / 1024} KB at ${it.start}" } ?: ""} in ${System.currentTimeMillis() - started} ms")
+            // Low storage mode: the head and the index only; the player's window does the rest.
+            if (light) return
             val resume = startAt?.let { resumeFrom(td, fileId, bytes, index?.takeIf { indexHere }, size, durationMs, it, heard) }
             keepGoing(td, fileId, resume ?: head, size)
         } finally {
@@ -226,6 +251,29 @@ object StreamWarmup {
     }
 
     private fun playingAny() = synchronized(this) { claimed.isNotEmpty() }
+
+    /**
+     * In Low storage mode, deletes what a warm-up started at [warmedFrom] brought of [fileId]
+     * (which had nothing on the disk before it) once [LOW_STORAGE_KEEP_MS] have gone by with no
+     * player claiming it since. A file played meanwhile keeps its bytes as any played file does,
+     * and so does one the viewer is downloading or with the mode turned off.
+     */
+    private fun cleanUpLater(td: TdlClient, fileId: Int, warmedFrom: Long) {
+        Background.scope.launch {
+            delay(LOW_STORAGE_KEEP_MS)
+            if (!runCatching { lowStorage() }.getOrDefault(false)) return@launch
+            lock.withLock {
+                val played = synchronized(this@StreamWarmup) {
+                    fileId in claimed || (claimedAt[fileId] ?: 0L) >= warmedFrom || jobs[fileId]?.isActive == true
+                }
+                if (played || OfflineDownloads.isDownloading(fileId)) return@withLock
+                val file = td.getFile(fileId).valueOrNull ?: return@withLock
+                if (file.local.isDownloadingCompleted || file.local.downloadedSize <= 0L) return@withLock
+                Logger.i(TAG, "Low storage: file $fileId was warmed and not played, deleting it again")
+                runCatching { td.deleteFile(fileId) }
+            }
+        }
+    }
 
     /**
      * Leaves TDLib downloading the file from [from] with no limit, where playback will read once

@@ -77,8 +77,9 @@ class TdByteWindow(private val td: TdlClient) {
      * A stretch away from TDLib's download that is on the disk all the same, as
      * `getFileDownloadedPrefixSize` confirmed: an MKV's Cues or an MP4's moov that [StreamWarmup]
      * (or an earlier play) brought down. Read from where it is, without moving the download there
-     * and back, which used to cost a round trip each way before the first frame. Never in Low
-     * storage mode, whose rolls delete what lies outside the window.
+     * and back, which used to cost a round trip each way before the first frame. In Low storage
+     * mode too, where the stretch is recorded as held ([LowStorageStreams.onDisk]) so the window's
+     * budget counts it, and dropped with the window at every delete ([deleteForLowStorage]).
      */
     @Volatile
     private var side = Window.EMPTY
@@ -339,6 +340,9 @@ class TdByteWindow(private val td: TdlClient) {
                 runCatching { handle?.close() }
                 handle = null
                 localPath = usablePath
+                // A stretch found on the old file says nothing about the new one: a delete by
+                // another reader's roll, or the file removed under us, comes back empty.
+                side = Window.EMPTY
             }
             if (availability == LocalFileAvailability.Complete) {
                 completed = true
@@ -456,11 +460,17 @@ class TdByteWindow(private val td: TdlClient) {
     /**
      * Bytes at [target] on the disk outside TDLib's current download (see [side]), recorded so the
      * reads can be served without re-aiming the download; 0 when there are none or it cannot say.
+     *
+     * In Low storage mode, 0 too for a stretch the mode would rather fetch afresh (too short to be
+     * worth reading when the window could not carry on from its end: [LowStorageWindow.onDisk]),
+     * and any other is recorded as held, so the budget counts it and the window rolls on near its
+     * end like any stretch it asked for.
      */
     private suspend fun onDiskAt(target: Long): Long {
-        if (lowStorage || localPath == null) return 0
+        if (localPath == null) return 0
         val here = td.getFileDownloadedPrefixSize(fileId, target).valueOrNull?.size ?: return 0
         if (here <= 0) return 0
+        if (lowStorage && LowStorageStreams.onDisk(fileId, target, here, size) == LowStorageWindow.OnDisk.Use.Fetch) return 0
         synchronized(this) { side = Window(target, minOf(size, target + here)) }
         return here
     }
@@ -539,10 +549,12 @@ class TdByteWindow(private val td: TdlClient) {
      * played before the download carries on from its end ([followSide]). A jump far from where
      * the stream reads is left to the first read, which fetches it as a probe ([probeAt]); any
      * other open is a seek, and asked for at once.
+     *
+     * Low storage mode does the same within its window ([lowStorageOpen]).
      */
     suspend fun requestUnlessOnDisk(offset: Long) {
         if (lowStorage) {
-            requestDownloadFrom(offset)
+            lowStorageOpen(offset)
             return
         }
         val known = window
@@ -568,6 +580,41 @@ class TdByteWindow(private val td: TdlClient) {
     }
 
     /**
+     * [requestUnlessOnDisk] in Low storage mode, which used to ask TDLib from [offset] at every
+     * open and so waited on Telegram for bytes already on the disk: the head of a video played or
+     * warmed before, and its index at the far end, which also sent the download there and back.
+     *
+     * Nothing is asked when the window's own download is running and will reach [offset]. Bytes
+     * on the disk there are read from where they are ([onDiskAt]): an index without moving the
+     * download, anything else with the download carried on from its end when that fits the window
+     * ([followSide]). A read in the index's part of the file away from the picture is left to the
+     * first read, which fetches it as a probe ([probeAt]). Anything else is a seek, as before:
+     * asked for at once, deleting first when the window says so.
+     */
+    private suspend fun lowStorageOpen(offset: Long) {
+        val known = window
+        if (LowStorageStreams.holds(fileId, offset) && !DownloadWindow.needsRestart(
+                position = offset,
+                downloadOffset = known.start,
+                downloadedPrefixSize = known.end - known.start,
+                active = downloading,
+                completed = completed,
+            )
+        ) {
+            return
+        }
+        val run = onDiskAt(offset)
+        if (run >= ON_DISK_ENOUGH || (run > 0 && offset + run >= size)) {
+            Logger.i(TAG, "Low storage: file $fileId opened at $offset, on the disk already")
+            followSide(offset, run)
+            return
+        }
+        if (isFar(offset)) return
+        markSeek(offset)
+        requestDownloadFrom(offset)
+    }
+
+    /**
      * The stream reads at [target], in a stretch of [run] bytes on the disk away from TDLib's
      * download ([side]). A probe there (far ahead of where the stream reads: an index at the end)
      * leaves the download alone. Otherwise it is where the stream is now, a seek back into what
@@ -583,12 +630,23 @@ class TdByteWindow(private val td: TdlClient) {
             return
         }
         markSeek(target)
-        if (end < size && !continuesInto(end)) requestDownloadFrom(end)
+        if (end >= size || continuesInto(end)) return
+        // In Low storage mode a request from its end that would delete the file would take the
+        // stretch being read with it: the window rolls on near its end instead, as it does for
+        // any stretch it holds (see [LowStorageWindow.onDisk]).
+        if (lowStorage && LowStorageStreams.wouldDelete(fileId, end, size)) return
+        requestDownloadFrom(end)
     }
 
-    /** Whether [target] is far enough from where the stream reads to be a probe; see [Playhead]. */
+    /**
+     * Whether [target] is far enough from where the stream reads to be a probe; see [Playhead].
+     * In Low storage mode only in the index's part of the file ([LowStorageWindow.nearTheEnd]):
+     * anywhere else a probe that the reader then carried on from would be followed by a request
+     * that deletes it, so such a jump is a seek from the start.
+     */
     private fun isFar(target: Long): Boolean {
-        if (lowStorage || saveData || completed) return false
+        if (saveData || completed) return false
+        if (lowStorage && !LowStorageWindow.nearTheEnd(target, size)) return false
         val ph = playhead ?: return false
         val at = ph.mainAt
         // Before the first read there is no stream to keep: wherever it starts is the stream.
@@ -656,6 +714,9 @@ class TdByteWindow(private val td: TdlClient) {
         if (end - target < PROBE_BYTES / 2) end += PROBE_BYTES
         end = minOf(end, size)
         if (end <= target) return null
+        // Low storage mode counts the probe against its window, and sends a probe that would take
+        // the disk past it down the seek path instead.
+        if (lowStorage && !LowStorageStreams.probe(fileId, start, end, size)) return null
         ph.probe = Window(start, end)
         Logger.i(TAG, "File $fileId probed at $target: $start to $end on its own, the stream stays at ${ph.mainAt}")
         if (shut) throw IOException("File $fileId is closed")
@@ -683,7 +744,10 @@ class TdByteWindow(private val td: TdlClient) {
         }
         val run = onDiskAt(target)
         val back = ph.mainAt
-        if (back in 0 until size && !completed) requestDownloadFrom(back)
+        // Not in Low storage mode when going back would delete the file, the probe with it: the
+        // stream's next read asks from where it is.
+        val putBack = !(lowStorage && LowStorageStreams.wouldDelete(fileId, back, size))
+        if (back in 0 until size && !completed && putBack) requestDownloadFrom(back)
         return run.takeIf { it > 0 }
     }
 
@@ -724,6 +788,7 @@ class TdByteWindow(private val td: TdlClient) {
         synchronized(this) {
             deleting = true
             window = Window.EMPTY
+            side = Window.EMPTY
         }
         try {
             Logger.i(TAG, "Low storage: deleting file $fileId to restart at $offset")
