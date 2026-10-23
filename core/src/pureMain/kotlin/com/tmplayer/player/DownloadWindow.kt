@@ -54,6 +54,17 @@ object DownloadWindow {
     }
 
     /**
+     * How much of a probe of `[start, end)` (a small fetch of its own for a read far from the
+     * stream, see `TdByteWindow`) has to be on the disk, counted from [start], before the read at
+     * [target] it was fetched for is handed its bytes: [readyBytes] at [target], or all that is
+     * left of the probe from there when that is less.
+     */
+    fun probeReady(start: Long, end: Long, target: Long, readyBytes: Long): Long {
+        val at = target.coerceIn(start, end)
+        return minOf(end, at + readyBytes) - start
+    }
+
+    /**
      * A seek within this many bytes ahead of what is already downloaded is left alone: the
      * running download will reach it sooner than a restart would.
      */
