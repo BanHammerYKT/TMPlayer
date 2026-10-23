@@ -470,8 +470,9 @@ fun MediaGridScreen(
         if (offline) onOfflineAction(s.gridOfflineRefresh)
     }
 
-    // Whichever video's page is open, and nothing while none is.
-    var showingDetailsOf by remember(chatId) { mutableStateOf<MediaItem?>(null) }
+    // The video whose page is open (nothing while none is), over the pages "More like this" was taken from, so Back
+    // walks back through them before it closes the page.
+    val details = remember(chatId) { DetailBackStack<MediaItem>({ it }) }
     // The listing as last arranged, shows folded together: where an open show is looked up again
     // after the phone is turned and the activity made anew.
     var shelfShown by remember(chatId) { mutableStateOf<List<ShelfEntry>>(emptyList()) }
@@ -823,7 +824,7 @@ fun MediaGridScreen(
                                                 dense = dense,
                                                 poster = shelved.key in posterKeys,
                                                 selected = if (selecting) selected.containsKey(item.id) else null,
-                                                onClick = { if (selecting) toggle(item) else if (detailFirst) showingDetailsOf = item else onPlay(item) },
+                                                onClick = { if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item) },
                                                 onLongClick = if (selecting) null else {
                                                     { heldMenuOf = item }
                                                 },
@@ -888,7 +889,7 @@ fun MediaGridScreen(
                                             ],
                                             finished = SettingsStore.progressKey(item.watchedBy.chatId, item.watchedBy.messageId) in watchedVideos,
                                             selected = if (selecting) selected.containsKey(item.id) else null,
-                                            onClick = { if (selecting) toggle(item) else if (detailFirst) showingDetailsOf = item else onPlay(item) },
+                                            onClick = { if (selecting) toggle(item) else if (detailFirst) details.open(item) else onPlay(item) },
                                             onLongClick = if (selecting) null else {
                                                 { heldMenuOf = item }
                                             },
@@ -958,11 +959,12 @@ fun MediaGridScreen(
                         onRemoved = viewModel::refreshLocalAvailability,
                         onDismiss = { heldMenuOf = null },
                         asMenu = true,
-                        onOpenDetails = { showingDetailsOf = item },
+                        onOpenDetails = { details.open(item) },
                     )
                 }
 
-                showingDetailsOf?.let { item ->
+                details.top?.let { entry ->
+                    val item = entry.page
                     // The episode list on the page shows where the viewer is in each episode.
                     androidx.compose.runtime.CompositionLocalProvider(LocalSeriesWatch provides watch) {
                         MediaDetailOpened(
@@ -981,8 +983,11 @@ fun MediaGridScreen(
                             }),
                             onDownload = { downloadThese(listOf(item)) },
                             onRemoved = viewModel::refreshLocalAvailability,
-                            onDismiss = { showingDetailsOf = null },
-                            onOpenItem = { showingDetailsOf = it },
+                            onDismiss = { details.clear() },
+                            onOpenItem = { details.push(it) },
+                            onTurnTo = { details.turn(it) },
+                            onBack = if (details.canGoBack) ({ details.back() }) else null,
+                            returnTo = entry.returnTo,
                         )
                     }
                 }

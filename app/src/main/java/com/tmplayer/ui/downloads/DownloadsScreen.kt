@@ -158,6 +158,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 /**
@@ -307,6 +308,47 @@ fun DownloadsScreen(
     var lowStorageTurned by remember { mutableStateOf(false) }
     // Deletes so far, for the television's page to put the remote back on its tab after each.
     var deleted by remember { mutableStateOf(0) }
+    // The row the remote goes to once the row it was on has left the list (deleted, cancelled):
+    // the next one down, else the one above, and the tab only when none is left. Asked again with
+    // each removal ([rowFocusAsked]), so the same row can be the answer twice running.
+    var rowFocusKey by remember { mutableStateOf<String?>(null) }
+    var rowFocusAsked by remember { mutableStateOf(0) }
+    val rowFocus = remember { FocusRequester() }
+    val remote = !isTouch()
+    // A row of the list, wearing the requester when it is the one the remote goes to next.
+    val focusTarget: @Composable (String, @Composable () -> Unit) -> Unit = { key, card ->
+        Box(if (remote && key == rowFocusKey) Modifier.focusRequester(rowFocus) else Modifier) { card() }
+    }
+
+    /**
+     * Once [gone] has been taken out (the list read again), the remote goes to the row after it
+     * in [before], the order the list showed it in, or the one before it; to the tab when none
+     * is left. A row that is still there (its file would not delete) keeps the remote itself.
+     */
+    fun landAfterRemoving(before: List<String>, gone: String, now: Set<String>) {
+        if (!remote) return
+        val next = rowAfterRemoving(before, gone, now)
+        if (next == null) {
+            deleted++
+        } else {
+            rowFocusKey = next
+            rowFocusAsked++
+        }
+    }
+    LaunchedEffect(rowFocusAsked) {
+        if (rowFocusAsked == 0 || rowFocusKey == null) return@LaunchedEffect
+        // The row is composed a frame or two after the list changes; a request before then is lost.
+        repeat(ROW_FOCUS_TRIES) {
+            withFrameNanos { }
+            if (runCatching { rowFocus.requestFocus() }.getOrDefault(false)) {
+                rowFocusKey = null
+                return@LaunchedEffect
+            }
+        }
+        // Not on screen after all: the tab, as before.
+        rowFocusKey = null
+        deleted++
+    }
     // Initially on, so the line that offers it does not flash in before the setting is read.
     val lowStorageOn by settings.lowStorageMode.collectAsStateWithLifecycle(initialValue = true)
     // Free up space opened by "Not enough space" opens once, when the figures are in.
@@ -712,19 +754,21 @@ fun DownloadsScreen(
         }
     }
 
-    fun delete(row: DownloadRow) {
+    fun delete(row: DownloadRow, done: () -> Unit = {}) {
         scope.launch {
             if (!removeOne(row)) toast(L.downloadsDeleteFailed(file = row.title))
             refresh(history)
+            done()
         }
     }
 
     /** A row whose file is gone: there is nothing to confirm deleting, only a record to drop. */
-    fun removeMissing(row: DownloadRow) {
+    fun removeMissing(row: DownloadRow, done: () -> Unit = {}) {
         scope.launch {
             withContext(Dispatchers.IO) { settings.forgetDownload(row.record.chatId, row.record.messageId) }
             // The row leaving is the answer.
             refresh(history)
+            done()
         }
     }
 
@@ -809,11 +853,36 @@ fun DownloadsScreen(
     val shelf = remember(rows, downloadsSort) {
         com.tmplayer.data.DownloadShelf.arrange(rows, { it.record.toMediaItem() }, { it.key }, { it.record.updatedAt }, sort = downloadsSort)
     }
+    // The downloads' rows in the order the list shows them, for where the remote goes after one.
+    val keptOrder = remember(shelf) {
+        shelf.flatMap { entry ->
+            when (entry) {
+                is com.tmplayer.data.DownloadShelf.Entry.Single -> listOf(entry.row.key)
+                is com.tmplayer.data.DownloadShelf.Entry.Show -> entry.episodes.map { it.key }
+            }
+        }
+    }
+    // Read once the removal has run, when the list composed earlier is out of date.
+    fun keptNow(): Set<String> = rows.mapTo(HashSet()) { it.key }
+    fun activeNow(): Set<String> = OfflineDownloads.active.value.values.mapTo(HashSet()) { "active_${it.fileId}" }
+    val activeOrder = remember(active) { active.map { "active_${it.fileId}" } }
+    // Cancel takes the row the remote is on out of the queue: the next one down takes it.
+    val cancelRow: (OfflineDownloads.Progress) -> Unit = { progress ->
+        val before = activeOrder
+        scope.launch {
+            dropUnfinished(progress.fileId)
+            // The download service takes it off the queue a moment after it is asked to.
+            kotlinx.coroutines.withTimeoutOrNull(ROW_GONE_WAIT_MS) {
+                OfflineDownloads.active.first { queue -> queue.values.none { it.fileId == progress.fileId } }
+            }
+            landAfterRemoving(before, "active_${progress.fileId}", activeNow())
+        }
+    }
     // Newest, Name and Largest over the downloads, once there are two to put in order.
     val sortChips: @Composable () -> Unit = {
         DownloadsSortChips(downloadsSort) { picked -> scope.launch { settings.setDownloadsSort(picked) } }
     }
-    val keptCard: @Composable (DownloadRow) -> Unit = { row ->
+    val keptCard: @Composable (DownloadRow) -> Unit = { row -> focusTarget(row.key) {
         DownloadCard(
             row = row,
             picking = picking,
@@ -823,14 +892,21 @@ fun DownloadsScreen(
             // A phone's card has room for it as a square beside Delete; a television's card stays
             // Watch, Share and Delete, and its heading's Save to folder says why it cannot.
             onSaveToFolder = if (canSaveToFolder) ({ saveToFolder(listOf(row)) }) else null,
-            onDelete = { if (row.missing) removeMissing(row) else confirmingDelete = row },
+            onDelete = {
+                if (row.missing) {
+                    val before = keptOrder
+                    removeMissing(row) { landAfterRemoving(before, row.key, keptNow()) }
+                } else {
+                    confirmingDelete = row
+                }
+            },
             onToggle = { picked = if (row.key in picked) picked - row.key else picked + row.key },
             onHold = {
                 picking = true
                 picked = picked + row.key
             },
         )
-    }
+    } }
     // The top of the page: what TMPlayer uses and what is free, and the one Free up space. Every
     // way to clear a part of it (the chart's legend, the cards' Delete on Recently played and the
     // unmatched files, Delete all) is in the review this opens.
@@ -868,6 +944,7 @@ fun DownloadsScreen(
                     )
                 }
                 items(active, key = { "active_${it.fileId}" }) { progress ->
+                    focusTarget("active_${progress.fileId}") {
                     ActiveDownloadCard(
                         progress = progress,
                         // Where it stands among the videos still to be fetched, so a
@@ -879,10 +956,11 @@ fun DownloadsScreen(
                         place = queuePlaces[progress.fileId] ?: -1,
                         onPause = { OfflineDownloads.pause(context, progress.fileId) },
                         onResume = { OfflineDownloads.resume(context, progress.fileId) },
-                        // The row goes with the remote on it: back to the tab, as after a delete.
-                        onCancel = { scope.launch { dropUnfinished(progress.fileId); deleted++ } },
+                        // The row goes with the remote on it: on to the next one, as after a delete.
+                        onCancel = { cancelRow(progress) },
                         onFreeUp = { freeingUp = true },
                     )
+                    }
                 }
             } else {
                 item {
@@ -996,8 +1074,8 @@ fun DownloadsScreen(
                     place = queuePlaces[progress.fileId] ?: -1,
                     onPause = { OfflineDownloads.pause(context, progress.fileId) },
                     onResume = { OfflineDownloads.resume(context, progress.fileId) },
-                    // The row goes with the remote on it: back to the tab, as after a delete.
-                    onCancel = { scope.launch { dropUnfinished(progress.fileId); deleted++ } },
+                    // The row goes with the remote on it: on to the next one, as after a delete.
+                    onCancel = { cancelRow(progress) },
                     onFreeUp = { freeingUp = true },
                 )
             }
@@ -1281,9 +1359,11 @@ fun DownloadsScreen(
             confirmLabel = L.commonDelete,
             cancelLabel = L.downloadsKeepIt,
             onConfirm = {
-                delete(row)
+                // The remote goes on to the next row once this one has left the list (the one
+                // above after the last, the tab after the only one), not back to the tab.
+                val before = keptOrder
+                delete(row) { landAfterRemoving(before, row.key, keptNow()) }
                 confirmingDelete = null
-                deleted++
             },
             onDismiss = { confirmingDelete = null },
         )
@@ -2240,7 +2320,10 @@ private fun TvDownloads(
     chosenWarning: String?,
     onDeleteChosen: () -> Unit,
     listState: androidx.compose.foundation.lazy.LazyListState,
-    /** Bumped after a delete, whose row took the remote with it: focus goes back to the tab. */
+    /**
+     * Bumped when a delete left no row to go on to (or took several at once): focus goes back to
+     * the tab.
+     */
     refocus: Int = 0,
     body: LazyListScope.() -> Unit,
 ) {
@@ -2332,6 +2415,25 @@ private fun TvDownloads(
         }
     }
 }
+
+/**
+ * Where the remote goes once [gone] has been taken out of a list that showed [before], in that
+ * order, and now holds [now]: the first row after it that is still there, else the nearest one
+ * above it, else null (the tab). [gone] itself when it is still there, its file not deleted.
+ */
+internal fun rowAfterRemoving(before: List<String>, gone: String, now: Set<String>): String? {
+    if (gone in now) return gone
+    val at = before.indexOf(gone)
+    if (at < 0) return null
+    return before.subList(at + 1, before.size).firstOrNull { it in now }
+        ?: before.subList(0, at).lastOrNull { it in now }
+}
+
+/** Frames the row the remote goes to after a removal is asked for the focus over. */
+private const val ROW_FOCUS_TRIES = 10
+
+/** How long a cancelled download is waited for to leave the queue before the remote moves on. */
+private const val ROW_GONE_WAIT_MS = 3_000L
 
 /**
  * A pill on the television's Downloads page: a tab, an action on a card or in the heading.
