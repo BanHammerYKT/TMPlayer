@@ -621,8 +621,17 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun tooLargeForSoftware(format: androidx.media3.common.Format): Boolean {
         Log.w("TMPlayer", "Too large to decode in software here: ${format.sampleMimeType} ${format.width}x${format.height}")
-        player?.pause()
+        // Stopped, not paused: a paused player keeps loading, and a stream it cannot show is
+        // downloaded for nothing. TDLib's download goes too, unless the viewer asked to keep the
+        // file, since stopping the player leaves TDLib fetching (3.5 MB/s on the 1 GB TV after the
+        // sheet was up, 2026-10-23).
+        player?.stop()
+        if (fileId > 0 && !OfflineDownloads.isDownloading(fileId)) {
+            val id = fileId
+            lifecycleScope.launch { Td.cancelDownload(id) }
+        }
         decoderPlan = null
+        beyondDevice = true
         showError(L.playerErrorUhd(nominalLines(format.width, format.height).toString()), retryable = false)
         return true
     }
@@ -2562,6 +2571,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         .build()
 
     private fun buildPlayer(client: TdlClient): ExoPlayer {
+        failurePinned = false
         // A new player starts with both decoders on, so each may switch by itself once again.
         decodersSwitched.clear()
         // Hardware decoders first; NextLib's FFmpeg renderers pick up the audio codecs a TV stick
@@ -3065,6 +3075,14 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** The failure sheet is up for something worth trying again ([showError]). */
     private var failedRetryable = false
 
+    /**
+     * The failure sheet is up ([showError]) and stays up until the viewer answers it or a new
+     * player starts: the player's own later states (a buffering spell, ready) no longer take it
+     * down. A 4K picture this TV cannot decode used to have its sheet hidden by the buffering that
+     * followed it, leaving "Loading 12%" over a paused picture for good (2026-10-23).
+     */
+    private var failurePinned = false
+
     /** True while the sheet counts down to the next episode ([onVideoEnded]). */
     private var countingDownToNext = false
 
@@ -3331,8 +3349,10 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             when (state) {
                 // Only the very first wait earns the full screen; later stalls get the chip.
                 Player.STATE_BUFFERING -> {
-                    if (openingFilm) showStatus(L.commonLoading) else showRebuffering()
-                    controls?.setBuffering(!openingFilm)
+                    if (!failurePinned) {
+                        if (openingFilm) showStatus(L.commonLoading) else showRebuffering()
+                        controls?.setBuffering(!openingFilm)
+                    }
                 }
 
                 // Playing again is the only proof that a recovery worked, so the budget is
@@ -3351,7 +3371,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                     readChapters()
                     offerStartOver()
                     controls?.setBuffering(false)
-                    hideStatus()
+                    if (!failurePinned) hideStatus()
                     showAudioCard()
                     // Once, as the picture first lands: the viewer sees the name of what they
                     // opened and where the controls live, and the row folds away on its own.
@@ -6819,7 +6839,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** A stall after playback has begun: a small chip, so the video stays on screen. */
     private fun showRebuffering() {
         // The sheet saying nothing is arriving stays until bytes do, or the viewer answers it.
-        if (slowStartUp) return
+        if (slowStartUp || failurePinned) return
         openingFilm = false
         statusOverlay.visibility = View.GONE
         val offline = networkOffline && !downloadComplete
@@ -6875,6 +6895,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      *   certain to fail again is worse than offering none.
      */
     private fun showError(message: String, retryable: Boolean = true, freeUp: Boolean = false) {
+        failurePinned = true
+        val beyond = beyondDevice
+        beyondDevice = false
         // The opening is over, if not the way it was meant to be: the waiting lookups go ahead.
         openedGate.complete(Unit)
         // Out of sight the sheet waits for the viewer, and the notification says it is there.
@@ -6905,7 +6928,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // One attempt button, not two: the app works out whether it means a plain retry or a
         // delete and a fresh fetch. See [reloadFromScratch].
         statusRetry?.visibility = View.GONE
-        showFailureActions(retryable)
+        showFailureActions(retryable, offerOtherApp = !beyond)
         updateDownloadChip()
     }
 
@@ -6966,6 +6989,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         decoderPlan = null
         hideFailureActions()
         DecoderSwitch.apply(exo, plan)
+        failurePinned = false
         showStatus(if (plan.toFfmpeg) L.playerDecoderSoftwareNow else L.playerDecoderDeviceNow)
         exo.prepare()
         exo.playWhenReady = true
@@ -6996,7 +7020,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * button becomes the handover to an app that does have it. That is settled from disk and so
      * arrives a moment after the sheet, which is readable immediately either way.
      */
-    private fun showFailureActions(retryable: Boolean) {
+    private fun showFailureActions(retryable: Boolean, offerOtherApp: Boolean = true) {
         statusReload?.visibility = View.GONE
         statusOpenWith?.visibility = View.GONE
         // Last and quietest: the logs to send with a report of it. See [rememberSendLogs].
@@ -7052,7 +7076,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             if (state == ExternalPlayer.Readiness.Nothing) return@launch
             // Offered on the failure another app fixes, and left off the one it does not: a stream
             // that would not start has nothing on disk worth handing anywhere.
-            if (retryable) return@launch
+            if (retryable || !offerOtherApp) return@launch
             if (savable != true) return@launch
             statusOpenWith?.apply {
                 text = if (state == ExternalPlayer.Readiness.Complete) {
@@ -7080,6 +7104,12 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * failure it was for.
      */
     private var freeUpOnFailure = false
+
+    /**
+     * The failure on screen is a picture beyond this device's decoders ([tooLargeForSoftware]), so
+     * no other app plays it either and the sheet offers none. Cleared by [showError] each time.
+     */
+    private var beyondDevice = false
 
     /** Leaves for the Downloads screen with Free up space up, which is what the refusal offers. */
     private fun openFreeUpSpace() {
@@ -7118,6 +7148,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         statusRetry?.visibility = View.GONE
         lifecycleScope.launch {
             val plan = runCatching { reloadPlan() }.getOrDefault(Reload.Plan.PlainRetry)
+            failurePinned = false
             showStatus(Reload.status(plan))
             if (plan == Reload.Plan.StartOver) {
                 val session = Td.awaitAuthorizedSession()
@@ -7181,6 +7212,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      */
     private fun retryPlayback() {
         failedRetryable = false
+        failurePinned = false
         statusRetry?.visibility = View.GONE
         recoveryAttempts = 0
         showStatus(L.playerTryingAgain)
