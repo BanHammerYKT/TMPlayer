@@ -46,7 +46,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -97,7 +97,9 @@ import com.tmplayer.ui.theme.rememberReducedMotion
  *   place. Left on Play goes back a page (from the first, on to the rail as anywhere else), Right
  *   on Details goes on a page; OK on Play plays; Down goes to the rows.
  * - It moves on by itself every [ADVANCE_MS] only while the remote is elsewhere on Home and
- *   nothing is over it ([active]), and never with motion off.
+ *   nothing is over it ([active]), and never with motion off. After [IDLE_MS] with no key pressed
+ *   on Home ([idle]) it stops on the page it is on, so a television left on Home is not decoding a
+ *   new picture every few seconds for hours, and the next key starts it again.
  * - It is [height] tall from the first frame, a stand-in shimmering until the pages arrive, so
  *   Home never jumps.
  */
@@ -117,6 +119,8 @@ internal fun TvFeaturedCarousel(
     header: (@Composable () -> Unit)? = null,
     /** On Play, for Down from the TV top bar. */
     playFocus: androidx.compose.ui.focus.FocusRequester? = null,
+    /** When the remote was last pressed on Home; null keeps the pages moving for as long as [active]. */
+    idle: HomeIdle? = null,
 ) {
     var headerPx by remember { mutableIntStateOf(0) }
     // Home gives the carousel the whole width to the screen's edge, as a backdrop should have;
@@ -151,24 +155,41 @@ internal fun TvFeaturedCarousel(
         val auto = count > 1 && !still
         var focusedIn by remember { mutableStateOf(false) }
         val paused = focusedIn || !active
+        // Changes only when the pages stop for want of a key and when the next key comes.
+        val resting = idle?.resting == true
+        // The carousel coming back into view (the player closed, a sheet gone, the remote off it)
+        // counts as the viewer being here: the wait for a key starts again from now.
+        LaunchedEffect(paused, idle) { if (!paused) idle?.touched() }
         // The time a page has stood, kept as a number rather than animated: nothing draws it, and
         // an animation woke the main thread every frame of the seven seconds.
         val spent = remember { longArrayOf(0L) }
         var progressKey by remember { mutableStateOf<String?>(null) }
-        LaunchedEffect(currentKey, paused, auto, count) {
+        LaunchedEffect(currentKey, paused, auto, count, resting) {
             // A new page starts its time from empty; a pause keeps it where it stopped.
             if (progressKey != currentKey) {
                 spent[0] = 0L
                 progressKey = currentKey
             }
-            if (!auto || paused) return@LaunchedEffect
+            if (!auto || paused || resting) return@LaunchedEffect
             val began = System.currentTimeMillis()
             try {
                 kotlinx.coroutines.delay((ADVANCE_MS - spent[0]).coerceAtLeast(0L))
             } finally {
                 spent[0] += System.currentTimeMillis() - began
             }
-            go(index + 1)
+            if (idle != null && idle.quietFor() >= IDLE_MS) {
+                // Nobody has pressed a key for a while: stay on this page, and give it a whole
+                // turn once a key starts the pages again.
+                spent[0] = 0L
+                idle.rest()
+                return@LaunchedEffect
+            }
+            // The page after the one up now, found in the pages as they are now: they may have
+            // refilled while this page stood.
+            val now = latest
+            if (now.isEmpty()) return@LaunchedEffect
+            val at = now.indexOfFirst { it.key == currentKey }
+            currentKey = now[(at + 1).mod(now.size)].key
         }
 
         // A page turns at once on a television: no two pages drawn together for a fade.
@@ -338,16 +359,19 @@ private fun TvFeaturedSkeleton(start: Dp, modifier: Modifier = Modifier) {
                 .fillMaxWidth(EDGE_SHARE)
                 .fillMaxHeight()
                 .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                .drawWithContent {
-                    drawContent()
+                .drawWithCache {
                     // Clear at the start, where the words go, solid towards the end edge.
                     val across = if (layoutDirection == LayoutDirection.Rtl) {
                         Brush.horizontalGradient(0f to Color.Black, 0.55f to Color.Black, 1f to Color.Transparent)
                     } else {
                         Brush.horizontalGradient(0f to Color.Transparent, 0.45f to Color.Black, 1f to Color.Black)
                     }
-                    drawRect(across, blendMode = BlendMode.DstIn)
-                    drawRect(Brush.verticalGradient(0f to Color.Black, 0.6f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                    val down = Brush.verticalGradient(0f to Color.Black, 0.6f to Color.Black, 1f to Color.Transparent)
+                    onDrawWithContent {
+                        drawContent()
+                        drawRect(across, blendMode = BlendMode.DstIn)
+                        drawRect(down, blendMode = BlendMode.DstIn)
+                    }
                 },
             RectangleShape,
         )
@@ -367,6 +391,39 @@ internal val TV_FEATURED_HEIGHT = 284.dp
 
 /** How long a page is up before the carousel moves on. */
 private const val ADVANCE_MS = 7_000
+
+/** How long without a key on Home before the pages stop moving by themselves: about eight turns. */
+private const val IDLE_MS = 60_000L
+
+/**
+ * When a key was last pressed on the television's Home, for its carousel to stop turning once
+ * nobody is there ([TvFeaturedCarousel]). The time is a plain number, so a key press costs no
+ * composition; only [resting] is state, and it changes twice in an idle spell, when the pages stop
+ * and when the next key comes.
+ */
+@androidx.compose.runtime.Stable
+internal class HomeIdle {
+    @Volatile
+    private var lastKeyAt = android.os.SystemClock.uptimeMillis()
+
+    /** Whether the pages have stopped for want of a key. */
+    var resting by mutableStateOf(false)
+        private set
+
+    /** A key on Home, or the carousel back in view: the wait starts again. */
+    fun touched() {
+        lastKeyAt = android.os.SystemClock.uptimeMillis()
+        if (resting) resting = false
+    }
+
+    /** How long since the last key, in milliseconds. */
+    fun quietFor(): Long = android.os.SystemClock.uptimeMillis() - lastKeyAt
+
+    /** The pages stop until the next [touched]. */
+    fun rest() {
+        resting = true
+    }
+}
 
 /** The inset of the words and the buttons from the picture's edge. */
 private val PAGE_PAD = 24.dp
