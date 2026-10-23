@@ -1688,8 +1688,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             markStart("player built", STAGE_BUILT)
             built.addListener(playerListener)
             // A plain file for a download, which the default data source reads directly; the TDLib
-            // stream for everything else.
-            val source = joinedSource ?: downloadedFile?.let { android.net.Uri.fromFile(it) } ?: tdFileUri(fileId)
+            // stream for everything else, carrying its type so the right reader is tried first.
+            val source = joinedSource ?: downloadedFile?.let { android.net.Uri.fromFile(it) }
+                ?: tdFileUri(fileId, streamType(mediaMime, mediaFileName))
             // A stream also holds the Wi-Fi up while it plays, which matters once the screen is
             // off and the sound plays on ([PlaybackService]); a file on the disk needs only the CPU.
             val local = if (joinedSource != null) joinedAllLocal else downloadedFile != null

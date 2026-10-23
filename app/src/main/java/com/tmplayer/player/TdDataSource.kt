@@ -4,6 +4,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.C
+import androidx.media3.common.FileTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
@@ -17,8 +18,42 @@ import java.io.EOFException
 import java.io.IOException
 import java.io.InterruptedIOException
 
-/** `tdfile://<fileId>`, the only URI scheme [TdDataSource] understands. */
-fun tdFileUri(fileId: Int): Uri = Uri.parse("tdfile://$fileId")
+/**
+ * `tdfile://<fileId>`, the only URI scheme [TdDataSource] understands, with the file's type when
+ * [streamType] knows it (`tdfile://<fileId>?type=video%2Fx-matroska`), which the source hands
+ * the player as the stream's Content-Type.
+ */
+fun tdFileUri(fileId: Int, type: String? = null): Uri {
+    val builder = Uri.Builder().scheme("tdfile").authority(fileId.toString())
+    if (type != null) builder.appendQueryParameter(TYPE_PARAM, type)
+    return builder.build()
+}
+
+private const val TYPE_PARAM = "type"
+
+/**
+ * The container type of a Telegram file for the player, from what Telegram says its type is and
+ * failing that from its name, or null when neither says anything the player knows.
+ *
+ * A `tdfile://` URI has no extension, so Media3 tried its extractors in their fixed order (FLV,
+ * FLAC, WAV, MP4, AMR, PS, OGG, TS and only then Matroska), each reading the head of the file to
+ * say no, before the one that fits. Media3 puts the extractor for a stream's Content-Type first
+ * and keeps every other one behind it, so a type that turns out wrong costs one failed look and
+ * plays as before. An MKV sent as a plain file arrives as `application/octet-stream`, which is
+ * why the name is asked too.
+ */
+fun streamType(mimeType: String, fileName: String): String? {
+    if (mimeType.isNotBlank() && FileTypes.inferFileTypeFromMimeType(mimeType) != FileTypes.UNKNOWN) return mimeType
+    return when (fileName.substringAfterLast('.', "").lowercase()) {
+        "mkv", "mka", "mk3d" -> "video/x-matroska"
+        "webm" -> "video/webm"
+        "mp4", "m4v", "mov", "3gp" -> "video/mp4"
+        "ts", "m2ts", "mts" -> "video/mp2t"
+        "avi" -> "video/x-msvideo"
+        "flv" -> "video/x-flv"
+        else -> null
+    }
+}
 
 /**
  * Streams a Telegram file straight into the player without downloading it first.
@@ -33,6 +68,9 @@ class TdDataSource(td: TdlClient) : BaseDataSource(true) {
     private val bytes = TdByteWindow(td)
 
     private var uri: Uri? = null
+
+    /** The Content-Type the open URI carried ([tdFileUri]), or empty: see [streamType]. */
+    private var headers: Map<String, List<String>> = emptyMap()
     private var position = 0L
     private var bytesRemaining = 0L
     private var opened = false
@@ -50,6 +88,8 @@ class TdDataSource(td: TdlClient) : BaseDataSource(true) {
 
     override fun getUri(): Uri? = uri
 
+    override fun getResponseHeaders(): Map<String, List<String>> = headers
+
     override fun open(dataSpec: DataSpec): Long {
         val startedAt = SystemClock.elapsedRealtime()
         transferInitializing(dataSpec)
@@ -57,6 +97,7 @@ class TdDataSource(td: TdlClient) : BaseDataSource(true) {
         val fileId = dataSpec.uri.authority?.toIntOrNull()
             ?: dataSpec.uri.lastPathSegment?.toIntOrNull()
             ?: throw IOException("Not a Telegram file URI: ${dataSpec.uri}")
+        headers = dataSpec.uri.getQueryParameter(TYPE_PARAM)?.let { mapOf("Content-Type" to listOf(it)) } ?: emptyMap()
         position = dataSpec.position
         aheadAt = -1L
 
@@ -148,6 +189,7 @@ class TdDataSource(td: TdlClient) : BaseDataSource(true) {
         bytes.close()
         aheadAt = -1L
         uri = null
+        headers = emptyMap()
         if (opened) {
             opened = false
             transferEnded()
