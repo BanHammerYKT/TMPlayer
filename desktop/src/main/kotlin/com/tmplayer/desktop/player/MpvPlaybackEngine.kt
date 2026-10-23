@@ -581,7 +581,7 @@ class MpvPlaybackEngine(hwdec: String = OpenPrefs.HWDEC_AUTO) : PlaybackEngine {
             h.setPropertyString("glsl-shaders", file.absolutePath)
             stereoShaderFile?.takeIf { it != file }?.delete()
             stereoShaderFile = file
-            Stereo3d.aspect(width, height, wanted.layout)?.let { aspect ->
+            Stereo3d.aspect(width, height, wanted)?.let { aspect ->
                 h.setPropertyString("video-aspect-override", String.format(java.util.Locale.ROOT, "%.6f", aspect))
             }
             stereoApplied = next

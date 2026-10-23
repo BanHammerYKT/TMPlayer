@@ -1072,13 +1072,23 @@ internal fun PlayerMenu(
                 Entry(s.playerStereoTopBottom, checked = now.layout == Stereo3d.Layout.TopBottom, detail = s.playerStereoTopBottomDetail) {
                     choose(now.copy(layout = Stereo3d.Layout.TopBottom))
                 }
+                Entry(s.playerStereoRows, checked = now.layout == Stereo3d.Layout.RowInterleaved, detail = s.playerStereoRowsDetail) {
+                    choose(now.copy(layout = Stereo3d.Layout.RowInterleaved))
+                }
+                Entry(s.playerStereoColumns, checked = now.layout == Stereo3d.Layout.ColumnInterleaved, detail = s.playerStereoColumnsDetail) {
+                    choose(now.copy(layout = Stereo3d.Layout.ColumnInterleaved))
+                }
                 HorizontalDivider()
                 StereoHeading(s.playerStereoGlasses)
                 Stereo3d.View.entries.forEach { view ->
                     Entry(
                         stereoGlassesLabel(view),
                         checked = now.view == view,
-                        detail = if (view == Stereo3d.View.OneEye) s.playerStereoOneEyeDetail else null,
+                        detail = when (view) {
+                            Stereo3d.View.OneEye -> s.playerStereoOneEyeDetail
+                            Stereo3d.View.Vr -> s.playerStereoVrDetail
+                            else -> null
+                        },
                     ) { choose(now.copy(view = view)) }
                 }
                 HorizontalDivider()
@@ -1652,6 +1662,7 @@ internal fun stereoGlassesLabel(view: Stereo3d.View): String = when (view) {
     Stereo3d.View.GreenMagenta -> L.playerStereoGreenMagenta
     Stereo3d.View.YellowBlue -> L.playerStereoYellowBlue
     Stereo3d.View.OneEye -> L.playerStereoOneEye
+    Stereo3d.View.Vr -> L.playerStereoVr
 }
 
 /** The 3D line's detail on the menu's first page: Off, or the layout and the glasses. */
@@ -1659,4 +1670,6 @@ internal fun stereoSummary(stereo: Stereo3d): String = when (stereo.layout) {
     Stereo3d.Layout.Off -> L.commonOff
     Stereo3d.Layout.SideBySide -> L.playerStereoDetail(L.playerStereoSideBySide, stereoGlassesLabel(stereo.view))
     Stereo3d.Layout.TopBottom -> L.playerStereoDetail(L.playerStereoTopBottom, stereoGlassesLabel(stereo.view))
+    Stereo3d.Layout.RowInterleaved -> L.playerStereoDetail(L.playerStereoRows, stereoGlassesLabel(stereo.view))
+    Stereo3d.Layout.ColumnInterleaved -> L.playerStereoDetail(L.playerStereoColumns, stereoGlassesLabel(stereo.view))
 }

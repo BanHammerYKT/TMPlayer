@@ -64,7 +64,7 @@ import kotlin.system.exitProcess
  * - `--press "<ms>:<key>;<ms>:<key>"` presses each key at its time through `java.awt.Robot`, for
  *   keys that need their own moment (A-B repeat, chapters). A key is a letter, or a name with
  *   modifiers in front: `r`, `shift+s`, `ctrl+right`, `ctrl+left`.
- * - `--stereo <sbs|tab>[,rc|gm|yb|2d][,swap]` turns 3D video on once the file plays, as the
+ * - `--stereo <sbs|tab|rows|cols>[,rc|gm|yb|2d|vr][,swap]` turns 3D video on once the file plays, as the
  *   menu's 3D video page would.
  * - `--quit-after <ms>` closes the window, so a scripted run ends on its own.
  */
@@ -102,7 +102,12 @@ fun main(argv: Array<String>) {
     val menuPage = value("--menu")
     val stereo = value("--stereo")?.split(',')?.let { parts ->
         com.tmplayer.player.Stereo3d(
-            layout = if (parts[0] == "tab") com.tmplayer.player.Stereo3d.Layout.TopBottom else com.tmplayer.player.Stereo3d.Layout.SideBySide,
+            layout = when (parts[0]) {
+                "tab" -> com.tmplayer.player.Stereo3d.Layout.TopBottom
+                "rows" -> com.tmplayer.player.Stereo3d.Layout.RowInterleaved
+                "cols" -> com.tmplayer.player.Stereo3d.Layout.ColumnInterleaved
+                else -> com.tmplayer.player.Stereo3d.Layout.SideBySide
+            },
             view = com.tmplayer.player.Stereo3d.View.ofKey(parts.getOrNull(1)),
             swapEyes = "swap" in parts,
         )

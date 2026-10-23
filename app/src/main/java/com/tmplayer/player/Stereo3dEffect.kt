@@ -13,7 +13,7 @@ import androidx.media3.effect.GlShaderProgram
 
 /**
  * 3D video on the phone and the television: one Media3 shader pass that draws a 3D file's two
- * eyes as one anaglyph, or as one eye alone ([Stereo3d]).
+ * eyes as one anaglyph, as one eye alone, or side by side for a VR headset ([Stereo3d]).
  *
  * The decoder stays the device's own and the frames stay on the graphics chip, so a 1 GB stick
  * pays one texture pass a frame, and only while 3D is on: the player builds the effects pipeline
@@ -60,7 +60,7 @@ class Stereo3dEffect(private val stereo: Stereo3d) : GlEffect {
             } catch (e: GlUtil.GlException) {
                 throw VideoFrameProcessingException(e)
             }
-            val (width, height) = Stereo3d.outputSize(inputWidth, inputHeight, stereo.layout)
+            val (width, height) = Stereo3d.outputSize(inputWidth, inputHeight, stereo)
             return Size(width, height)
         }
 
@@ -103,6 +103,8 @@ void main() {
 fun Stereo3d.detailText(): String? = if (!on) null else com.tmplayer.i18n.L.playerStereoDetail(
     layout = when (layout) {
         Stereo3d.Layout.SideBySide -> com.tmplayer.i18n.L.playerStereoSideBySide
+        Stereo3d.Layout.RowInterleaved -> com.tmplayer.i18n.L.playerStereoRows
+        Stereo3d.Layout.ColumnInterleaved -> com.tmplayer.i18n.L.playerStereoColumns
         else -> com.tmplayer.i18n.L.playerStereoTopBottom
     },
     glasses = view.label(),
@@ -114,4 +116,5 @@ fun Stereo3d.View.label(): String = when (this) {
     Stereo3d.View.GreenMagenta -> com.tmplayer.i18n.L.playerStereoGreenMagenta
     Stereo3d.View.YellowBlue -> com.tmplayer.i18n.L.playerStereoYellowBlue
     Stereo3d.View.OneEye -> com.tmplayer.i18n.L.playerStereoOneEye
+    Stereo3d.View.Vr -> com.tmplayer.i18n.L.playerStereoVr
 }

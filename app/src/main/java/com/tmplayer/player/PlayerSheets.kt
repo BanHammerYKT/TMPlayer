@@ -612,6 +612,8 @@ internal fun StereoSheet(
                         Stereo3d.Layout.Off -> s.playerStereoOffDetail
                         Stereo3d.Layout.SideBySide -> s.playerStereoSideBySideDetail
                         Stereo3d.Layout.TopBottom -> s.playerStereoTopBottomDetail
+                        Stereo3d.Layout.RowInterleaved -> s.playerStereoRowsDetail
+                        Stereo3d.Layout.ColumnInterleaved -> s.playerStereoColumnsDetail
                     }.let { if (found) s.commonWithDetail(it, s.playerStereoFoundShort) else it },
                     selected = layout == current.layout,
                     modifier = if (layout == focusOn) Modifier.focusRequester(focus) else Modifier,
@@ -621,7 +623,11 @@ internal fun StereoSheet(
             Stereo3d.View.entries.forEach { view ->
                 ChoiceLine(
                     title = stereoViewLabel(view),
-                    detail = if (view == Stereo3d.View.OneEye) s.playerStereoOneEyeDetail else null,
+                    detail = when (view) {
+                        Stereo3d.View.OneEye -> s.playerStereoOneEyeDetail
+                        Stereo3d.View.Vr -> s.playerStereoVrDetail
+                        else -> null
+                    },
                     selected = view == current.view,
                 ) { onChange(current.copy(view = view)) }
             }
@@ -644,6 +650,8 @@ private fun stereoLayoutLabel(layout: Stereo3d.Layout): String {
         Stereo3d.Layout.Off -> s.commonOff
         Stereo3d.Layout.SideBySide -> s.playerStereoSideBySide
         Stereo3d.Layout.TopBottom -> s.playerStereoTopBottom
+        Stereo3d.Layout.RowInterleaved -> s.playerStereoRows
+        Stereo3d.Layout.ColumnInterleaved -> s.playerStereoColumns
     }
 }
 
@@ -655,6 +663,7 @@ private fun stereoViewLabel(view: Stereo3d.View): String {
         Stereo3d.View.GreenMagenta -> s.playerStereoGreenMagenta
         Stereo3d.View.YellowBlue -> s.playerStereoYellowBlue
         Stereo3d.View.OneEye -> s.playerStereoOneEye
+        Stereo3d.View.Vr -> s.playerStereoVr
     }
 }
 

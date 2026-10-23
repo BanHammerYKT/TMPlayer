@@ -312,6 +312,16 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     /** How far the picture stops short of the screen's bottom edge; see [fitSubtitlesTo]. */
     private var subtitleGapBelow = 0
 
+    /**
+     * While 3D is drawn for a VR headset or a 3D TV ([Stereo3d.View.Vr]): the subtitles' second
+     * copy, over the right eye's half, the first one over the left's ([fitSubtitlesTo]). Each eye
+     * then sees the whole line, where one copy across the middle was cut in two.
+     */
+    private var subtitleTwin: SubtitleView? = null
+
+    /** The lines on screen, for a [subtitleTwin] that comes up while one is showing. */
+    private var shownCues: List<Cue> = emptyList()
+
     /** A track picker, or the online subtitle list above one, is open. */
     private var pickerOpen = false
 
@@ -1772,10 +1782,9 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         touchSurface = view
         view.resizeMode = videoScale.resizeMode
         controls?.setShape(videoScale)
-        if (!FormFactor.isTv(this)) {
-            view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
-                ?.addOnLayoutChangeListener { frame, _, _, _, _, _, _, _, _ -> fitSubtitlesTo(frame) }
-        }
+        // On a television only while 3D is drawn for a headset, which needs a copy per eye.
+        view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+            ?.addOnLayoutChangeListener { frame, _, _, _, _, _, _, _, _ -> fitSubtitlesTo(frame) }
 
         if (!FormFactor.isTv(this)) {
             // Fed from dispatchTouchEvent rather than attached here: see [PlayerGestures].
@@ -2427,6 +2436,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
     private fun fitSubtitlesTo(frame: View) {
         val root = findViewById<View>(R.id.player_root)
         if (root.width == 0 || frame.width == 0) return
+        val vr = stereo.on && stereo.view == Stereo3d.View.Vr
+        if (FormFactor.isTv(this) && !vr) {
+            fullScreenSubtitles()
+            return
+        }
         val at = IntArray(2)
         val origin = IntArray(2)
         frame.getLocationInWindow(at)
@@ -2442,11 +2456,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // taking it off and then adding the position's share on top stacked the two, so on a
         // picture that filled the screen the lines stood clearly higher than on a letterboxed one.
         val params = subtitleView.layoutParams as FrameLayout.LayoutParams
-        val width = right - left
+        // For a headset each eye's half of the picture gets its own copy of the lines.
+        val width = if (vr) (right - left) / 2 else right - left
         val height = (bottom - top).coerceAtLeast(0)
         if (
             params.width == width && params.height == height && subtitleGapBelow == root.height - bottom &&
-            params.leftMargin == left && params.topMargin == top && params.bottomMargin == 0
+            params.leftMargin == left && params.topMargin == top && params.bottomMargin == 0 &&
+            (subtitleTwin != null) == vr
         ) {
             return
         }
@@ -2460,9 +2476,67 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         // Set from inside a layout pass, so the change is posted rather than lost.
         subtitleView.post {
             subtitleView.layoutParams = params
+            if (vr) {
+                twinSubtitles().layoutParams = FrameLayout.LayoutParams(params).apply { leftMargin = left + width }
+            } else {
+                dropSubtitleTwin()
+            }
             applySubtitleStyle()
             liftSubtitles()
         }
+    }
+
+    /**
+     * A television's subtitles as the layout has them, over the whole screen, once 3D for a
+     * headset is off again. Nothing to do while they already are.
+     */
+    private fun fullScreenSubtitles() {
+        val params = subtitleView.layoutParams as FrameLayout.LayoutParams
+        val margin = resources.getDimensionPixelSize(R.dimen.player_subtitle_bottom)
+        if (subtitleTwin == null && params.width == FrameLayout.LayoutParams.MATCH_PARENT && params.bottomMargin == margin) return
+        subtitleGapBelow = 0
+        params.gravity = FrameLayout.LayoutParams.UNSPECIFIED_GRAVITY
+        params.width = FrameLayout.LayoutParams.MATCH_PARENT
+        params.height = FrameLayout.LayoutParams.MATCH_PARENT
+        params.leftMargin = 0
+        params.topMargin = 0
+        params.bottomMargin = margin
+        subtitleView.post {
+            subtitleView.layoutParams = params
+            dropSubtitleTwin()
+            applySubtitleStyle()
+            liftSubtitles()
+        }
+    }
+
+    /** The right eye's copy of the subtitles, made the first time a headset needs it. */
+    private fun twinSubtitles(): SubtitleView = subtitleTwin ?: SubtitleView(this).also { twin ->
+        twin.setApplyEmbeddedStyles(true)
+        val parent = subtitleView.parent as android.view.ViewGroup
+        parent.addView(twin, parent.indexOfChild(subtitleView) + 1, FrameLayout.LayoutParams(0, 0))
+        twin.visibility = subtitleView.visibility
+        twin.alpha = subtitleView.alpha
+        twin.translationY = subtitleView.translationY
+        twin.setCues(shownCues)
+        subtitleTwin = twin
+    }
+
+    private fun dropSubtitleTwin() {
+        val twin = subtitleTwin ?: return
+        subtitleTwin = null
+        (twin.parent as? android.view.ViewGroup)?.removeView(twin)
+    }
+
+    /** Puts [cues] on screen, in both copies while a headset has two. */
+    private fun showCues(cues: List<Cue>) {
+        shownCues = cues
+        subtitleView.setCues(cues)
+        subtitleTwin?.setCues(cues)
+    }
+
+    /** Fits the subtitles again after 3D changed, as the picture's next layout would. */
+    private fun refitSubtitles() {
+        touchSurface?.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)?.let(::fitSubtitlesTo)
     }
 
     /**
@@ -3316,7 +3390,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
 
     private val playerListener = object : Player.Listener {
         override fun onCues(cueGroup: CueGroup) {
-            subtitleView.setCues(scaledForPicture(cueGroup.cues))
+            showCues(scaledForPicture(cueGroup.cues))
             if (!firstCuesLogged && cueGroup.cues.isNotEmpty()) {
                 firstCuesLogged = true
                 val pictures = cueGroup.cues.count { it.bitmap != null }
@@ -3742,7 +3816,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
         player = null
         // The listener is gone before the release, so the player's own "no cues" never arrives:
         // the line on screen would stay frozen over the next video's opening.
-        subtitleView.setCues(emptyList())
+        showCues(emptyList())
     }
 
     /**
@@ -4598,9 +4672,11 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
      * outline is what survives a bright frame, and the optional box is for a busy one.
      */
     private fun applySubtitleStyle() {
-        subtitleView.setFractionalTextSize(subtitleTextFraction())
-        subtitleView.setBottomPaddingFraction(subtitleBottomFraction())
-        subtitleView.setStyle(SubtitleLook.captionStyle(subtitleStyle))
+        for (view in listOfNotNull(subtitleView, subtitleTwin)) {
+            view.setFractionalTextSize(subtitleTextFraction())
+            view.setBottomPaddingFraction(subtitleBottomFraction())
+            view.setStyle(SubtitleLook.captionStyle(subtitleStyle))
+        }
     }
 
     /**
@@ -5282,6 +5358,7 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             undoChip?.hide()
         }
         subtitleView.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+        subtitleTwin?.visibility = subtitleView.visibility
         downloadChip.visibility = View.GONE
         gestures?.controlsVisible = false
     }
@@ -5764,6 +5841,8 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
             exo.playWhenReady = play
         }
         stereoHinted = true
+        // A headset's two halves take a copy of the subtitles each, and lose it after.
+        refitSubtitles()
         showGestureFeedback(if (next.on) L.playerStereoOnNow(next.view.label()) else L.playerStereoOffNow)
         return null
     }
@@ -6587,11 +6666,13 @@ class PlayerActivity : FragmentActivity(), TrackPickerHost {
                 gap = (8 * resources.displayMetrics.density).toInt(),
                 tv = tv,
             )
-            subtitleView.animate()
-                .alpha(if (place.hidden) 0f else 1f)
-                .translationY(-place.lift.toFloat())
-                .setDuration(SUBTITLE_LIFT_MS)
-                .start()
+            for (view in listOfNotNull(subtitleView, subtitleTwin)) {
+                view.animate()
+                    .alpha(if (place.hidden) 0f else 1f)
+                    .translationY(-place.lift.toFloat())
+                    .setDuration(SUBTITLE_LIFT_MS)
+                    .start()
+            }
         }
     }
 

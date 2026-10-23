@@ -7,7 +7,12 @@ package com.tmplayer.player
  * A 3D file keeps the eyes side by side (left half and right half) or one above the other, at
  * full size (a 3840x1080 frame, each eye 1920x1080) or squeezed into an ordinary frame (1920x1080,
  * each eye 960x1080 stretched back on playback): what [outputSize] tells apart by the frame's
- * shape, so the picture comes out the shape of one eye either way.
+ * shape, so the picture comes out the shape of one eye either way. A passive 3D television's
+ * files take turns instead, line by line or column by column, each eye in every other one.
+ *
+ * Drawn for a VR headset (a phone in a viewer) or a 3D television in its side by side mode, the
+ * two eyes come out next to each other, each in its own half and at its own shape, whatever
+ * the file's layout: so a top and bottom or interleaved file plays there too.
  *
  * The colours are Eric Dubois' least squares anaglyphs, as FFmpeg's `stereo3d` filter carries them
  * (`arcd`, `agmd`, `aybd`): less ghosting and truer colour than taking one channel from each eye.
@@ -23,7 +28,17 @@ data class Stereo3d(
     /** For a file stored right eye first: a red lens that sees the wrong eye shows depth inside out. */
     val swapEyes: Boolean = false,
 ) {
-    enum class Layout { Off, SideBySide, TopBottom }
+    enum class Layout {
+        Off,
+        SideBySide,
+        TopBottom,
+
+        /** Every other line is one eye's, the first line the left eye's: a passive 3D TV's format. */
+        RowInterleaved,
+
+        /** Every other column is one eye's, the first column the left eye's. */
+        ColumnInterleaved,
+    }
 
     /** How the two eyes are shown. */
     enum class View(val key: String) {
@@ -33,6 +48,9 @@ data class Stereo3d(
 
         /** One eye's picture alone: a 3D video watched flat, with no glasses. */
         OneEye("2d"),
+
+        /** Both eyes next to each other, each in its own half: a VR headset or a 3D TV. */
+        Vr("vr"),
         ;
 
         companion object {
@@ -73,6 +91,8 @@ data class Stereo3d(
                 Layout.SideBySide -> aspect >= FULL_SBS_FROM
                 // 1920x2160 is 0.89; a squeezed one is the film's own 1.78 or wider.
                 Layout.TopBottom -> aspect <= FULL_TAB_UNTIL
+                // Every eye has every other line or column, stretched back to the frame's shape.
+                Layout.RowInterleaved, Layout.ColumnInterleaved -> false
             }
         }
 
@@ -81,6 +101,19 @@ data class Stereo3d(
             layout == Layout.Off || !fullSize(width, height, layout) -> width to height
             layout == Layout.SideBySide -> (width / 2).coerceAtLeast(1) to height
             else -> width to (height / 2).coerceAtLeast(1)
+        }
+
+        /**
+         * The picture's size as [stereo] draws it: one eye's, or for [View.Vr] two eyes' side by
+         * side, kept within [MAX_VR_WIDTH] so a 4K file's pair stays inside what a TV stick's
+         * graphics chip can hold.
+         */
+        fun outputSize(width: Int, height: Int, stereo: Stereo3d): Pair<Int, Int> {
+            val (w, h) = outputSize(width, height, stereo.layout)
+            if (!stereo.on || stereo.view != View.Vr) return w to h
+            val pair = w * 2
+            if (pair <= MAX_VR_WIDTH) return pair to h
+            return MAX_VR_WIDTH to (h.toLong() * MAX_VR_WIDTH / pair).toInt().coerceAtLeast(1)
         }
 
         /**
@@ -103,7 +136,7 @@ data class Stereo3d(
                 -1704, 59507, 4456, 393, 4063, -1114,
                 -2490, -11338, 1442, 6160, 12124, 59703,
             )
-            View.OneEye -> null
+            View.OneEye, View.Vr -> null
         }
 
         private fun dubois(vararg fixed: Int): FloatArray = FloatArray(fixed.size) { fixed[it] / 65536f }
@@ -113,26 +146,23 @@ data class Stereo3d(
          * y as [yDown] says) from [sample], a function of a texture position returning a vec4.
          * The choices are written in as constants, so a change compiles a new shader rather than
          * branching on every pixel of every frame. [texelX] and [texelY] are one source pixel, to
-         * keep each eye's samples from bleeding over the seam into the other.
+         * keep each eye's samples from bleeding over the seam into the other, and to find the
+         * lines and columns of an interleaved file.
          */
         fun glslBody(stereo: Stereo3d, sample: String, pos: String, yDown: Boolean, texelX: Float, texelY: Float): String {
-            val firstIsLeft = !stereo.swapEyes
-            // Each eye's own half of the frame. The first stored eye is the left or the top one.
-            val (first, second) = when (stereo.layout) {
-                Layout.SideBySide -> {
-                    val edge = glslFloat(0.5f - texelX / 2)
-                    "vec2(min($pos.x * 0.5, $edge), $pos.y)" to "vec2(max(0.5 + $pos.x * 0.5, ${glslFloat(0.5f + texelX / 2)}), $pos.y)"
-                }
-                else -> {
-                    // With y up the top of the picture is the upper half of the texture.
-                    val top = if (yDown) "$pos.y * 0.5" else "0.5 + $pos.y * 0.5"
-                    val bottom = if (yDown) "0.5 + $pos.y * 0.5" else "$pos.y * 0.5"
-                    val topClamp = if (yDown) "min($top, ${glslFloat(0.5f - texelY / 2)})" else "max($top, ${glslFloat(0.5f + texelY / 2)})"
-                    val bottomClamp = if (yDown) "max($bottom, ${glslFloat(0.5f + texelY / 2)})" else "min($bottom, ${glslFloat(0.5f - texelY / 2)})"
-                    "vec2($pos.x, $topClamp)" to "vec2($pos.x, $bottomClamp)"
+            val vr = stereo.view == View.Vr
+            // For VR each half of the output is a whole picture of its own eye.
+            val q = if (vr) "q" else pos
+            val (first, second) = eyes(stereo.layout, q, yDown, texelX, texelY)
+            val (left, right) = if (stereo.swapEyes) second to first else first to second
+            if (vr) {
+                return buildString {
+                    append("bool second = $pos.x >= 0.5;\n")
+                    append("vec2 q = vec2(second ? $pos.x * 2.0 - 1.0 : $pos.x * 2.0, $pos.y);\n")
+                    append("if (second) return vec4($sample($right).rgb, 1.0);\n")
+                    append("return vec4($sample($left).rgb, 1.0);")
                 }
             }
-            val (left, right) = if (firstIsLeft) first to second else second to first
             val m = matrix(stereo.view)
                 ?: return "return vec4($sample($left).rgb, 1.0);"
             fun row(r: Int, eye: Int) = (0 until 3).joinToString(", ") { glslFloat(m[r * 6 + eye * 3 + it]) }
@@ -146,6 +176,46 @@ data class Stereo3d(
                 append("return vec4(clamp(c, 0.0, 1.0), 1.0);")
             }
         }
+
+        /**
+         * Where the first stored eye (left, top, or the first line or column) and the second are
+         * read for output position [p]. An interleaved eye is read at the middle of its own line
+         * or column of the pair [p] falls in, so neither eye's lines blend into the other's.
+         */
+        private fun eyes(layout: Layout, p: String, yDown: Boolean, texelX: Float, texelY: Float): Pair<String, String> = when (layout) {
+            Layout.Off, Layout.SideBySide -> {
+                val edge = glslFloat(0.5f - texelX / 2)
+                "vec2(min($p.x * 0.5, $edge), $p.y)" to "vec2(max(0.5 + $p.x * 0.5, ${glslFloat(0.5f + texelX / 2)}), $p.y)"
+            }
+            Layout.TopBottom -> {
+                // With y up the top of the picture is the upper half of the texture.
+                val top = if (yDown) "$p.y * 0.5" else "0.5 + $p.y * 0.5"
+                val bottom = if (yDown) "0.5 + $p.y * 0.5" else "$p.y * 0.5"
+                val topClamp = if (yDown) "min($top, ${glslFloat(0.5f - texelY / 2)})" else "max($top, ${glslFloat(0.5f + texelY / 2)})"
+                val bottomClamp = if (yDown) "max($bottom, ${glslFloat(0.5f + texelY / 2)})" else "min($bottom, ${glslFloat(0.5f - texelY / 2)})"
+                "vec2($p.x, $topClamp)" to "vec2($p.x, $bottomClamp)"
+            }
+            Layout.RowInterleaved -> {
+                // Counted from the top line, the left eye's, whichever way the texture's y runs.
+                val lines = pixels(texelY)
+                val down = if (yDown) "$p.y" else "(1.0 - $p.y)"
+                val pair = "floor(min($down, 0.99999) * ${glslFloat((lines / 2).toFloat())})"
+                fun line(middle: Float): String {
+                    val at = "($pair * 2.0 + ${glslFloat(middle)}) / ${glslFloat(lines.toFloat())}"
+                    return if (yDown) at else "1.0 - $at"
+                }
+                "vec2($p.x, ${line(0.5f)})" to "vec2($p.x, ${line(1.5f)})"
+            }
+            Layout.ColumnInterleaved -> {
+                val columns = pixels(texelX)
+                val pair = "floor(min($p.x, 0.99999) * ${glslFloat((columns / 2).toFloat())})"
+                fun column(middle: Float) = "($pair * 2.0 + ${glslFloat(middle)}) / ${glslFloat(columns.toFloat())}"
+                "vec2(${column(0.5f)}, $p.y)" to "vec2(${column(1.5f)}, $p.y)"
+            }
+        }
+
+        /** A frame's lines or columns from one texel's share of it, at least a pair. */
+        private fun pixels(texel: Float): Int = if (texel > 0f) kotlin.math.round(1f / texel).toInt().coerceAtLeast(2) else 2
 
         /**
          * mpv's user shader for the desktop: hooked on the picture after it is turned to RGB and
@@ -166,9 +236,12 @@ data class Stereo3d(
         }
 
         /** The width over height the picture is shown at, for a [width] by [height] frame. */
-        fun aspect(width: Int, height: Int, layout: Layout): Double? {
-            if (width <= 0 || height <= 0 || layout == Layout.Off) return null
-            val (w, h) = outputSize(width, height, layout)
+        fun aspect(width: Int, height: Int, layout: Layout): Double? = aspect(width, height, Stereo3d(layout))
+
+        /** The same for [stereo] as drawn, two eyes wide for [View.Vr]. */
+        fun aspect(width: Int, height: Int, stereo: Stereo3d): Double? {
+            if (width <= 0 || height <= 0 || !stereo.on) return null
+            val (w, h) = outputSize(width, height, stereo)
             return w.toDouble() / h
         }
 
@@ -179,6 +252,7 @@ data class Stereo3d(
 
         private const val FULL_SBS_FROM = 2.9f
         private const val FULL_TAB_UNTIL = 1.2f
+        private const val MAX_VR_WIDTH = 3840
 
         // A tag stands between separators or at either end, never inside a longer word.
         private const val B = "(?<![a-z0-9])"

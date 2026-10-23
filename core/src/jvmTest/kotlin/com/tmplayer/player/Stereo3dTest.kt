@@ -99,6 +99,45 @@ class Stereo3dTest {
     }
 
     @Test
+    fun interleavedEyesReadTheirOwnLines() {
+        // A 1920x1080 frame: 540 pairs of lines, the top line of each the left eye's.
+        val mpv = Stereo3d.glslBody(Stereo3d(Layout.RowInterleaved), "tex", "p", yDown = true, texelX = 1f / 1920, texelY = 1f / 1080)
+        val left = mpv.lines().first { it.startsWith("vec3 l") }
+        val right = mpv.lines().first { it.startsWith("vec3 r") }
+        assertTrue("floor(min(p.y, 0.99999) * 540.0) * 2.0 + 0.5) / 1080.0" in left, left)
+        assertTrue("* 2.0 + 1.5) / 1080.0" in right, right)
+        // Media3's y runs up: the line is counted from the top all the same.
+        val media3 = Stereo3d.glslBody(Stereo3d(Layout.RowInterleaved), "tex", "p", yDown = false, texelX = 1f / 1920, texelY = 1f / 1080)
+        assertTrue("(1.0 - p.y)" in media3 && "1.0 - (floor" in media3, media3)
+        val columns = Stereo3d.glslBody(Stereo3d(Layout.ColumnInterleaved), "tex", "p", yDown = true, texelX = 1f / 1920, texelY = 1f / 1080)
+        assertTrue("floor(min(p.x, 0.99999) * 960.0) * 2.0 + 0.5) / 1920.0" in columns.lines().first { it.startsWith("vec3 l") })
+        // Each eye has half the lines, stretched back: the frame keeps its shape.
+        assertEquals(1920 to 1080, Stereo3d.outputSize(1920, 1080, Layout.RowInterleaved))
+        assertEquals(1920 to 1080, Stereo3d.outputSize(1920, 1080, Layout.ColumnInterleaved))
+    }
+
+    @Test
+    fun vrPutsEachEyeInItsOwnHalf() {
+        val vr = Stereo3d(Layout.TopBottom, View.Vr)
+        val body = Stereo3d.glslBody(vr, "tex", "p", yDown = true, texelX = 0f, texelY = 0.001f)
+        assertTrue("vec2 q = vec2(second ? p.x * 2.0 - 1.0 : p.x * 2.0, p.y);" in body, body)
+        // The right half reads the bottom picture, the left half the top one.
+        assertTrue(body.lines().first { it.startsWith("if (second)") }.contains("0.5 + q.y * 0.5"))
+        assertTrue(body.lines().last().contains("min(q.y * 0.5"))
+        assertTrue("dot(" !in body)
+        // Two eyes wide, each at its own shape: a squeezed side by side frame doubles in width.
+        assertEquals(3840 to 1080, Stereo3d.outputSize(1920, 1080, Stereo3d(Layout.SideBySide, View.Vr)))
+        assertEquals(3840 to 1080, Stereo3d.outputSize(3840, 1080, Stereo3d(Layout.SideBySide, View.Vr)))
+        assertEquals(3840 to 1080, Stereo3d.outputSize(1920, 2160, vr))
+        // A 4K pair is kept within 3840 wide, its shape kept.
+        assertEquals(3840 to 1080, Stereo3d.outputSize(3840, 2160, Stereo3d(Layout.SideBySide, View.Vr)))
+        assertEquals(32.0 / 9, Stereo3d.aspect(1920, 1080, Stereo3d(Layout.SideBySide, View.Vr))!!, 0.001)
+        assertNull(Stereo3d.matrix(View.Vr))
+        // Off is off, whatever the view.
+        assertEquals(1920 to 1080, Stereo3d.outputSize(1920, 1080, Stereo3d(Layout.Off, View.Vr)))
+    }
+
+    @Test
     fun viewsKeepTheirKeys() {
         View.entries.forEach { assertEquals(it, View.ofKey(it.key)) }
         assertEquals(View.RedCyan, View.ofKey(null))
