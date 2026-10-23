@@ -842,13 +842,16 @@ fun rememberHomeRows(
         }
         // A new chat list that leaves Home's chats as they were, with nothing else changed, is
         // not a new Home: the rows stand, as they did when the chats were picked in composition.
-        val inputs = listOf(continueWatching, watchLater, home, favourites, loaded, recent, partial, fresh, corrections, recentMinStarred, autoFill)
+        // The last run's videos are in but the chat list is not: Home's chats are not known yet.
+        val chatsPending = autoFill && chats.isEmpty() && !recent.isNullOrEmpty()
+        val inputs = listOf(continueWatching, watchLater, home, favourites, loaded, recent, partial, fresh, corrections, recentMinStarred, autoFill, chatsPending)
         if (value.isNotEmpty() && homeMemo.same(homeMemo.built, inputs)) return@produceState
         if (value.isNotEmpty()) delay(HomeViewModel.ROWS_SETTLE_MS)
         val built = withContext(Dispatchers.Default) {
             HomeRows.build(
                 continueWatching, home, loaded, recent, partial = partial, watchLater = watchLater, fresh = fresh,
                 recentMinStarred = recentMinStarred, starred = favourites, autoFill = autoFill,
+                chatsPending = chatsPending,
             )
         }
         homeMemo.built = inputs

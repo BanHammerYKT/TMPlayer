@@ -217,6 +217,10 @@ object HomeRows {
      * @param autoFill true where Home fills itself ([homeChats]): with nothing starred and the
      *   search across chats still running, Recently added holds its place as loading rather than
      *   Home opening on the first-run card, and Shows and Videos are built across the chats.
+     * @param chatsPending the chat list has not come in yet while [recent] (kept from the last
+     *   run) already has videos: Home's chats cannot be picked, so Recently added holds its place
+     *   as loading. Without it a cold start drew Continue watching alone and the carousel landed
+     *   over it seconds later, pushing it down (Mi TV, caches cleared, 2026-10-23).
      */
     fun build(
         continueWatching: List<ResumeRecord>,
@@ -229,6 +233,7 @@ object HomeRows {
         recentMinStarred: Int = RECENT_MIN_STARRED,
         starred: Set<Long>? = null,
         autoFill: Boolean = false,
+        chatsPending: Boolean = false,
     ): List<HomeRow> = buildList<HomeRow> {
         val seen = HashSet<String>()
 
@@ -251,7 +256,7 @@ object HomeRows {
         val homeIds = homeChats.mapTo(HashSet()) { it.id }
         val homeOrder = homeChats.map { it.id }
         val starredOnly = starred == null || homeIds.all { it in starred }
-        if (homeChats.size >= recentMinStarred.coerceAtLeast(1) || (autoFill && recent == null)) {
+        if (homeChats.size >= recentMinStarred.coerceAtLeast(1) || (autoFill && (recent == null || chatsPending))) {
             val starredIds = homeIds
             if (recent == null) {
                 add(HomeRow.Recent(emptyList(), loaded = false, starredOnly = starredOnly, chatIds = homeOrder))
@@ -263,7 +268,7 @@ object HomeRows {
                 val entries = row(pool, HashSet(inContinue), shownCopies, inContinue)
                 if (entries.isNotEmpty()) {
                     add(HomeRow.Recent(entries, loaded = true, starredOnly = starredOnly, chatIds = homeOrder))
-                } else if (starredIds.any { it !in loaded }) {
+                } else if (chatsPending || starredIds.any { it !in loaded }) {
                     // Nothing yet, but a starred chat's own videos are still on their way: the row
                     // stays as loading, so the carousel holds its place rather than vanishing and
                     // coming back once they land (seen on a cold start on the TV stick).
