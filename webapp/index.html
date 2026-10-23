@@ -3,21 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0e0f13">
+  <meta name="theme-color" content="#0c0e10" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6fafd" media="(prefers-color-scheme: light)">
   <meta name="color-scheme" content="dark light">
   <title>TMPlayer</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <style>
-    html,body{margin:0;height:100%;background:#0e0f13;color:#eceef3;font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-    #boot{display:grid;place-items:center;height:100%;opacity:.6}
-    @media (prefers-color-scheme:light){html:not([data-theme=dark]):not([data-theme=black]) body{background:#f6f6fa;color:#15161c}}
-    html[data-theme=light] body{background:#f6f6fa;color:#15161c}
+    html,body{margin:0;height:100%;background:#0c0e10;color:#f2f4f5}
+    #boot{display:grid;place-items:center;height:100%}
+    #boot img{width:64px;height:64px;border-radius:16px}
+    @media (prefers-color-scheme:light){html:not([data-theme=dark]):not([data-theme=black]) body{background:#f6fafd;color:#171c1f}}
+    html[data-theme=light] body{background:#f6fafd;color:#171c1f}
     html[data-theme=black] body{background:#000}
   </style>
   <script>try{var t=localStorage.getItem('tmplayer-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
 <body>
-  <div id="app"><div id="boot">TMPlayer</div></div>
+  <div id="app"><div id="boot"><img src="/icon.svg" alt="TMPlayer"></div></div>
   <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

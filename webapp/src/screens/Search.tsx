@@ -1,6 +1,8 @@
 import { createEffect, createResource, createSignal, on, onCleanup, Show } from 'solid-js'
 import { useSearchParams } from '@solidjs/router'
 import { api, errorText } from '../tg/rpc'
+import { Search01Icon } from '@hugeicons/core-free-icons'
+import { Icon } from '../ui/Icon'
 import { VideoList } from './VideoList'
 
 /** Videos across every chat. The words are in the address (`?q=`), so Back returns to the same results. */
@@ -29,7 +31,11 @@ export function Search() {
     createEffect(on(() => params.q, (q) => !typing && setText(q ?? ''), { defer: true }))
     return (
         <>
-            <input class="search" type="search" placeholder="Search videos in your chats" value={text()} onInput={(e) => onType(e.currentTarget.value)} autofocus />
+            <h1 class="page-title">Search</h1>
+            <label class="search-field">
+                <Icon icon={Search01Icon} size={20} />
+                <input type="search" placeholder="Search videos in your chats" aria-label="Search videos in your chats" value={text()} onInput={(e) => onType(e.currentTarget.value)} autofocus />
+            </label>
             <Show when={results.error}>
                 <p class="error">{errorText(results.error)}</p>
             </Show>

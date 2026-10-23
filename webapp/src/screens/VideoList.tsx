@@ -1,7 +1,7 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createResource, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { A } from '@solidjs/router'
 import { api } from '../tg/rpc'
-import { cachedThumb } from '../store'
+import { cachedThumb, resumes } from '../store'
 import { warmDataCentres, warmFile } from '../stream/reader'
 import type { VideoItem } from '../tg/types'
 
@@ -43,7 +43,11 @@ function loadThumb(key: string): Promise<string> {
     return p
 }
 
-function Thumb(props: { thumb: string | null }) {
+/**
+ * The art of a portrait card, as the app draws a video's: the frame across the card's width, the
+ * same frame blurred to fill the 2:3 card round it, and the name on a shade at its foot.
+ */
+function CardArt(props: { thumb: string | null; title: string; progress?: number }) {
     let el!: HTMLDivElement
     const [src, setSrc] = createSignal<string | null>(null)
     onMount(() => {
@@ -57,15 +61,24 @@ function Thumb(props: { thumb: string | null }) {
         onCleanup(() => io.disconnect())
     })
     return (
-        <div class="thumb" ref={el}>
+        <div class="card-art" ref={el}>
             <Show when={src()}>
-                <img src={src()!} alt="" decoding="async" />
+                <img class="card-fill" src={src()!} alt="" decoding="async" />
+                <img class="card-frame" src={src()!} alt="" decoding="async" />
+            </Show>
+            <div class="card-shade" />
+            <div class="card-art-title">{props.title}</div>
+            <Show when={props.progress}>
+                <div class="card-progress">
+                    <div style={{ width: `${Math.min(100, props.progress! * 100)}%` }} />
+                </div>
             </Show>
         </div>
     )
 }
 
-export function VideoList(props: { items: VideoItem[] }) {
+/** A grid of portrait cards; `showChat` false in a chat's own grid, where every card is from it. */
+export function VideoList(props: { items: VideoItem[]; showChat?: boolean }) {
     // Once a list has drawn, connect to the data centres its files live in.
     let dcTimer = 0
     createEffect(() => {
@@ -81,13 +94,20 @@ export function VideoList(props: { items: VideoItem[] }) {
         hoverTimer = window.setTimeout(() => warmFile(v), 250)
     }
     onCleanup(() => clearTimeout(hoverTimer))
+    // Where each video was left, for the line on its card.
+    const [left] = createResource(async () => new Map((await resumes()).map((r) => [`${r.chatId}:${r.messageId}`, r])))
+    const progress = (v: VideoItem) => {
+        const r = left()?.get(`${v.chatId}:${v.messageId}`)
+        const total = r?.length || v.duration
+        return r && total ? r.position / total : undefined
+    }
     return (
-        <ul class="videos">
+        <ul class="cards">
             <For each={props.items}>
                 {(v) => (
                     <li>
                         <A
-                            class="video"
+                            class="card"
                             href={watchPath(v)}
                             state={{ video: v }}
                             onPointerEnter={() => intent(v)}
@@ -95,11 +115,9 @@ export function VideoList(props: { items: VideoItem[] }) {
                             onFocus={() => intent(v)}
                             onPointerDown={() => warmFile(v)}
                         >
-                            <Thumb thumb={v.thumb} />
-                            <div class="meta">
-                                <div class="name">{v.title}</div>
-                                <div class="muted small">{[v.chat, size(v.size), length(v.duration)].filter(Boolean).join(' · ')}</div>
-                            </div>
+                            <CardArt thumb={v.thumb} title={v.title} progress={progress(v)} />
+                            <div class="card-name">{v.title}</div>
+                            <div class="card-facts">{[props.showChat === false ? '' : v.chat, size(v.size), length(v.duration)].filter(Boolean).join('  ·  ')}</div>
                         </A>
                     </li>
                 )}

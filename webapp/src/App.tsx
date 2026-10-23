@@ -1,4 +1,4 @@
-import { createEffect, createSignal, ErrorBoundary, lazy, Match, onMount, Switch, type ParentProps } from 'solid-js'
+import { createEffect, createSignal, ErrorBoundary, lazy, Match, onMount, Show, Switch, type ParentProps } from 'solid-js'
 import { A, Route, Router, useLocation, useNavigate } from '@solidjs/router'
 import { api, errorText } from './tg/rpc'
 import { entryState, me, setMe, signOut } from './session'
@@ -8,6 +8,7 @@ import { Search } from './screens/Search'
 import { Chats } from './screens/Chats'
 import { Chat } from './screens/Chat'
 import { Settings } from './screens/Settings'
+import { Nav } from './ui/Nav'
 
 // Sign in (with its QR code) and the watch page (with the player and its remuxer) load when needed;
 // the watch page is fetched while idle once signed in.
@@ -53,7 +54,7 @@ function Shell(props: ParentProps) {
     const playing = () => location.pathname.startsWith('/watch/')
 
     return (
-        <Switch fallback={<div class="boot">TMPlayer</div>}>
+        <Switch fallback={<Boot />}>
             <Match when={error()}>
                 <div class="boot">
                     <p class="error">{error()}</p>
@@ -62,16 +63,7 @@ function Shell(props: ParentProps) {
             </Match>
             <Match when={me() === null && location.pathname === '/signin'}>{props.children}</Match>
             <Match when={signedIn()}>
-                <div class="pick">
-                    <header hidden={playing()}>
-                        <div class="brand">TMPlayer</div>
-                        <nav class="tabs">
-                            <A href="/" end activeClass="on">Home</A>
-                            <A href="/chats" activeClass="on">Chats</A>
-                            <A href="/search" activeClass="on">Search</A>
-                            <A href="/settings" activeClass="on">Settings</A>
-                        </nav>
-                    </header>
+                <main class="page" classList={{ playing: playing() }}>
                     <ErrorBoundary
                         fallback={(e, reset) => (
                             <div class="boot">
@@ -82,7 +74,10 @@ function Shell(props: ParentProps) {
                     >
                         {props.children}
                     </ErrorBoundary>
-                </div>
+                </main>
+                <Show when={!playing()}>
+                    <Nav />
+                </Show>
             </Match>
         </Switch>
     )
@@ -108,6 +103,15 @@ function NotFound() {
         <div class="boot">
             <p>There is nothing at this address.</p>
             <A class="link" href="/">Home</A>
+        </div>
+    )
+}
+
+/** The first frame while the session is checked: the logo mark, as index.html paints it. */
+function Boot() {
+    return (
+        <div class="boot">
+            <img class="boot-mark" src="/icon.svg" alt="TMPlayer" width="64" height="64" />
         </div>
     )
 }

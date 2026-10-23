@@ -13,22 +13,27 @@ const THEMES: { value: Theme; label: string }[] = [
 export function Settings() {
     return (
         <section class="settings">
-            <h2>Settings</h2>
-            <fieldset>
-                <legend>Theme</legend>
-                <For each={THEMES}>
-                    {(t) => (
-                        <label>
-                            <input type="radio" name="theme" checked={settings().theme === t.value} onChange={() => setSetting('theme', t.value)} />
-                            {t.label}
-                        </label>
-                    )}
-                </For>
-            </fieldset>
-            <p class="muted small">
-                <Show when={me()?.name}>Signed in as {me()!.name}. </Show>TMPlayer is unofficial, not affiliated with Telegram.
-            </p>
-            <button class="primary" onClick={signOut}>Sign out</button>
+            <h1 class="page-title">Settings</h1>
+            <div class="panel">
+                <h2 class="panel-title" id="theme-label">Theme</h2>
+                <div class="segmented" role="radiogroup" aria-labelledby="theme-label">
+                    <For each={THEMES}>
+                        {(t) => (
+                            <label classList={{ on: settings().theme === t.value }}>
+                                <input type="radio" name="theme" checked={settings().theme === t.value} onChange={() => setSetting('theme', t.value)} />
+                                {t.label}
+                            </label>
+                        )}
+                    </For>
+                </div>
+            </div>
+            <div class="panel">
+                <Show when={me()?.name}>
+                    <p class="panel-title">Signed in as {me()!.name}</p>
+                </Show>
+                <p class="muted small">TMPlayer is unofficial, not affiliated with Telegram.</p>
+                <button class="danger-button" onClick={signOut}>Sign out</button>
+            </div>
         </section>
     )
 }

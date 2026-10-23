@@ -7,6 +7,8 @@ export function Home() {
     const [latest] = createResource(() => api.search(''), { initialValue: [] })
     return (
         <>
+            <h1 class="page-title">Home</h1>
+            <h2 class="row-title">Recently added</h2>
             <Show when={latest.error}>
                 <p class="error">{errorText(latest.error)}</p>
             </Show>

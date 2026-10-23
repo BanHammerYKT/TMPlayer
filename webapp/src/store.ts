@@ -87,6 +87,11 @@ function applyTheme(theme: Theme) {
     const root = document.documentElement
     if (theme === 'system') delete root.dataset.theme
     else root.dataset.theme = theme
+    // The browser's own bars take the page's ground: index.html's pair follow the device, a chosen theme pins both.
+    const ground = { dark: '#0c0e10', light: '#f6fafd', black: '#000000' }
+    document.querySelectorAll<HTMLMetaElement>('meta[name=theme-color]').forEach((m) => {
+        m.content = theme === 'system' ? (m.media.includes('light') ? ground.light : ground.dark) : ground[theme]
+    })
     try {
         if (theme === 'system') localStorage.removeItem(THEME_KEY)
         else localStorage.setItem(THEME_KEY, theme)
