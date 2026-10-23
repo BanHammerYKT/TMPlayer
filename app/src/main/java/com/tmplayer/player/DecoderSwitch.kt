@@ -35,6 +35,11 @@ object DecoderSwitch {
         PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
         PlaybackException.ERROR_CODE_DECODING_RESOURCES_RECLAIMED,
+        // A Dolby or DTS track sent to the receiver as it is (passthrough) whose AudioTrack the
+        // device would not open: the failure names the compressed format, and the FFmpeg decoder
+        // turns it into plain sound the same AudioTrack takes. A failure over sound that was
+        // already decoded names raw PCM, which neither side decodes, so it offers nothing.
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
     )
 
     fun isFfmpeg(renderer: Renderer): Boolean = renderer is FfmpegVideoRenderer || renderer is FfmpegAudioRenderer
@@ -70,6 +75,32 @@ object DecoderSwitch {
             parameters.setRendererDisabled(index, isFfmpeg(player.getRenderer(index)) != plan.toFfmpeg)
         }
         selector.setParameters(parameters)
+    }
+
+    /**
+     * Whether the picture of the current item went to the app's FFmpeg decoder, read from the
+     * track selector's mapping (each track group is mapped to exactly one renderer): a picture
+     * group mapped to an FFmpeg video renderer that is not turned off. Cover art is not counted.
+     */
+    fun softwareVideoChosen(player: ExoPlayer?): Boolean {
+        player ?: return false
+        val selector = player.trackSelector as? DefaultTrackSelector ?: return false
+        val mapped = selector.currentMappedTrackInfo ?: return false
+        val parameters = selector.parameters
+        for (index in 0 until minOf(mapped.rendererCount, player.rendererCount)) {
+            if (mapped.getRendererType(index) != C.TRACK_TYPE_VIDEO) continue
+            if (!isFfmpeg(player.getRenderer(index)) || parameters.getRendererDisabled(index)) continue
+            val groups = mapped.getTrackGroups(index)
+            for (group in 0 until groups.length) {
+                val trackGroup = groups.get(group)
+                val picture = (0 until trackGroup.length).any {
+                    trackGroup.getFormat(it).sampleMimeType?.startsWith("image/") != true &&
+                        mapped.getTrackSupport(index, group, it) == C.FORMAT_HANDLED
+                }
+                if (picture) return true
+            }
+        }
+        return false
     }
 
     private fun ffmpegHas(mime: String): Boolean = runCatching {
