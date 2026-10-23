@@ -400,13 +400,13 @@ class BrowseRenderTest {
                 StateBox(state, onRetry = {}, onAction = {}, slowAfterMs = 100) {}
             }
         }
-        val hidden = com.tmplayer.i18n.L.browseHiddenBySize(12)
+        val hidden = "${com.tmplayer.i18n.L.browseHiddenBySize(12)} ${com.tmplayer.i18n.L.browseSizeLimitsInSettings}"
         save(
             "state-empty-hidden.png",
             page(
                 com.tmplayer.ui.components.UiState.Empty(
                     "${com.tmplayer.ui.browse.noVideosWithin(com.tmplayer.data.SizeFilter.DEFAULT_MIN, com.tmplayer.data.SizeFilter.DEFAULT_MAX)}\n\n$hidden",
-                    com.tmplayer.ui.components.StateAction.ShowHidden,
+                    icon = com.tmplayer.ui.icons.TmIcons.FilterHorizontal,
                 ),
             ),
         )
@@ -709,10 +709,8 @@ class BrowseRenderTest {
                         com.tmplayer.ui.browse.VideoMenuState(
                             com.tmplayer.data.VideoSort.Newest,
                             com.tmplayer.data.VideoFilter.Unwatched,
-                            allSizes = false,
                             onSort = {},
                             onFilter = {},
-                            onAllSizes = {},
                         ),
                         onDismiss = {},
                     )

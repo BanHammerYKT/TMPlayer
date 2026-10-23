@@ -60,41 +60,25 @@ fun videoFilterIcon(filter: VideoFilter): ImageVector = when (filter) {
 
 /**
  * What a chat's Sort menu holds, the same on a phone, a television and a computer: the order
- * ([VideoSort]), which videos show ([VideoFilter]) and, while size limits are set in Settings,
- * whether this chat keeps to them for now ([sizeLimits]). Each pick applies at once.
+ * ([VideoSort]) and which videos show ([VideoFilter]). Each pick applies at once. The size
+ * limits are not here: they are set in Settings only, and a chat says when they hid something.
  */
 class VideoMenuState(
     val sort: VideoSort,
     val filter: VideoFilter,
-    /** Null while no size limit is set, which leaves the group out. Otherwise: listed past them for now. */
-    val allSizes: Boolean?,
     val onSort: (VideoSort) -> Unit,
     val onFilter: (VideoFilter) -> Unit,
-    /** True lifts the limits for this chat while it is open, false keeps to them again. */
-    val onAllSizes: (Boolean) -> Unit,
 )
 
-/** The menu's three groups, as [GroupedChoicePopover] draws them and the television's sheet lists them. */
+/** The menu's two groups, as [GroupedChoicePopover] draws them and the television's sheet lists them. */
 fun videoMenuGroups(state: VideoMenuState, s: Messages): List<ChoiceGroup> = buildList {
     add(ChoiceGroup(s.gridSortLabel, VideoSort.entries.map { sort -> GroupedChoice(videoSortLabel(sort, s), videoSortIcon(sort), sort == state.sort) { state.onSort(sort) } }))
     add(ChoiceGroup(s.gridFilterLabel, VideoFilter.entries.map { filter -> GroupedChoice(videoFilterLabel(filter, s), videoFilterIcon(filter), filter == state.filter) { state.onFilter(filter) } }))
-    val allSizes = state.allSizes
-    if (allSizes != null) {
-        add(
-            ChoiceGroup(
-                s.gridSizeLabel,
-                listOf(
-                    GroupedChoice(s.gridSizeWithin, TmIcons.FilterHorizontal, !allSizes) { state.onAllSizes(false) },
-                    GroupedChoice(s.gridSizeAll, TmIcons.Checklist, allSizes) { state.onAllSizes(true) },
-                ),
-            ),
-        )
-    }
 }
 
 /**
  * A chat's Sort and filter menu on a phone and a computer: one card grown out of the Sort button
- * ([GroupedChoicePopover]) with the order, the Show group and the size limits. A pick applies and
+ * ([GroupedChoicePopover]) with the order and the Show group. A pick applies and
  * closes the card, so the grid is seen to change under it.
  */
 @Composable

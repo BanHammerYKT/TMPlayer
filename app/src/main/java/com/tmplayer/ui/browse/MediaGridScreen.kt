@@ -343,14 +343,12 @@ fun MediaGridScreen(
     var sorting by remember { mutableStateOf(false) }
     // Which of the chat's videos are listed (see VideoFilter), remembered per chat beside its order.
     val filter by remember(chatId) { recentStore.videoFilter(chatId) }.collectAsStateWithLifecycle(initialValue = com.tmplayer.data.VideoFilter.DEFAULT)
-    val allSizes by viewModel.allSizes.collectAsStateWithLifecycle()
-    val limitsSet = minSizeBytes > com.tmplayer.data.SizeFilter.FLOOR || maxSizeBytes < com.tmplayer.data.SizeFilter.CEILING
     val clearFilter: () -> Unit = { recentScope.launch { recentStore.setVideoFilter(chatId, com.tmplayer.data.VideoFilter.All) } }
-    // One menu for the order, the Show filter and the size limits, the same groups on every device.
+    // One menu for the order and the Show filter, the same groups on every device. The size limits
+    // are set in Settings only; the chat says once when they hid something (hiddenNotice).
     val menu = VideoMenuState(
         sort = sort,
         filter = filter,
-        allSizes = if (limitsSet || allSizes) allSizes else null,
         onSort = { picked ->
             sorting = false
             if (picked != sort) recentScope.launch { recentStore.setVideoSort(chatId, picked) }
@@ -359,11 +357,17 @@ fun MediaGridScreen(
             sorting = false
             if (picked != filter) recentScope.launch { recentStore.setVideoFilter(chatId, picked) }
         },
-        onAllSizes = { all ->
-            sorting = false
-            if (all) viewModel.showHidden() else viewModel.keepSizeLimits()
-        },
     )
+    // Once per opening of the chat, when its listing settles with videos outside the size limits:
+    // a passing message that says how many and where the limits are changed. The view model keeps
+    // the once, so turning the phone does not say it again.
+    val hiddenNotice by viewModel.hiddenNotice.collectAsStateWithLifecycle()
+    LaunchedEffect(hiddenNotice) {
+        if (hiddenNotice > 0) {
+            com.tmplayer.ui.components.showMessage(context, com.tmplayer.i18n.L.browseHiddenBySizeNotice(hiddenNotice))
+            viewModel.hiddenNoticeShown()
+        }
+    }
     // A search for the developer phrase turns on the hidden name check in Settings instead.
     val submit: () -> Unit = {
         if (query.trim().equals(com.tmplayer.data.DEVELOPER_PHRASE, ignoreCase = true)) {
@@ -610,10 +614,6 @@ fun MediaGridScreen(
             val courseTitle = topicBar?.let { bar -> bar.nameOf(bar.selected) } ?: chatTitle
             // Every order but Newest is of what has loaded so far, while older pages remain.
             val loadedOnly = com.tmplayer.data.VideoSorting.sortsLoadedOnly(order, list.endReached)
-            // The size limits' count, said over the listing with a way past them for this chat:
-            // an episode missing with no word about why reads as TMPlayer having lost it.
-            val sizeHidden by viewModel.sizeHidden.collectAsStateWithLifecycle()
-            val sizeNote = query.isBlank() && sizeHidden > 0
             // A filter in force says so over the listing, with the way out, so a chat that seems to
             // have lost half its videos never reads as TMPlayer losing them.
             val filterNote = shownFilter != com.tmplayer.data.VideoFilter.All
@@ -628,13 +628,6 @@ fun MediaGridScreen(
                         shown = shelf.size,
                         total = filterTotal,
                         onClear = clearFilter,
-                        modifier = Modifier.padding(horizontal = if (touch && layout == CardLayout.Grid) 4.dp else 0.dp).padding(bottom = 6.dp),
-                    )
-                }
-                if (sizeNote) {
-                    HiddenBySizeNote(
-                        count = sizeHidden,
-                        onShowHidden = viewModel::showHidden,
                         modifier = Modifier.padding(horizontal = if (touch && layout == CardLayout.Grid) 4.dp else 0.dp).padding(bottom = 6.dp),
                     )
                 }
@@ -788,7 +781,7 @@ fun MediaGridScreen(
                             if (metaNotice) {
                                 item(key = "meta-notice", span = { GridItemSpan(maxLineSpan) }) { metaNoticeCard() }
                             }
-                            if (course != null || loadedOnly || sizeNote || filterNote || selfDestructNote) {
+                            if (course != null || loadedOnly || filterNote || selfDestructNote) {
                                 item(key = "course", span = { GridItemSpan(maxLineSpan) }) { courseHeader() }
                             }
                             shelfGrid(
@@ -853,7 +846,7 @@ fun MediaGridScreen(
                             verticalArrangement = Arrangement.spacedBy(if (touch) 2.dp else 4.dp),
                         ) {
                             if (metaNotice) item(key = "meta-notice") { metaNoticeCard() }
-                            if (course != null || loadedOnly || sizeNote || filterNote || selfDestructNote) item(key = "course") { courseHeader() }
+                            if (course != null || loadedOnly || filterNote || selfDestructNote) item(key = "course") { courseHeader() }
                             items(
                                 items = feed,
                                 key = {
@@ -3037,30 +3030,6 @@ internal fun LazyGridScope.shelfGrid(
         } else {
             card(entry)
         }
-    }
-}
-
-/**
- * "N videos hidden by the size limits." with Show hidden videos, over a chat's listing on the
- * phone and the TV. Brought back after 633972e dropped it in the Settings rework: without it a
- * chat whose files fall outside the limits only ever said so once every video was hidden.
- * Show hidden videos lifts the limits for this chat while it stays open; Settings keeps them.
- */
-@Composable
-internal fun HiddenBySizeNote(count: Int, onShowHidden: () -> Unit, modifier: Modifier = Modifier) {
-    val s = LocalStrings.current
-    Row(
-        modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text(
-            com.tmplayer.i18n.L.browseHiddenBySize(count),
-            style = MaterialTheme.typography.bodyMedium,
-            color = Tone.muted,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        com.tmplayer.ui.components.TmSecondaryButton(onClick = onShowHidden) { Text(s.commonShowHidden) }
     }
 }
 

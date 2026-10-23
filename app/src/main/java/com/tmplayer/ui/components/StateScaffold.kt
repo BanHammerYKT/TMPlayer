@@ -298,7 +298,7 @@ private const val MIN_SWEEP = 12f
 fun BigEmpty(
     message: String,
     icon: ImageVector = TmIcons.Search,
-    /** The one button worth offering, such as "Show them" when the size limits emptied a chat. */
+    /** The one button worth offering, such as Keep looking when a chat's walk back gave up. */
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
 ) {
