@@ -152,7 +152,7 @@ jobs:
           retention-days: 7
 
   deploy:
-    name: Deploy (${{ inputs.deploy }})
+    name: Deploy to Cloudflare Pages
     needs: [build, e2e]
     if: github.event_name == 'workflow_dispatch' && inputs.deploy != 'none'
     runs-on: ubuntu-latest
