@@ -40,6 +40,8 @@ export interface VideoItem extends FileRef {
     /** Telegram's own lighter MP4 copies, best first, when the video was posted as a video. */
     copies: VideoCopy[]
     storyboard: Storyboard | null
+    /** False under "restrict saving content" (the chat's or the message's): it streams, nothing is kept. */
+    canBeSaved: boolean
 }
 
 export interface ChatItem {
@@ -108,12 +110,88 @@ export interface ChatPage {
     /** Names of compressed files posted in the chat, which cannot be played. */
     archives: string[]
     selfDestructing: number
+    /** The chat restricts saving content: its videos stream only. */
+    protected: boolean
+    /** Telegram's sponsored messages for a channel, placed among the cards every `sponsoredBetween` (0: one after them all). */
+    sponsored: SponsoredItem[]
+    sponsoredBetween: number
 }
 
-/** A search's videos within the size limits, and how many the limits hid. */
+/** A sponsored message Telegram shows in a channel, as the apps' SponsoredItem. Never playable. */
+export interface SponsoredItem {
+    /** The worker's name for it; its random id stays there. */
+    id: string
+    recommended: boolean
+    title: string
+    text: string
+    buttonText: string
+    sponsorInfo: string
+    additionalInfo: string
+    url: string
+    canReport: boolean
+    /** Key of its picture, for `thumb`. */
+    thumb: string | null
+}
+
+/** Telegram's answer to a report: reasons to pick from, or how it ended. */
+export type SponsoredReport =
+    | { kind: 'options'; title: string; options: { text: string; option: number[] }[] }
+    | { kind: 'reported' | 'hidden' | 'premium' | 'unavailable' }
+
+/** How the lists across chats (Search, Home) are asked for: the size limits and progress. */
+export interface ListView {
+    minBytes: number
+    maxBytes: number
+    /** Video ids ("chatId:messageId") finished, and started. */
+    watched: string[]
+    started: string[]
+}
+
+/** A search's cards, grouped as a chat's are, within the size limits, and how many the limits hid. */
 export interface Found {
-    items: VideoItem[]
+    tiles: Tile[]
     hiddenBySize: number
+}
+
+/** Where a video was left, as the page keeps it (store.ts Resume). */
+export interface ResumeMark {
+    chatId: number
+    messageId: number
+    position: number
+    length: number
+    time: number
+}
+
+export interface HomeView extends ListView {
+    /** Continue watching's videos, the latest first. */
+    resumes: ResumeMark[]
+    starred: number[]
+}
+
+/** One row of Home, as the app builds it (WebRules' home). A row not `loaded` is still waiting for Telegram. */
+export interface HomeRow {
+    key: string
+    kind: 'continue' | 'recent' | 'chat'
+    /** A starred chat's row: the chat, and its name. */
+    chatId: number | null
+    title: string | null
+    loaded: boolean
+    /** Recently added draws from starred chats only, which its heading says. */
+    starredOnly: boolean
+    tiles: Tile[]
+    /** The chat has more than the row shows. */
+    hasMore: boolean
+}
+
+/** Home as far as it has come; sent as `HomeEvent`s while the chats answer. */
+export interface HomePage {
+    rows: HomeRow[]
+    /** Videos part way whose message is gone from its chat: the page forgets them. */
+    gone: { chatId: number; messageId: number }[]
+    /** Saved Messages, for the first run's button. */
+    selfId: number | null
+    /** Everything has answered. */
+    settled: boolean
 }
 
 /** A country for the sign in's number, from Telegram's own list (help.getCountriesList). */

@@ -1,7 +1,7 @@
 // A long list or grid that only draws the rows near the screen (@tanstack/solid-virtual over the
 // window's own scroll), so a chat of thousands of videos or an account of thousands of chats
 // scrolls as lightly as a short one. Columns follow the width the way the CSS grids did.
-import { createEffect, createSignal, For, onCleanup, onMount, type JSX } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, type JSX } from 'solid-js'
 import { createWindowVirtualizer } from '@tanstack/solid-virtual'
 
 export interface GridLayout {
@@ -20,12 +20,32 @@ export function VirtualGrid<T>(props: {
     children: (item: T, index: number) => JSX.Element
     /** Called while the last rows are near the screen, to load more. */
     onEnd?: () => void
+    /** An item that takes a row of its own across every column (a sponsored message). */
+    wide?: (item: T) => boolean
 }) {
     let el!: HTMLDivElement
     const [width, setWidth] = createSignal(0)
     const [top, setTop] = createSignal(0)
     const layout = () => props.layout(width() || el?.clientWidth || window.innerWidth)
-    const rows = () => Math.ceil(props.items.length / layout().cols)
+    // Each row's first item and the one after its last: full rows of `cols`, a wide item alone.
+    const ranges = createMemo(() => {
+        const cols = layout().cols
+        const out: [number, number][] = []
+        let start = 0
+        props.items.forEach((item, i) => {
+            if (props.wide?.(item)) {
+                if (i > start) out.push([start, i])
+                out.push([i, i + 1])
+                start = i + 1
+            } else if (i + 1 - start === cols) {
+                out.push([start, i + 1])
+                start = i + 1
+            }
+        })
+        if (start < props.items.length) out.push([start, props.items.length])
+        return out
+    })
+    const rows = () => ranges().length
     const measureTop = () => setTop(el.getBoundingClientRect().top + window.scrollY)
     onMount(() => {
         setWidth(el.clientWidth)
@@ -63,9 +83,10 @@ export function VirtualGrid<T>(props: {
         <div ref={el} class="vgrid" role="list" aria-label={props.label} style={{ height: `${v.getTotalSize()}px` }}>
             <For each={v.getVirtualItems()}>
                 {(row) => {
+                    const first = () => ranges()[row.index]?.[0] ?? 0
                     const cells = () => {
-                        const cols = layout().cols
-                        return props.items.slice(row.index * cols, row.index * cols + cols)
+                        const [a, b] = ranges()[row.index] ?? [0, 0]
+                        return props.items.slice(a, b)
                     }
                     return (
                         <ul
@@ -75,7 +96,7 @@ export function VirtualGrid<T>(props: {
                             ref={(r) => queueMicrotask(() => r.isConnected && v.measureElement(r))}
                             style={{ transform: `translateY(${row.start - top()}px)`, '--cols': layout().cols }}
                         >
-                            <For each={cells()}>{(item, i) => <li role="listitem">{props.children(item, row.index * layout().cols + i())}</li>}</For>
+                            <For each={cells()}>{(item, i) => <li role="listitem" classList={{ wide: !!props.wide?.(item) }}>{props.children(item, first() + i())}</li>}</For>
                         </ul>
                     )
                 }}

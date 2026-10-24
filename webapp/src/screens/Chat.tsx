@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from '@solidjs/router'
 import { Cancel01Icon, RefreshIcon, Search01Icon, Sorting01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import { call, errorText } from '../tg/rpc'
 import { t } from '../i18n'
-import { resumes, settings, setSetting, watchedIds } from '../store'
+import { progress as readProgress, settings, setSetting } from '../store'
 import { Icon } from '../ui/Icon'
 import { PageBar } from '../ui/PageBar'
 import { ChatPicture } from './ChatPicture'
@@ -49,10 +49,7 @@ export function Chat() {
     const [refreshWait, setRefreshWait] = createSignal<number | null>(null)
     const [idlePages, setIdlePages] = createSignal(0)
     const [searching, setSearching] = createSignal(!!search.q)
-    const [progress] = createResource(async () => ({
-        watched: await watchedIds(),
-        started: (await resumes()).map((r) => `${r.chatId}:${r.messageId}`),
-    }))
+    const [progress] = createResource(readProgress)
     const view = (): ChatView => ({
         sort: settings().sort,
         minBytes: settings().sizeMin,
@@ -115,7 +112,7 @@ export function Chat() {
     onCleanup(() => clearTimeout(waitTimer))
 
     const title = () => (page() ? chatName(page()!) : '')
-    const cards = () => page()?.tiles.map(tileCard) ?? []
+    const cards = () => page()?.tiles.map((tile) => tileCard(tile)) ?? []
     const empty = () => {
         const p = page()
         if (!p || p.tiles.length || !p.done) return null
@@ -204,13 +201,16 @@ export function Chat() {
                 </div>
             </Show>
             <HiddenBySize count={view().query ? 0 : (page()?.hiddenBySize ?? 0)} />
+            <Show when={page()?.protected}>
+                <p class="notice muted small">{t('detail.protected')}</p>
+            </Show>
             <Show when={page()?.selfDestructing}>
                 <p class="notice muted small">{t('grid.self_destructing_hidden', { count: page()!.selfDestructing })}</p>
             </Show>
             <Show when={empty()}>
                 <p class="muted">{empty()}</p>
             </Show>
-            <VideoList cards={cards()} label={title()} onEnd={atEnd} />
+            <VideoList cards={cards()} label={title()} onEnd={atEnd} sponsored={page()?.sponsored} sponsoredBetween={page()?.sponsoredBetween} />
             <div class="list-foot">
                 <Show when={busy() === 'more'}>
                     <p class="muted">{t('grid.loading_more')}</p>

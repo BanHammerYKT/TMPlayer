@@ -3,9 +3,10 @@
 // chat, the order, the size limits or the words change. The page asks again on every scroll and
 // gets the kept answer.
 import type { Message, Peer, TelegramClient } from '@mtcute/web'
-import { rules, type ShelfTile, type Video } from '../rules'
-import { itemOf, rawOf, thumbnails, videoId } from './media'
-import type { ChatItem, ChatPage, ChatView, Found, Tile, VideoItem } from './types'
+import { rules, type Shelf, type ShelfTile, type Video } from '../rules'
+import { chatProtects, itemOf, rawOf, thumbnails, videoId } from './media'
+import { forgetSponsored, loadSponsored } from './sponsored'
+import type { ChatItem, ChatPage, ChatView, Found, ListView, SponsoredItem, Tile, VideoItem } from './types'
 
 const PAGE = 100
 const VIDEO_FILTER = { _: 'inputMessagesFilterVideo' } as const
@@ -25,6 +26,8 @@ interface ChatState {
     self: boolean
     photo: string | null
     protected: boolean
+    /** A channel, which carries Telegram's sponsored messages. */
+    channel: boolean
     feeds: Feed[]
     videos: Map<string, Video>
     items: Map<string, VideoItem>
@@ -34,6 +37,10 @@ interface ChatState {
     version: number
     loading: Promise<void> | null
     kept: { version: number; view: string; page: ChatPage } | null
+    sponsored: SponsoredItem[]
+    sponsoredBetween: number
+    /** When it was read from its newest message, for Home's reuse. */
+    time: number
 }
 
 const chats = new Map<number, ChatState>()
@@ -42,7 +49,10 @@ export function forgetAll() {
     chats.clear()
     dialogs = null
     dialogsLoading = null
+    dialogsSoFar = []
+    homeStates.clear()
     searches.clear()
+    forgetSponsored()
 }
 
 async function openState(tg: TelegramClient, chatId: number): Promise<ChatState> {
@@ -63,6 +73,10 @@ async function openState(tg: TelegramClient, chatId: number): Promise<ChatState>
         version: 0,
         loading: null,
         kept: null,
+        sponsored: [],
+        sponsoredBetween: 0,
+        time: Date.now(),
+        channel: peer.type === 'chat' && peer.chatType === 'channel',
     }
 }
 
@@ -120,17 +134,14 @@ function upNext(tile: ShelfTile, watched: Set<string>, started: Set<string>): Vi
     return episodes.find((v) => started.has(v.id)) ?? episodes.find((v) => !watched.has(v.id)) ?? episodes[0] ?? tile.video ?? null
 }
 
-function arrange(s: ChatState, view: ChatView): ChatPage {
-    const key = JSON.stringify(view)
-    if (s.kept && s.kept.version === s.version && s.kept.view === key) return s.kept.page
-    const r = rulesNow!
-    const shelf = r.shelf([...s.videos.values()], view.sort, view.minBytes, view.maxBytes, view.watched, view.started)
+/** The page's cards for the rules' tiles, each playing an item `items` holds; a show plays its episode up next. */
+export function tilesOf(shelf: Pick<Shelf, 'tiles'>, items: Map<string, VideoItem>, view: Pick<ListView, 'watched' | 'started'>): Tile[] {
     const watched = new Set(view.watched)
     const started = new Set(view.started)
-    let tiles: Tile[] = []
+    const tiles: Tile[] = []
     for (const t of shelf.tiles) {
         const video = t.kind === 'show' ? upNext(t, watched, started) : t.video
-        const item = video && s.items.get(video.id)
+        const item = video && items.get(video.id)
         if (!item) continue
         tiles.push({
             key: t.key,
@@ -145,6 +156,15 @@ function arrange(s: ChatState, view: ChatView): ChatPage {
             extra: t.extra ?? null,
         })
     }
+    return tiles
+}
+
+function arrange(s: ChatState, view: ChatView): ChatPage {
+    const key = JSON.stringify(view)
+    if (s.kept && s.kept.version === s.version && s.kept.view === key) return s.kept.page
+    const r = rulesNow!
+    const shelf = r.shelf([...s.videos.values()], view.sort, view.minBytes, view.maxBytes, view.watched, view.started)
+    let tiles = tilesOf(shelf, s.items, view)
     const query = view.query.trim()
     if (query) {
         const texts = tiles.map((t) => (t.kind === 'show' ? t.title : `${t.title} ${s.videos.get(videoId(t.item))?.fileName ?? ''}`))
@@ -161,6 +181,9 @@ function arrange(s: ChatState, view: ChatView): ChatPage {
         done: done(s),
         archives: [...s.archives.entries()].sort((a, b) => b[0] - a[0]).map(([, name]) => name),
         selfDestructing: s.selfDestructing,
+        protected: s.protected,
+        sponsored: s.sponsored,
+        sponsoredBetween: s.sponsoredBetween,
     }
     s.kept = { version: s.version, view: key, page }
     return page
@@ -174,7 +197,11 @@ function fresh(tg: TelegramClient, chatId: number): Promise<ChatState> {
     if (!p) {
         p = (async () => {
             const s = await openState(tg, chatId)
-            await loadPage(tg, s)
+            const [, ads] = await Promise.all([loadPage(tg, s), s.channel ? loadSponsored(tg, chatId) : null])
+            if (ads) {
+                s.sponsored = ads.items
+                s.sponsoredBetween = ads.between
+            }
             return s
         })().finally(() => opening.delete(chatId))
         opening.set(chatId, p)
@@ -203,13 +230,30 @@ export async function chatPage(tg: TelegramClient, chatId: number, view: ChatVie
     return arrange(s, view)
 }
 
+/** Home's chats, read from their newest message and kept a few minutes; an opened chat's own state is reused. */
+const homeStates = new Map<number, ChatState>()
+const HOME_KEEP_MS = 3 * 60_000
+
+/** A chat's newest videos for Home: what its first page brought, and whether that was all of it. */
+export async function newestOf(tg: TelegramClient, chatId: number): Promise<{ videos: Video[]; items: Map<string, VideoItem>; complete: boolean }> {
+    let s = chats.get(chatId) ?? homeStates.get(chatId)
+    if (!s || Date.now() - s.time > HOME_KEEP_MS) {
+        s = await fresh(tg, chatId)
+        homeStates.set(chatId, s)
+        for (const [id, held] of homeStates) if (Date.now() - held.time > HOME_KEEP_MS) homeStates.delete(id)
+    } else if (s.loading) await s.loading
+    return { videos: [...s.videos.values()], items: s.items, complete: done(s) }
+}
+
 // The chat list
 
 let dialogs: ChatItem[] | null = null
+/** The chat list as far as it has come while it loads. */
+let dialogsSoFar: ChatItem[] = []
 let dialogsLoading: Promise<ChatItem[]> | null = null
 const dialogListeners = new Set<(chats: ChatItem[]) => void>()
 
-function chatItem(peer: Peer, pinned: boolean): ChatItem {
+export function chatItem(peer: Peer, pinned: boolean): ChatItem {
     const small = peer.photo?.small ?? null
     if (small) thumbnails.set(small.uniqueFileId, small)
     const self = peer.type === 'user' && peer.isSelf
@@ -240,7 +284,10 @@ export async function chatList(tg: TelegramClient, refresh: boolean, onBatch: (c
                 if (seen.has(d.peer.id)) continue
                 seen.add(d.peer.id)
                 out.push(chatItem(d.peer, d.isPinned))
-                if (out.length % PAGE === 0) for (const fn of dialogListeners) fn(out.slice())
+                if (out.length % PAGE === 0) {
+                    dialogsSoFar = out.slice()
+                    for (const fn of dialogListeners) fn(dialogsSoFar)
+                }
             }
             dialogs = out
             return out
@@ -249,6 +296,11 @@ export async function chatList(tg: TelegramClient, refresh: boolean, onBatch: (c
     } finally {
         dialogListeners.delete(onBatch)
     }
+}
+
+/** The chat list: whole once it has loaded (`done`), else as far as it has come. */
+export function knownChats(): { chats: ChatItem[]; done: boolean } {
+    return dialogs ? { chats: dialogs, done: true } : { chats: dialogsSoFar, done: false }
 }
 
 /** Ids of the listed chats whose names answer `query`, best first, by the app's fuzzy search. */
@@ -263,7 +315,8 @@ export async function rankChats(query: string): Promise<number[]> {
 /** Kept for two minutes, so a change of size limits arranges again without asking Telegram. */
 const searches = new Map<string, { time: number; messages: Promise<Message[]> }>()
 
-export async function searchAll(tg: TelegramClient, query: string, minBytes: number, maxBytes: number): Promise<Found> {
+/** The newest videos across every chat for [query] (all of them for a blank one), through the rules, with their items. */
+export async function across(tg: TelegramClient, query: string): Promise<{ videos: Video[]; items: Map<string, VideoItem> }> {
     const r = await rules()
     let hit = searches.get(query)
     if (!hit || Date.now() - hit.time > 120_000) {
@@ -283,23 +336,26 @@ export async function searchAll(tg: TelegramClient, query: string, minBytes: num
     const byId = new Map<string, Message>()
     const raws = []
     for (const msg of messages) {
-        const raw = rawOf(msg, false)
+        const raw = rawOf(msg, chatProtects(msg))
         if (!raw) continue
         byId.set(videoId(raw), msg)
         raws.push(raw)
     }
-    const items: VideoItem[] = []
-    const keys = new Set<string>()
-    let hiddenBySize = 0
+    const videos: Video[] = []
+    const items = new Map<string, VideoItem>()
     for (const v of r.screen(raws).videos) {
-        if (!r.sizeMatches(v.size, minBytes, maxBytes)) {
-            hiddenBySize++
-            continue
-        }
-        const item = itemOf(byId.get(v.id)!, r.tileTitle(v))
-        if (!item || keys.has(item.key)) continue
-        keys.add(item.key)
-        items.push(item)
+        const item = itemOf(byId.get(v.id)!, v.title)
+        if (!item || items.has(v.id)) continue
+        items.set(v.id, item)
+        videos.push(v)
     }
-    return { items: items.sort((a, b) => b.date - a.date), hiddenBySize }
+    return { videos, items }
+}
+
+/** Videos across every chat within the size limits, grouped into shows, copies and pieces as a chat's are, newest first. */
+export async function searchAll(tg: TelegramClient, query: string, view: ListView): Promise<Found> {
+    const r = await rules()
+    const { videos, items } = await across(tg, query)
+    const shelf = r.shelf(videos, 'Newest', view.minBytes, view.maxBytes, view.watched, view.started)
+    return { tiles: tilesOf(shelf, items, view), hiddenBySize: shelf.hiddenBySize }
 }

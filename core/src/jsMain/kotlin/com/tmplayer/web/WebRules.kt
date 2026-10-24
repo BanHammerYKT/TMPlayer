@@ -5,13 +5,18 @@ package com.tmplayer.web
 
 import com.tmplayer.data.ArchiveKind
 import com.tmplayer.data.Archives
+import com.tmplayer.data.ChatKind
+import com.tmplayer.data.ChatSummary
 import com.tmplayer.data.ContentProtection
 import com.tmplayer.data.EpisodeNeighbours
 import com.tmplayer.data.EpisodeTag
 import com.tmplayer.data.Fuzzy
+import com.tmplayer.data.HomeRow
+import com.tmplayer.data.HomeRows
 import com.tmplayer.data.MediaItem
 import com.tmplayer.data.MediaName
 import com.tmplayer.data.MediaText
+import com.tmplayer.data.ResumeRecord
 import com.tmplayer.data.ResumeRewind
 import com.tmplayer.data.Series
 import com.tmplayer.data.SeriesShelf
@@ -176,6 +181,54 @@ interface SizeLimits {
     val defaultMax: Double
 }
 
+/** A video left part way, as the page keeps its place, with the video read again off its message. */
+interface WebResume {
+    val video: Video
+    val chatTitle: String
+    val positionMs: Double
+    /** 0 when unknown. */
+    val durationMs: Double
+    /** When it was left, milliseconds since the epoch. */
+    val updatedAt: Double
+}
+
+/** A chat as Home picks from them, in the chat list's order. */
+interface WebChat {
+    val id: Double
+    val title: String
+    /** Saved Messages. */
+    val saved: Boolean
+    val pinned: Boolean
+}
+
+/** One of Home's chats' newest videos, within the size limits; [complete] false when the chat has older ones. */
+interface ChatVideos {
+    val chatId: Double
+    val videos: Array<Video>
+    val complete: Boolean
+}
+
+/**
+ * One row of Home (HomeRows.build). [kind] "continue": [resumes] are the videos part way, as ids,
+ * copies folded. "recent": the newest across Home's chats, [starredOnly] when every one of them
+ * is starred. "chat": a starred chat's newest, [chatId] and [title]. [loaded] false is a row still
+ * waiting for Telegram, drawn as a placeholder of the same height.
+ */
+interface WebHomeRow {
+    val key: String
+    val kind: String
+    val chatId: Double?
+    val title: String?
+    val loaded: Boolean
+    val starredOnly: Boolean
+    val resumes: Array<String>
+    val tiles: Array<ShelfTile>
+    /** For "See all": how many videos, at least that many when [totalAtLeast], and whether the row leaves any out. */
+    val total: Int
+    val totalAtLeast: Boolean
+    val hasMore: Boolean
+}
+
 /**
  * The UI catalog for [tag] ("en" first: i18n/en.json as text). A few rules name things in the
  * app's words (an untitled file, a round video), so the worker provides English before it maps.
@@ -300,6 +353,91 @@ fun sizeRange(minBytes: Double, maxBytes: Double): String = SizeFilter.describe(
 
 /** "50 MB", "1.5 GB", or the slider's ends ("No minimum", "No limit"), as the apps label a size limit. */
 fun sizeLabel(bytes: Double): String = SizeFilter.label(bytes.toLong())
+
+/**
+ * The chats Home reads (HomeRows.homeChats): the starred ones, Saved Messages, the first pinned
+ * ones, then those [recent] (the newest videos across every chat, null while that search runs)
+ * found the most videos in. Ids, in that order.
+ */
+fun homeChats(chats: Array<WebChat>, starred: Array<Double>, recent: Array<Video>?): Array<Double> =
+    HomeRows.homeChats(chats.map(::summary), starred.map { it.toLong() }.toSet(), recent?.map(::toItem))
+        .map { it.id.toDouble() }.toTypedArray()
+
+/**
+ * Home's rows as the apps build them where Home fills itself: Continue watching, Recently added
+ * across [chats] (homeChats' answer), then a row for each starred one. [loaded] holds the chats
+ * read so far; [recent] is null while the search across chats runs; [chatsPending] says the chat
+ * list is not in yet.
+ */
+fun home(
+    resumes: Array<WebResume>,
+    chats: Array<WebChat>,
+    starred: Array<Double>,
+    loaded: Array<ChatVideos>,
+    recent: Array<Video>?,
+    chatsPending: Boolean,
+): Array<WebHomeRow> {
+    val records = resumes.map { r ->
+        val v = r.video
+        ResumeRecord(
+            chatId = v.chatId.toLong(),
+            messageId = v.messageId.toLong(),
+            fileId = 0,
+            title = v.title,
+            chatTitle = r.chatTitle,
+            sizeBytes = v.size.toLong(),
+            durationSec = v.duration.toInt(),
+            positionMs = r.positionMs.toLong(),
+            durationMs = r.durationMs.toLong(),
+            updatedAt = r.updatedAt.toLong(),
+            fileName = v.fileName,
+            caption = v.caption,
+        )
+    }
+    val rows = HomeRows.build(
+        continueWatching = records,
+        favourites = chats.map(::summary),
+        loaded = loaded.associate { c -> c.chatId.toLong() to c.videos.map(::toItem) },
+        recent = recent?.map(::toItem),
+        partial = loaded.filterNot { it.complete }.map { it.chatId.toLong() }.toSet(),
+        starred = starred.map { it.toLong() }.toSet(),
+        autoFill = true,
+        chatsPending = chatsPending,
+    )
+    return rows.mapNotNull { row ->
+        val base = arrayOf<Pair<String, Any?>>(
+            "key" to row.key,
+            "total" to row.total,
+            "totalAtLeast" to row.totalAtLeast,
+            "hasMore" to row.hasMore,
+        )
+        when (row) {
+            is HomeRow.Continue -> plain<WebHomeRow>(
+                *base, "kind" to "continue", "chatId" to null, "title" to null, "loaded" to true, "starredOnly" to false,
+                "resumes" to row.records.map { it.toMediaItem().id }.toTypedArray(), "tiles" to emptyArray<ShelfTile>(),
+            )
+            is HomeRow.Recent -> plain<WebHomeRow>(
+                *base, "kind" to "recent", "chatId" to null, "title" to null, "loaded" to row.loaded, "starredOnly" to row.starredOnly,
+                "resumes" to emptyArray<String>(), "tiles" to row.entries.map(::tile).toTypedArray(),
+            )
+            is HomeRow.Chat -> plain<WebHomeRow>(
+                *base, "kind" to "chat", "chatId" to row.chatId.toDouble(), "title" to row.title, "loaded" to row.loaded, "starredOnly" to true,
+                "resumes" to emptyArray<String>(), "tiles" to row.entries.map(::tile).toTypedArray(),
+            )
+            // Not built where Home fills itself.
+            is HomeRow.WatchLater, is HomeRow.NewEpisodes -> null
+        }
+    }.toTypedArray()
+}
+
+private fun summary(chat: WebChat) = ChatSummary(
+    id = chat.id.toLong(),
+    title = chat.title,
+    miniThumbnail = null,
+    photoFileId = 0,
+    kind = if (chat.saved) ChatKind.Saved else ChatKind.Group,
+    isPinned = chat.pinned,
+)
 
 /** Whether [fileName] (or [mimeType]) is an archive, and what kind, as a chat lists it; null when not. */
 fun archive(fileName: String, mimeType: String?): Archive? {

@@ -3,9 +3,11 @@
 // mtcute itself.
 import { BaseTelegramClient, SentCode as MtSentCode, TelegramClient, User, type Message, type tl } from '@mtcute/web'
 import { rules } from '../rules'
+import { homePage } from './home'
 import { chatList, chatPage, forgetAll, rankChats, searchAll } from './library'
+import { clickSponsored, reportSponsored, viewSponsored } from './sponsored'
 import { files, thumbnails, toItem } from './media'
-import type { ChatItem, ChatPage, ChatsEvent, ChatView, Country, Found, Me, QrEvent, RpcError, SentCode, VideoItem } from './types'
+import type { ChatItem, ChatPage, ChatsEvent, ChatView, Country, Found, HomePage, HomeView, ListView, Me, QrEvent, RpcError, SentCode, SponsoredReport, VideoItem } from './types'
 
 // `VITE_TG_TEST=1 pnpm dev` signs in on Telegram's test servers (numbers 99966XYYYY, the code
 // is X five times), with its own storage, to try the sign in steps without a real account.
@@ -242,9 +244,29 @@ export const api = {
         return chatPage(tg, chatId, view, mode)
     },
 
-    /** Videos across every chat within the size limits, newest first. */
-    async search(_: Ctx, query: string, minBytes: number, maxBytes: number): Promise<Found> {
-        return searchAll(tg, query, minBytes, maxBytes)
+    /** Videos across every chat within the size limits, grouped as a chat's are, newest first. */
+    async search(_: Ctx, query: string, view: ListView): Promise<Found> {
+        return searchAll(tg, query, view)
+    },
+
+    /** Home's rows as the app builds them; Home so far arrives as `HomePage` events while the chats answer. */
+    async home(ctx: Ctx, view: HomeView): Promise<HomePage> {
+        return homePage(tg, view, ctx.signal, (page) => ctx.emit(page))
+    },
+
+    /** A sponsored message was on screen: Telegram counts it once. */
+    async sponsoredViewed(_: Ctx, id: string): Promise<void> {
+        await viewSponsored(tg, id)
+    },
+
+    /** A press on a sponsored message, told to Telegram before its link opens. */
+    async sponsoredClicked(_: Ctx, id: string, media: boolean): Promise<void> {
+        await clickSponsored(tg, id, media)
+    },
+
+    /** Reports a sponsored message; `option` empty first, then the reason picked from Telegram's list. */
+    async sponsoredReport(_: Ctx, id: string, option: number[]): Promise<SponsoredReport> {
+        return reportSponsored(tg, id, option)
     },
 
     /** The size slider's stops (no minimum, 50 MB, then every 100 MB to no limit), where each sits and its label. */

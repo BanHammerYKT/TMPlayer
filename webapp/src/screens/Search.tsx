@@ -3,11 +3,11 @@ import { useSearchParams } from '@solidjs/router'
 import { api, errorText } from '../tg/rpc'
 import { Search01Icon } from '@hugeicons/core-free-icons'
 import { t } from '../i18n'
-import { settings } from '../store'
+import { progress, settings } from '../store'
 import { Icon } from '../ui/Icon'
-import { HiddenBySize, videoCard, VideoList } from './VideoList'
+import { HiddenBySize, tileCard, VideoList } from './VideoList'
 
-/** Videos across every chat. The words are in the address (`?q=`), so Back returns to the same results. */
+/** Videos across every chat, grouped into shows, copies and pieces as a chat's are. The words are in the address (`?q=`), so Back returns to the same results. */
 export function Search() {
     const [params, setParams] = useSearchParams<{ q?: string }>()
     const [text, setText] = createSignal(params.q ?? '')
@@ -16,7 +16,7 @@ export function Search() {
             const q = params.q?.trim()
             return q ? ([q, settings().sizeMin, settings().sizeMax] as const) : false
         },
-        ([q, min, max]) => api.search(q, min, max),
+        async ([q, minBytes, maxBytes]) => api.search(q, { minBytes, maxBytes, ...(await progress()) }),
     )
     let debounce = 0
     let typing = false
@@ -48,10 +48,10 @@ export function Search() {
                 <p class="muted">{t('browse.finding_videos')}</p>
             </Show>
             <HiddenBySize count={found()?.hiddenBySize ?? 0} />
-            <Show when={found() && !results.loading && !found()!.items.length}>
+            <Show when={found() && !results.loading && !found()!.tiles.length}>
                 <p class="muted">{t('search.none', { query: params.q!.trim() })}</p>
             </Show>
-            <VideoList cards={found()?.items.map((v) => videoCard(v)) ?? []} />
+            <VideoList cards={found()?.tiles.map((tile) => tileCard(tile, true)) ?? []} label={t('common.search')} />
         </>
     )
 }

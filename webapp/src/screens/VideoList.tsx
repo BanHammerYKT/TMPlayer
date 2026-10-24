@@ -1,11 +1,12 @@
 import { createEffect, createResource, createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { A } from '@solidjs/router'
-import { api } from '../tg/rpc'
-import { cachedThumb, resumes } from '../store'
+import { resumes } from '../store'
+import { loadThumb } from './thumbs'
 import { warmDataCentres, warmFile } from '../stream/reader'
 import { t } from '../i18n'
 import { cardLayout, VirtualGrid } from '../ui/VirtualGrid'
-import type { Tile, VideoItem } from '../tg/types'
+import { placeSponsored, SponsoredCard } from './Sponsored'
+import type { SponsoredItem, Tile, VideoItem } from '../tg/types'
 
 export function size(bytes: number): string {
     if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
@@ -20,30 +21,6 @@ export function length(s: number): string {
 }
 
 export const watchPath = (v: Pick<VideoItem, 'chatId' | 'messageId'>) => `/watch/${v.chatId}/${v.messageId}`
-
-// Thumbnails: a few at a time, only for cards on screen, kept in the Cache API and for the session.
-const thumbs = new Map<string, Promise<string>>()
-let thumbsActive = 0
-const thumbQueue: (() => void)[] = []
-export function loadThumb(key: string): Promise<string> {
-    let p = thumbs.get(key)
-    if (!p) {
-        p = new Promise<void>((r) => (thumbsActive < 4 ? (thumbsActive++, r()) : thumbQueue.push(r)))
-            .then(() => cachedThumb(key, () => api.thumb(key)))
-            .then((blob) => URL.createObjectURL(blob))
-            .catch((e) => {
-                thumbs.delete(key)
-                throw e
-            })
-            .finally(() => {
-                const next = thumbQueue.shift()
-                if (next) next()
-                else thumbsActive--
-            })
-        thumbs.set(key, p)
-    }
-    return p
-}
 
 /**
  * The art of a portrait card, as the app draws a video's: the frame across the card's width, the
@@ -94,13 +71,14 @@ export function videoCard(v: VideoItem, showChat = true): CardData {
     return { key: v.key, title: v.title, item: v, facts: [showChat ? v.chat : '', size(v.size), length(v.duration)].filter(Boolean).join(dot) }
 }
 
-/** A tile of a chat's shelf: a show with its seasons and episodes, or a file with its parts. */
-export function tileCard(tile: Tile): CardData {
+/** A tile of a shelf: a show with its seasons and episodes, or a file with its parts; `showChat` where cards come from several chats. */
+export function tileCard(tile: Tile, showChat = false): CardData {
     const v = tile.item
     const facts =
         tile.kind === 'show'
             ? t('series.summary', { seasons: tile.seasons, episodes: tile.episodes })
             : [
+                  showChat ? v.chat : '',
                   tile.parts > 1 ? t('grid.parts_count', { count: tile.parts }) : size(v.size),
                   length(v.duration),
                   tile.copies ? t('search.copies', { count: tile.copies + 1 }) : '',
@@ -110,47 +88,67 @@ export function tileCard(tile: Tile): CardData {
     return { key: tile.key, title: tile.title, item: v, facts }
 }
 
-/** A grid of portrait cards, drawn a few rows at a time. `onEnd` asks for more near the foot. */
-export function VideoList(props: { cards: CardData[]; label?: string; onEnd?: () => void }) {
-    // Once a list has drawn, connect to the data centres its files live in.
-    let dcTimer = 0
-    createEffect(() => {
-        const items = props.cards.slice(0, 20).map((c) => c.item)
-        clearTimeout(dcTimer)
-        if (items.length) dcTimer = window.setTimeout(() => warmDataCentres(items), 1500)
-    })
-    onCleanup(() => clearTimeout(dcTimer))
-    // A card pointed at for 250 ms, or pressed, starts fetching its file's head and tail.
-    let hoverTimer = 0
-    const intent = (v: VideoItem) => {
-        clearTimeout(hoverTimer)
-        hoverTimer = window.setTimeout(() => warmFile(v), 250)
-    }
-    onCleanup(() => clearTimeout(hoverTimer))
-    // Where each video was left, for the line on its card.
+/** Where each video was left, for the line on its card. */
+export function useProgress(): (v: VideoItem) => number | undefined {
     const [left] = createResource(async () => new Map((await resumes()).map((r) => [`${r.chatId}:${r.messageId}`, r])))
-    const progress = (v: VideoItem) => {
+    return (v: VideoItem) => {
         const r = left()?.get(`${v.chatId}:${v.messageId}`)
         const total = r?.length || v.duration
         return r && total ? r.position / total : undefined
     }
+}
+
+// A card pointed at for 250 ms, focused, or pressed starts fetching its file's head and tail.
+let hoverTimer = 0
+const intent = (v: VideoItem) => {
+    clearTimeout(hoverTimer)
+    hoverTimer = window.setTimeout(() => warmFile(v), 250)
+}
+
+/** One portrait card, which opens the video's page. */
+export function Card(props: { card: CardData; progress?: number }) {
     return (
-        <VirtualGrid items={props.cards} layout={cardLayout} rowClass="cards" label={props.label} onEnd={props.onEnd}>
-            {(c) => (
-                <A
-                    class="card"
-                    href={watchPath(c.item)}
-                    state={{ video: c.item }}
-                    onPointerEnter={() => intent(c.item)}
-                    onPointerLeave={() => clearTimeout(hoverTimer)}
-                    onFocus={() => intent(c.item)}
-                    onPointerDown={() => warmFile(c.item)}
-                >
-                    <CardArt thumb={c.item.thumb} title={c.title} progress={progress(c.item)} />
-                    <div class="card-name">{c.title}</div>
-                    <div class="card-facts">{c.facts}</div>
-                </A>
-            )}
+        <A
+            class="card"
+            href={watchPath(props.card.item)}
+            state={{ video: props.card.item }}
+            onPointerEnter={() => intent(props.card.item)}
+            onPointerLeave={() => clearTimeout(hoverTimer)}
+            onFocus={() => intent(props.card.item)}
+            onPointerDown={() => warmFile(props.card.item)}
+        >
+            <CardArt thumb={props.card.item.thumb} title={props.card.title} progress={props.progress} />
+            <div class="card-name">{props.card.title}</div>
+            <div class="card-facts">{props.card.facts}</div>
+        </A>
+    )
+}
+
+/** Once a list has drawn, connect to the data centres its files live in. */
+export function useWarmDataCentres(items: () => VideoItem[]) {
+    let dcTimer = 0
+    createEffect(() => {
+        const list = items().slice(0, 20)
+        clearTimeout(dcTimer)
+        if (list.length) dcTimer = window.setTimeout(() => warmDataCentres(list), 1500)
+    })
+    onCleanup(() => clearTimeout(dcTimer))
+}
+
+const isSponsored = (e: CardData | SponsoredItem): e is SponsoredItem => !('item' in e)
+
+/**
+ * A grid of portrait cards, drawn a few rows at a time. `onEnd` asks for more near the foot. A
+ * channel's sponsored messages take rows of their own, spaced as Telegram asks.
+ */
+export function VideoList(props: { cards: CardData[]; label?: string; onEnd?: () => void; sponsored?: SponsoredItem[]; sponsoredBetween?: number }) {
+    useWarmDataCentres(() => props.cards.map((c) => c.item))
+    onCleanup(() => clearTimeout(hoverTimer))
+    const progress = useProgress()
+    const entries = () => placeSponsored(props.cards, props.sponsored ?? [], props.sponsoredBetween ?? 0)
+    return (
+        <VirtualGrid items={entries()} layout={cardLayout} rowClass="cards" label={props.label} onEnd={props.onEnd} wide={isSponsored}>
+            {(e) => (isSponsored(e) ? <SponsoredCard item={e} /> : <Card card={e} progress={progress(e.item)} />)}
         </VirtualGrid>
     )
 }

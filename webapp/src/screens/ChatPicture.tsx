@@ -2,7 +2,7 @@ import { createSignal, onCleanup, onMount, Show } from 'solid-js'
 import { BookmarkIcon } from '@hugeicons/core-free-icons'
 import { Icon } from '../ui/Icon'
 import { Initial } from '../ui/PageBar'
-import { loadThumb } from './VideoList'
+import { loadThumb } from './thumbs'
 
 /** A chat's picture once it is on screen, its first letter until then (and where it has none); Saved Messages' bookmark. */
 export function ChatPicture(props: { photo: string | null; name: string; self?: boolean; class?: string }) {

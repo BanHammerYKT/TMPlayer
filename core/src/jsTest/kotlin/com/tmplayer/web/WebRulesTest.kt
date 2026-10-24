@@ -156,4 +156,62 @@ class WebRulesTest {
         assertNull(archive("Harbour.Notes.S01E02.mkv", "video/x-matroska"))
         assertTrue(sizeLabel(50 * mb).isNotBlank())
     }
+
+    private fun chat(id: Double, title: String, saved: Boolean = false, pinned: Boolean = false): WebChat {
+        val o: dynamic = js("({})")
+        o.id = id
+        o.title = title
+        o.saved = saved
+        o.pinned = pinned
+        return o.unsafeCast<WebChat>()
+    }
+
+    private fun videosIn(chatId: Double, vararg names: Pair<Int, String>): Array<Video> =
+        screen(names.map { (id, name) -> raw(id, name).also { it.asDynamic().chatId = chatId } }.toTypedArray()).videos
+
+    private fun chatVideos(chatId: Double, videos: Array<Video>, complete: Boolean = true): ChatVideos {
+        val o: dynamic = js("({})")
+        o.chatId = chatId
+        o.videos = videos
+        o.complete = complete
+        return o.unsafeCast<ChatVideos>()
+    }
+
+    @Test
+    fun `home picks its chats and builds Continue, Recently added and a row per starred chat`() {
+        val saved = chat(1.0, "Me", saved = true)
+        val starredChat = chat(2.0, "Harbour")
+        val other = chat(3.0, "News")
+        assertContentEquals(arrayOf(2.0, 1.0), homeChats(arrayOf(saved, starredChat, other), arrayOf(2.0), null))
+
+        val mine = videosIn(1.0, 10 to "Quiet.Coast.2021.1080p.mkv", 11 to "Long.Road.2019.mkv")
+        val harbour = videosIn(2.0, 20 to "Harbour.Notes.S01E01.mkv", 21 to "Harbour.Notes.S01E02.mkv", 22 to "Night.Ferry.2020.mkv")
+        val resume: dynamic = js("({})")
+        resume.video = mine[0]
+        resume.chatTitle = "Me"
+        resume.positionMs = 60_000.0
+        resume.durationMs = 3_600_000.0
+        resume.updatedAt = 1_700_000_000_000.0
+        val rows = home(
+            arrayOf(resume.unsafeCast<WebResume>()),
+            arrayOf(starredChat, saved),
+            arrayOf(2.0),
+            arrayOf(chatVideos(1.0, mine), chatVideos(2.0, harbour, complete = false)),
+            emptyArray(),
+            false,
+        )
+        rows.forEach(::isPlain)
+        assertContentEquals(arrayOf("continue", "recent", "chat"), rows.map { it.kind }.toTypedArray())
+        assertContentEquals(arrayOf(mine[0].id), rows[0].resumes)
+        // What is in Continue is in no other row; the show folds into one tile.
+        assertFalse(rows[1].tiles.any { it.video?.id == mine[0].id })
+        assertTrue(rows[1].starredOnly.not())
+        assertEquals(2.0, rows[2].chatId)
+        assertEquals("Harbour", rows[2].title)
+        assertEquals(1, rows[2].tiles.count { it.kind == "show" })
+        assertTrue(rows[2].totalAtLeast)
+        // Before the search across chats answers, Recently added holds its place.
+        val waiting = home(emptyArray(), arrayOf(starredChat, saved), arrayOf(2.0), emptyArray(), null, true)
+        assertFalse(waiting.first { it.kind == "recent" }.loaded)
+    }
 }

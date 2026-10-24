@@ -1,6 +1,6 @@
 // Worker only: turns Telegram messages into the page's plain items and remembers where each file's
 // bytes are, so the page can ask for them by key.
-import type { ChatPhotoSize, Message, Thumbnail, tl } from '@mtcute/web'
+import type { FileLocation, Message, tl } from '@mtcute/web'
 import type { RawVideo, Video } from '../rules'
 import type { FileRef, Storyboard, VideoCopy, VideoItem } from './types'
 
@@ -13,8 +13,8 @@ export interface FileLoc {
 
 /** Every file the page has been told about, by key; refreshed each time a list names it again. */
 export const files = new Map<string, FileLoc>()
-/** Video thumbnails and chat pictures, by key. */
-export const thumbnails = new Map<string, Thumbnail | ChatPhotoSize>()
+/** Video thumbnails, chat pictures and sponsored messages' pictures, by key. */
+export const thumbnails = new Map<string, FileLocation>()
 
 function docRef(d: tl.RawDocument): FileRef {
     const key = `doc${d.id.toString()}`
@@ -71,6 +71,7 @@ export function itemOf(msg: Message, title: string): VideoItem | null {
     })
     const thumb = m.getThumbnail('m') ?? m.thumbnails[0] ?? null
     if (thumb) thumbnails.set(thumb.uniqueFileId, thumb)
+    const raw = msg.raw._ === 'message' ? msg.raw : null
     return {
         key,
         size,
@@ -81,7 +82,8 @@ export function itemOf(msg: Message, title: string): VideoItem | null {
         chat: msg.chat.displayName,
         date: msg.date.getTime(),
         thumb: thumb?.uniqueFileId ?? null,
-        ...alternatives(msg.raw._ === 'message' ? msg.raw.media : undefined),
+        ...alternatives(raw?.media),
+        canBeSaved: !raw?.noforwards && !chatProtects(msg),
     }
 }
 
@@ -114,6 +116,9 @@ export function rawOf(msg: Message, chatProtected: boolean): RawVideo | null {
         withheld: !!raw?.restrictionReason?.length || !!raw?.fromScheduled,
     }
 }
+
+/** The message's chat has "restrict saving content" on. */
+export const chatProtects = (msg: Message) => !!(msg.chat.raw as { noforwards?: boolean }).noforwards
 
 /** Two videos are the same file listed twice: the page keys its items by message. */
 export const videoId = (v: Pick<Video, 'chatId' | 'messageId'>) => `${v.chatId}:${v.messageId}`

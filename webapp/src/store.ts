@@ -160,6 +160,12 @@ export async function watchedIds(): Promise<string[]> {
     return [...(await allEntries('watched:')).keys()].map((k) => k.slice('watched:'.length))
 }
 
+/** What the lists' rules read of progress: video ids finished, and started. */
+export async function progress(): Promise<{ watched: string[]; started: string[] }> {
+    const [watched, left] = await Promise.all([watchedIds(), resumes()])
+    return { watched, started: left.map((r) => id(r.chatId, r.messageId)) }
+}
+
 export async function isWatched(chatId: number, messageId: number): Promise<boolean> {
     return (await read(`watched:${id(chatId, messageId)}`)) !== undefined
 }

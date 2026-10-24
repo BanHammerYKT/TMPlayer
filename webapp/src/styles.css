@@ -47,6 +47,7 @@
     --on-accent: #ffffff;
     --accent-container: #b6eaff;
     --on-accent-container: #001f28;
+    --caution: #8a5300;
     --error: #ba1a1a;
     --line: #c0c8cd;
     --shadow: 0 6px 20px rgba(0, 0, 0, .14);
@@ -65,6 +66,7 @@
   --on-accent: #ffffff;
   --accent-container: #b6eaff;
   --on-accent-container: #001f28;
+  --caution: #8a5300;
   --error: #ba1a1a;
   --line: #c0c8cd;
   --shadow: 0 6px 20px rgba(0, 0, 0, .14);
@@ -496,3 +498,71 @@ button.chip { background: rgba(255,255,255,.14); border: 0; border-radius: 999px
 .confirm-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 16px; }
 button.primary.danger { background: var(--error); color: var(--bg); }
 @media (prefers-reduced-motion: reduce) { .round-button.spinning .icon { animation-duration: 2s; } .pop-menu { animation: none; } }
+
+/*
+ * Home's rows: a heading with the arrows (a mouse only) and See all, and a strip of portrait cards
+ * that scrolls sideways, a third of the next card showing on a phone so it reads as a row.
+ */
+.home-row { margin: 0 0 20px; }
+.row-head { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: 0 0 8px; }
+.row-head .row-title { margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-link { color: inherit; text-decoration: none; }
+.row-link:hover { text-decoration: underline; }
+.see-all { flex: none; padding: 8px 4px; }
+.row-arrows { display: none; gap: 8px; }
+@media (hover: hover) and (pointer: fine) { .row-arrows { display: flex; } }
+.round-button.small { width: 36px; height: 36px; box-shadow: none; }
+.round-button:disabled { opacity: .38; cursor: default; }
+.strip {
+  /* Room above and below for a card's lift on hover, which the sideways scroll would otherwise clip. */
+  list-style: none; margin: -8px calc(-1 * var(--gutter)) 0; padding: 8px var(--gutter); display: grid; grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 2 * var(--gutter) - 20px) / 3.3); gap: 10px; overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity; scroll-padding: 0 var(--gutter); scrollbar-width: none;
+}
+.strip::-webkit-scrollbar { display: none; }
+.strip > li { scroll-snap-align: start; min-width: 0; }
+@media (min-width: 600px) { .strip { grid-auto-columns: 140px; gap: 16px; } }
+@media (min-width: 840px) { .strip { grid-auto-columns: 156px; gap: 24px; } }
+.strip.waiting { overflow: hidden; }
+.strip.waiting .card-art { background: var(--surface-high); animation: waiting 1.2s ease-in-out infinite alternate; }
+@keyframes waiting { from { opacity: .55; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .strip.waiting .card-art { animation: none; } }
+
+/* The first run: nothing anywhere yet. */
+.first-run { padding: 24px; border: 1px solid var(--line); border-radius: var(--r-l); background: var(--surface); display: flex; flex-direction: column; gap: 8px; align-items: start; max-width: 560px; }
+.first-run h2 { font-size: 22px; line-height: 28px; font-weight: 400; }
+a.primary-link {
+  margin-top: 8px; background: var(--accent); color: var(--on-accent); border-radius: 999px; min-height: 44px; padding: 12px 24px;
+  font-size: 14px; line-height: 20px; font-weight: 500; text-decoration: none;
+}
+button.tonal {
+  background: var(--accent-container); color: var(--on-accent-container); border: 0; border-radius: 999px;
+  min-height: 40px; padding: 10px 20px; font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap;
+}
+button.tonal:active { transform: scale(.96); }
+
+/*
+ * A sponsored message among a channel's cards: across the whole row, in the amber edge that keeps
+ * it from ever being taken for a video (the apps' Caution), its picture 16:9 beside the text.
+ */
+.vrow.cards > li.wide { grid-column: 1 / -1; }
+.sponsored {
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px 16px; align-items: center;
+  padding: 14px; border: 2px solid var(--caution); border-radius: var(--r-m); background: var(--surface);
+}
+.sponsored:not(:has(.sponsored-art)) { grid-template-columns: minmax(0, 1fr); }
+.sponsored-art { padding: 0; border: 0; aspect-ratio: 16 / 9; border-radius: var(--r-s); overflow: hidden; background: var(--surface-high); cursor: pointer; }
+.sponsored-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sponsored-text { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.sponsored-label { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: .5px; text-transform: uppercase; color: var(--caution); }
+.sponsored-title { font-size: 18px; line-height: 24px; font-weight: 500; }
+.sponsored-body { font-size: 14px; line-height: 20px; white-space: pre-line; overflow-wrap: anywhere; }
+.sponsored-buttons { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 16px; }
+@media (min-width: 840px) {
+  .sponsored { grid-template-columns: 220px minmax(0, 1fr) auto; }
+  .sponsored:not(:has(.sponsored-art)) { grid-template-columns: minmax(0, 1fr) auto; }
+  .sponsored-buttons { grid-column: auto; flex-direction: column; align-items: end; gap: 8px; }
+}
+.report-options { display: flex; flex-direction: column; }
+.report-options button { text-align: start; background: none; border: 0; border-top: 1px solid var(--line); color: var(--fg); padding: 14px 4px; font-size: 16px; line-height: 24px; }
+.report-options button:hover { background: var(--surface-high); }
