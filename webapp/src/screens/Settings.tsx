@@ -9,7 +9,7 @@ import { install, installed, installPrompt, iosBrowser, keepData, kept, refused 
 
 const THEMES: Theme[] = ['system', 'dark', 'light', 'black']
 
-/** Theme, the size limits every list keeps to, the rewind on resume, and the account. */
+/** Theme, the size limits every list keeps to, the rewind on resume, the account and the licence notices. */
 export function Settings() {
     return (
         <section class="settings">
@@ -29,6 +29,7 @@ export function Settings() {
             <Install />
             <Storage />
             <Account />
+            <Notices />
         </section>
     )
 }
@@ -206,6 +207,18 @@ function Storage() {
                     <button class="link" style={{ 'align-self': 'start' }} type="button" onClick={keepData}>{t('web.keep_storage')}</button>
                 </Show>
             </Show>
+        </div>
+    )
+}
+
+/** The licence, and the notices for every library inside, built into /licenses.txt (notices.config.ts). */
+function Notices() {
+    return (
+        <div class="panel">
+            <h2 class="panel-title">{t('about.notices_title')}</h2>
+            <p class="muted small">{t('about.licence_line')}</p>
+            <p class="muted small">{t('about.notices_detail')}</p>
+            <a class="link" href="/licenses.txt" target="_blank" rel="noopener">{t('about.read')}</a>
         </div>
     )
 }

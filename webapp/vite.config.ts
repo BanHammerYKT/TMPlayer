@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import solid from 'vite-plugin-solid'
+import { notices } from './notices.config'
 import { PAGE_STRINGS } from './strings.config'
 
 // The app's own api_id and hash: from the environment in CI, else from the repo's local.properties
@@ -86,7 +87,7 @@ function offlineShell(): Plugin {
         closeBundle() {
             const sw = join(outDir, 'sw.js')
             const assets = readdirSync(join(outDir, 'assets')).filter((f) => !NOT_IN_SHELL.test(f)).sort()
-            const shell = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', ...assets.map((f) => `/assets/${f}`)]
+            const shell = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/licenses.txt', ...assets.map((f) => `/assets/${f}`)]
             const version = createHash('sha256').update(readFileSync(join(outDir, 'index.html'))).update(shell.join('\n')).digest('hex').slice(0, 12)
             const source = readFileSync(sw, 'utf8')
             const out = source.replace("const VERSION = 'dev'", `const VERSION = '${version}'`).replace('const SHELL = []', `const SHELL = ${JSON.stringify(shell)}`)
@@ -96,13 +97,15 @@ function offlineShell(): Plugin {
     }
 }
 
+const licences = notices()
+
 export default defineConfig({
-    plugins: [solid(), pageStrings(), tooOldStrings(), needsApiId(), offlineShell()],
+    plugins: [solid(), pageStrings(), tooOldStrings(), needsApiId(), ...licences.page, offlineShell()],
     define: {
         __TG_API_ID__: JSON.stringify(Number(secret('TG_API_ID')) || 0),
         __TG_API_HASH__: JSON.stringify(secret('TG_API_HASH')),
     },
-    worker: { format: 'es' },
+    worker: { format: 'es', plugins: licences.worker },
     optimizeDeps: { exclude: ['@mtcute/wasm', '@mtcute/web', '@mediabunny/ac3', '@mediabunny/dts'] },
     build: { target: 'es2022', sourcemap: true },
     // The UI catalog is read from :core, where every app reads it.

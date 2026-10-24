@@ -9,6 +9,43 @@ and what was not.
 Goal: as much of the app as a browser allows, for the videos already in the viewer's own Telegram
 chats, at web.tmplayer.org, a static site with no server of ours in the path.
 
+## Its replacement: the web player in `webapp/`
+
+Decided 2026-10-24: a light SolidJS player in `webapp/` (branch `webapp-solid`, plan in
+`private/WEBAPP-PLAN.md`) takes over web.tmplayer.org. Everything below this section is about the
+frozen wasm build it replaces.
+
+- **Build**: `cd webapp && pnpm install && pnpm build` (the app's rules from `:core` first, then tsc
+  and Vite). A release build refuses to run without `TG_API_ID` and `TG_API_HASH` (environment or
+  `local.properties`). `pnpm e2e` runs the end to end tests over a fake Telegram.
+- **Licence notices**: the build writes `dist/licenses.txt` (`webapp/notices.config.ts`): every npm
+  package in a built file, page and workers alike, with its licence text, then FFmpeg (LGPL 2.1 or
+  later, inside Mediabunny's AC-3, DTS and AAC coders) and the Kotlin standard library, with the
+  LGPL and Apache texts from `webapp/licenses/`. Settings links to it and the service worker keeps
+  it for reading offline.
+- **CI**: `.github/workflows/webapp.yml` on every change under `webapp/` or `core/`: the rules, the
+  type check, the build (not for pull requests, which get no secrets), and the end to end tests in
+  Chromium and WebKit inside Playwright's image.
+- **Deploy**: never by itself. Actions, Web player, Run workflow, with `deploy` set to `preview`
+  (branch `solid-preview`, its own pages.dev address) or `production` (branch `main`, which is
+  web.tmplayer.org), both to the Cloudflare Pages project `tmplayer-webapp` after the tests pass.
+  GitHub runs a manual workflow only once the file is on `main`; before that, from this machine:
+  `cd webapp && pnpm build && npx --yes wrangler@4.149.0 pages deploy dist
+  --project-name=tmplayer-webapp --branch=solid-preview` (`--branch=main` is the live site).
+  Headers are in `webapp/public/_headers` (`sw.js` never cached, `/assets/*` immutable); any
+  other address gets `index.html`, since the build has no `404.html`.
+- **Rollback**: Cloudflare keeps every deployment. The last wasm build is deployment
+  `caec1989-b775-4378-9d0d-8ce2bc489cd1` (commit 1ea84e5, 2026-10-23,
+  https://caec1989.tmplayer-webapp.pages.dev): Workers and Pages, tmplayer-webapp, Deployments, its
+  menu, Rollback to this deployment. Visitors who opened the new player are signed out of the old
+  one (below).
+- **What the old app left**: its service worker answered `/stream/` in its own way, so the new
+  worker takes over at once when the old caches are there (`webapp/public/sw.js`), then deletes
+  the old caches, TDLib's database (`/tmplayer/dbfs`), `wasm-cache`, the OPFS `tdweb-files` and
+  the files in tdweb's store inside the `tmplayer` database, which mtcute now uses. The old sign in
+  stays listed in Telegram's active sessions until it expires or the viewer ends it there. Its
+  `tm.*` settings in localStorage, a few KB, stay.
+
 ## What is built
 
 | Piece | Where | State |
@@ -436,7 +473,8 @@ screens in shared code; 3, the player and codecs; 4, shipping (PWA, pages, deplo
 
 ## Deployment
 
-It was deployed by hand to Cloudflare Pages with the wrangler CLI, from the production build's
+For the player that replaces it, see the `webapp/` section at the top. The wasm build was
+deployed by hand to Cloudflare Pages with the wrangler CLI, from the production build's
 output `web/build/dist/wasmJs/productionExecutable`, on the domain web.tmplayer.org. `web.yml`
 builds and tests the app on every change under `web/`, `core/` and `ui/` and deploys nothing.
 The Telegram API id and hash come from `local.properties` or the environment at build time; they

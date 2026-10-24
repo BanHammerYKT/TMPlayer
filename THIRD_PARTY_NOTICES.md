@@ -202,6 +202,19 @@ characters of each script; nothing else in them is changed. The full licence tex
 copyright line travels beside the fonts as `fonts/OFL.txt` inside the app and as `OFL-Noto.txt`
 next to these notices in every desktop package.
 
+## Web player (webapp/)
+
+The SolidJS web player that replaces the wasm build below writes its own complete list at build
+time, served as `/licenses.txt` and linked from its Settings (`webapp/notices.config.ts`): every
+npm package in its built files with the package's licence text, all MIT, Apache-2.0, BSD-3-Clause
+or MPL-2.0 (Mediabunny and its coders, whose source ships in each npm package), plus:
+
+- FFmpeg (libavcodec, libavutil): LGPL-2.1-or-later, inside Mediabunny's AC-3 and E-AC-3, DTS and
+  AAC coders (configured with only those coders, no GPL parts). They are separate files loaded
+  only when a video needs them. Source: <https://ffmpeg.org/download.html>; how they are built:
+  <https://github.com/Vanilagy/mediabunny/tree/main/packages>.
+- Kotlin standard library: Apache-2.0, inside the app's rules compiled from `:core`.
+
 ## Web (web.tmplayer.org)
 
 The web app is served as static files and runs in the visitor's browser. It ships the components

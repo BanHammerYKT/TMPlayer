@@ -10,12 +10,22 @@ const MAX_ANSWER = 2 * 1024 * 1024
 const READ_TIMEOUT = 30_000
 const CACHE = `tmplayer-shell-${VERSION}`
 
+// The web app this one replaced at the same address (web/, Kotlin and tdweb) left its own worker,
+// caches and storage. Its worker answers /stream/ another way, so this one takes over at once.
+const OLD_APP_CACHES = ['tm-shell-v1', 'tm-runtime-v1']
+
 self.addEventListener('install', (event) => {
     if (VERSION === 'dev') {
         self.skipWaiting()
         return
     }
-    event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL.map((path) => new Request(path, { cache: 'reload' })))))
+    event.waitUntil(
+        (async () => {
+            const cache = await caches.open(CACHE)
+            await cache.addAll(SHELL.map((path) => new Request(path, { cache: 'reload' })))
+            if (await oldAppWasHere()) await self.skipWaiting()
+        })(),
+    )
 })
 
 self.addEventListener('activate', (event) => {
@@ -23,6 +33,7 @@ self.addEventListener('activate', (event) => {
         (async () => {
             // Older versions' files go; the thumbnails' cache (src/store.ts) stays.
             for (const name of await caches.keys()) if (name.startsWith('tmplayer-shell-') && name !== CACHE) await caches.delete(name)
+            if (await oldAppWasHere()) await clearOldApp().catch((e) => console.warn('[sw] old app', e))
             await self.clients.claim()
         })(),
     )
@@ -38,8 +49,8 @@ self.addEventListener('fetch', (event) => {
     if (url.origin !== self.location.origin || request.method !== 'GET') return
     if (url.pathname.startsWith('/stream/')) return event.respondWith(stream(event, url))
     if (VERSION === 'dev') return
-    // Every address is the same page: the router picks the screen.
-    if (request.mode === 'navigate') return event.respondWith(fromCache('/', request))
+    // Every address is the same page, the router picks the screen; /licenses.txt is its own.
+    if (request.mode === 'navigate' && !SHELL.includes(url.pathname)) return event.respondWith(fromCache('/', request))
     if (SHELL.includes(url.pathname) || url.pathname.startsWith('/assets/')) event.respondWith(fromCache(url.pathname, request))
 })
 
@@ -55,6 +66,55 @@ async function fromCache(path, request) {
     const response = await fetch(request)
     if (response.ok && path.startsWith('/assets/')) cache.put(path, response.clone()).catch(() => {})
     return response
+}
+
+async function oldAppWasHere() {
+    for (const name of OLD_APP_CACHES) if (await caches.has(name)) return true
+    return false
+}
+
+/**
+ * What the old web app kept: its caches, TDLib's database (an old sign in, of no use to this app),
+ * tdweb's compiled module cache, its finished small files and its video parts. The "tmplayer"
+ * database is mtcute's now too, so only the old app's store in it is emptied. Its tm.* settings in
+ * localStorage, a few KB a worker cannot reach, stay.
+ */
+async function clearOldApp() {
+    const known = indexedDB.databases ? new Set((await indexedDB.databases()).map((d) => d.name)) : null
+    const gone = (name) =>
+        new Promise((resolve) => {
+            const request = indexedDB.deleteDatabase(name)
+            request.onsuccess = request.onerror = request.onblocked = () => resolve()
+        })
+    for (const name of ['/tmplayer/dbfs', 'wasm-cache']) if (!known || known.has(name)) await gone(name)
+    if (!known || known.has('tmplayer')) await emptyOldFiles()
+    try {
+        await (await navigator.storage.getDirectory()).removeEntry('tdweb-files', { recursive: true })
+    } catch {
+        // Never written, or no OPFS here.
+    }
+    for (const name of OLD_APP_CACHES) await caches.delete(name)
+}
+
+/** Empties tdweb's "keyvaluepairs" store, when there is one, and closes at once so mtcute can upgrade the database. */
+function emptyOldFiles() {
+    return new Promise((resolve) => {
+        const request = indexedDB.open('tmplayer')
+        request.onerror = () => resolve()
+        request.onsuccess = () => {
+            const db = request.result
+            if (!db.objectStoreNames.contains('keyvaluepairs')) {
+                db.close()
+                return resolve()
+            }
+            const tx = db.transaction('keyvaluepairs', 'readwrite')
+            tx.objectStore('keyvaluepairs').clear()
+            tx.oncomplete = tx.onerror = tx.onabort = () => {
+                db.close()
+                resolve()
+            }
+        }
+    })
 }
 
 async function stream(event, url) {
