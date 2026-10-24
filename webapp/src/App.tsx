@@ -5,11 +5,14 @@ import { entryState, me, setMe, signOut } from './session'
 import { loadSettings } from './store'
 import { Home } from './screens/Home'
 import { Nav } from './ui/Nav'
+import { applyUpdate, updateReady } from './install'
+import { t } from './i18n'
 
 // Home comes with the first load. Sign in (with its QR code), the watch page (with the player and
 // its remuxer) and the other pages load when needed; once signed in they are fetched while idle.
 const SignIn = lazy(() => import('./screens/SignIn').then((m) => ({ default: m.SignIn })))
-const loadWatch = () => import('./screens/Watch').then((m) => ({ default: m.Watch }))
+// The watch page brings the player's code with it, so the first Play waits for neither.
+const loadWatch = () => import('./screens/Watch').then((m) => (m.loadPlayer(), { default: m.Watch }))
 const Watch = lazy(loadWatch)
 const loadChats = () => import('./screens/Chats').then((m) => ({ default: m.Chats }))
 const loadChat = () => import('./screens/Chat').then((m) => ({ default: m.Chat }))
@@ -59,32 +62,37 @@ function Shell(props: ParentProps) {
     const playing = () => location.pathname.startsWith('/watch/')
 
     return (
-        <Switch fallback={<Boot />}>
-            <Match when={error()}>
-                <div class="boot">
-                    <p class="error">{error()}</p>
-                    <button class="primary" onClick={() => window.location.reload()}>Try again</button>
-                </div>
-            </Match>
-            <Match when={me() === null && location.pathname === '/signin'}>{props.children}</Match>
-            <Match when={signedIn()}>
-                <main class="page" classList={{ playing: playing() }}>
-                    <ErrorBoundary
-                        fallback={(e, reset) => (
-                            <div class="boot">
-                                <p class="error">{errorText(e)}</p>
-                                <button class="primary" onClick={reset}>Try again</button>
-                            </div>
-                        )}
-                    >
-                        {props.children}
-                    </ErrorBoundary>
-                </main>
-                <Show when={!playing()}>
-                    <Nav />
-                </Show>
-            </Match>
-        </Switch>
+        <>
+            <Switch fallback={<Boot />}>
+                <Match when={error()}>
+                    <div class="boot">
+                        <p class="error">{error()}</p>
+                        <button class="primary" onClick={() => window.location.reload()}>Try again</button>
+                    </div>
+                </Match>
+                <Match when={me() === null && location.pathname === '/signin'}>{props.children}</Match>
+                <Match when={signedIn()}>
+                    <main class="page" classList={{ playing: playing() }}>
+                        <ErrorBoundary
+                            fallback={(e, reset) => (
+                                <div class="boot">
+                                    <p class="error">{errorText(e)}</p>
+                                    <button class="primary" onClick={reset}>Try again</button>
+                                </div>
+                            )}
+                        >
+                            {props.children}
+                        </ErrorBoundary>
+                    </main>
+                    <Show when={!playing()}>
+                        <Nav />
+                    </Show>
+                </Match>
+            </Switch>
+            <Show when={!playing()}>
+                <UpdateNotice />
+            </Show>
+        </>
     )
 }
 
@@ -118,5 +126,22 @@ function Boot() {
         <div class="boot">
             <img class="boot-mark" src="/icon.svg" alt="TMPlayer" width="64" height="64" />
         </div>
+    )
+}
+
+/**
+ * A new version is ready: Reload takes it, Later hides this until the next start. Never over the
+ * player, so a video is not interrupted; it shows again once the watch page closes.
+ */
+function UpdateNotice() {
+    const [later, setLater] = createSignal(false)
+    return (
+        <Show when={updateReady() && !later()}>
+            <div class="update-notice" role="status">
+                <p>{t('web.update_ready')}</p>
+                <button class="link" type="button" onClick={() => setLater(true)}>{t('update.later_short')}</button>
+                <button class="primary" type="button" onClick={applyUpdate}>{t('player.reload')}</button>
+            </div>
+        </Show>
     )
 }

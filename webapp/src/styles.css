@@ -186,6 +186,21 @@ input:not([type=range]):not([type=radio]):focus { border-color: var(--accent); }
   .page { --clearance: calc(72px + env(safe-area-inset-bottom)); }
 }
 
+/* A new version waits: a line over the bar, never over the player. */
+.update-notice {
+  position: fixed; z-index: 6; left: 50%; transform: translateX(-50%);
+  bottom: calc(86px + env(safe-area-inset-bottom)); width: min(480px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 16px; padding: 8px 8px 8px 16px;
+  background: var(--menu); border: 1px solid var(--line); border-radius: var(--r-l); box-shadow: var(--shadow);
+}
+.update-notice p { flex: 1; font-size: 14px; line-height: 20px; }
+@media (max-height: 500px) and (orientation: landscape) {
+  .update-notice { bottom: calc(66px + env(safe-area-inset-bottom)); }
+}
+.signin-install { text-align: start; display: flex; flex-direction: column; gap: 8px; }
+.signin-install summary { color: var(--accent); cursor: pointer; padding: 8px 0; }
+.install-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+
 /* Icons: the chosen glyph fills in (SelectableIcon); the outline fades under it. */
 .icon { display: block; flex: none; }
 .icon .icon-fill { opacity: 0; transition: opacity 120ms; }

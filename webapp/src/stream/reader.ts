@@ -39,6 +39,13 @@ export class TgFile {
     wantAhead = true
     /** Bytes received, for the details panel. */
     received = 0
+    /** The chunk after the last read: a read that starts there (or in the last chunk read) is playback going on. */
+    private nextExpected = 0
+    /**
+     * Set by the player for a file with no index (MPEG-TS): a seek searches it, so a jump is a
+     * probe and not yet the place to read ahead from.
+     */
+    searched = false
 
     constructor(
         readonly key: string,
@@ -67,8 +74,13 @@ export class TgFile {
         const first = Math.floor(start / this.chunk)
         const last = Math.floor((end - 1) / this.chunk)
         this.dropFarJobs(first, last)
+        // In a searched file read-ahead waits for reads in order. A seek bisects it for the key
+        // frame, and read-ahead after each probe took the bandwidth the search was waiting on: a TS
+        // seek took 6 to 9 s on a 3 MB/s line, 4 to 7 s without. Elsewhere a jump is the seek itself.
+        const inOrder = first === this.nextExpected || first === this.nextExpected - 1
+        this.nextExpected = last + 1
         const parts = await Promise.all(Array.from({ length: last - first + 1 }, (_, k) => this.get(first + k, true)))
-        this.ahead(last + 1)
+        if (inOrder || !this.searched) this.ahead(last + 1)
         if (parts.length === 1) {
             const off = start - first * this.chunk
             return parts[0].subarray(off, off + (end - start))
@@ -220,13 +232,24 @@ export interface FileRef {
     duration: number
 }
 
-/** Starts fetching a file's head and tail before Play is pressed; dropped after 60 s unused. */
+/** Warmed files kept at once: each holds 2 to 3 MiB that the memory budget never evicts. */
+const MAX_WARM = 3
+
+/** Starts fetching a file's head and tail before Play is pressed; dropped after 60 s unused, or when a fourth is warmed. */
 export function warmFile(ref: FileRef) {
     const existing = warm.get(ref.key)
     if (existing) {
         clearTimeout(existing.timer)
         existing.timer = window.setTimeout(() => dropWarm(ref.key), 60_000)
+        // Most recent last, so the oldest is the one dropped.
+        warm.delete(ref.key)
+        warm.set(ref.key, existing)
         return
+    }
+    while (warm.size >= MAX_WARM) {
+        const oldest = warm.keys().next().value!
+        clearTimeout(warm.get(oldest)!.timer)
+        dropWarm(oldest)
     }
     const file = new TgFile(ref.key, ref.size, ref.duration)
     file.wantAhead = false

@@ -116,7 +116,8 @@ export function Card(props: { card: CardData; progress?: number; replace?: boole
             onPointerEnter={() => intent(props.card.item)}
             onPointerLeave={() => clearTimeout(hoverTimer)}
             onFocus={() => intent(props.card.item)}
-            onPointerDown={() => warmFile(props.card.item)}
+            // A touch may be the start of a scroll: the watch page warms the file once it opens.
+            onPointerDown={(e: PointerEvent) => e.pointerType === 'mouse' && warmFile(props.card.item)}
         >
             <CardArt thumb={props.card.item.thumb} title={props.card.title} progress={props.progress} />
             <div class="card-name">{props.card.title}</div>

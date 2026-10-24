@@ -6,6 +6,7 @@ import {
     EncodedPacketSink,
     Input,
     Mp4InputFormat,
+    MpegTsInputFormat,
     Mp4OutputFormat,
     Output,
     QUALITY_HIGH,
@@ -139,6 +140,7 @@ export async function probe(file: TgFile, durationHint: number): Promise<Probe> 
         if (e instanceof UnsupportedInputFormatError) throw new Unplayable({ kind: 'format', format: await sniff(file) })
         throw e
     }
+    file.searched = format instanceof MpegTsInputFormat
     const video = await input.getPrimaryVideoTrack()
     const audios = await input.getAudioTracks()
     const first = await input.getFirstTimestamp().catch(() => 0)

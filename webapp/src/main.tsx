@@ -2,11 +2,12 @@ import { render } from 'solid-js/web'
 import { App } from './App'
 import { serveStreams } from './stream/reader'
 import { markEntry } from './session'
+import { registerWorker } from './install'
 import './styles.css'
 
 markEntry()
 serveStreams()
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('[sw]', e))
+registerWorker()
 
 const root = document.getElementById('app')!
 root.textContent = ''

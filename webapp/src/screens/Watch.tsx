@@ -6,9 +6,12 @@ import { t } from '../i18n'
 import { dropResume, progress as readProgress, settings } from '../store'
 import { StarButton } from './Chats'
 import { Card, length, size, tileCard, useProgress, watchPath } from './VideoList'
+import { warmFile } from '../stream/reader'
 import type { ChatView, VideoItem, WatchInfo } from '../tg/types'
 
-const Player = lazy(() => import('../player/Player').then((m) => ({ default: m.Player })))
+/** The player's code (Video.js and the engines), also fetched while idle once signed in (App.tsx). */
+export const loadPlayer = () => import('../player/Player').then((m) => ({ default: m.Player }))
+const Player = lazy(loadPlayer)
 
 const dot = '  ·  '
 
@@ -27,10 +30,11 @@ export function Watch() {
     const ids = () => ({ chatId: Number(params.chatId), messageId: Number(params.messageId) })
     const [video] = createResource(ids, async ({ chatId, messageId }) => {
         const passed = location.state?.video
-        if (passed?.chatId === chatId && passed.messageId === messageId && (await api.known(passed.key))) return passed
-        const found = await api.video(chatId, messageId)
+        const found = passed?.chatId === chatId && passed.messageId === messageId && (await api.known(passed.key)) ? passed : await api.video(chatId, messageId)
         // Gone from the chat: Continue watching forgets it too.
         if (found === null) dropResume(chatId, messageId)
+        // The file's head and tail start arriving while the player's code loads; the player takes them over.
+        else warmFile(found)
         return found
     })
     const [progress] = createResource(readProgress)

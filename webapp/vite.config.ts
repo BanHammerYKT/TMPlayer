@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import solid from 'vite-plugin-solid'
 import { PAGE_STRINGS } from './strings.config'
@@ -41,8 +43,35 @@ function pageStrings(): Plugin {
     }
 }
 
+/** Built files the service worker leaves for later: the sound decoders, fetched only for some videos. */
+const NOT_IN_SHELL = /^mediabunny-(ac3|aac-encoder|dts)-|\.map$/
+
+/**
+ * Writes the built file list and a version made from it into dist/sw.js, which keeps them for
+ * opening offline. Any change to any file makes a new version, so the browser sees a new worker
+ * and the page offers Reload.
+ */
+function offlineShell(): Plugin {
+    let outDir = 'dist'
+    return {
+        name: 'tmplayer-offline-shell',
+        apply: 'build',
+        configResolved: (config) => void (outDir = resolve(config.root, config.build.outDir)),
+        closeBundle() {
+            const sw = join(outDir, 'sw.js')
+            const assets = readdirSync(join(outDir, 'assets')).filter((f) => !NOT_IN_SHELL.test(f)).sort()
+            const shell = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', ...assets.map((f) => `/assets/${f}`)]
+            const version = createHash('sha256').update(readFileSync(join(outDir, 'index.html'))).update(shell.join('\n')).digest('hex').slice(0, 12)
+            const source = readFileSync(sw, 'utf8')
+            const out = source.replace("const VERSION = 'dev'", `const VERSION = '${version}'`).replace('const SHELL = []', `const SHELL = ${JSON.stringify(shell)}`)
+            if (out === source) this.error('sw.js has no VERSION or SHELL to fill')
+            writeFileSync(sw, out)
+        },
+    }
+}
+
 export default defineConfig({
-    plugins: [solid(), pageStrings()],
+    plugins: [solid(), pageStrings(), offlineShell()],
     define: {
         __TG_API_ID__: JSON.stringify(Number(secret('TG_API_ID')) || 0),
         __TG_API_HASH__: JSON.stringify(secret('TG_API_HASH')),

@@ -3,6 +3,7 @@ import { renderSVG } from 'uqr'
 import { ArrowDown01Icon, Cancel01Icon, ViewIcon, ViewOffSlashIcon } from '@hugeicons/core-free-icons'
 import { api, call } from '../tg/rpc'
 import { setMe } from '../session'
+import { iosBrowser } from '../install'
 import { clock, t, waitPhrase } from '../i18n'
 import { Icon } from '../ui/Icon'
 import * as phoneRules from './phone'
@@ -598,6 +599,17 @@ export function SignIn() {
             </Switch>
 
             <footer class="signin-foot small muted">
+                {/* Safari and a Home Screen app keep separate data: adding it first saves signing in twice. */}
+                <Show when={iosBrowser}>
+                    <details class="signin-install">
+                        <summary>{t('web.install_ios_short')}</summary>
+                        <p>{t('web.install_ios_before_sign_in')}</p>
+                        <ol class="install-steps">
+                            <li>{t('web.install_ios_step_share')}</li>
+                            <li>{t('web.install_ios_step_add')}</li>
+                        </ol>
+                    </details>
+                </Show>
                 <p>{t('auth.unofficial')}</p>
                 <a class="link" href="https://tmplayer.org/legal" target="_blank" rel="noopener">{t('login.legal')}</a>
             </footer>

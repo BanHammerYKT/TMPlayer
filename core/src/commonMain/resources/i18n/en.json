@@ -2969,6 +2969,7 @@
     "install_ios": "Tap Share, then Add to Home Screen. TMPlayer then opens full screen, like an app.",
     "install_ios_before_sign_in": "Best done before you sign in: the Home Screen app keeps its own sign in.",
     "install_ios_body": "It opens full screen, like an app, and keeps your sign in and places.",
+    "install_ios_own_sign_in": "The Home Screen app keeps its own sign in, so you sign in there once more.",
     "install_ios_short": "Add to Home Screen",
     "install_ios_step_add": "Choose Add to Home Screen, then Add",
     "install_ios_step_share": "Tap Share in the browser's bar",
@@ -3011,9 +3012,11 @@
     "sound_unplayable": "This browser cannot play the {codec} sound, so the sound stays as it was.",
     "stopped_loading": "The video stopped loading. Check your connection, then try again.",
     "storage_body": "Your sign in, settings and the parts of videos you played are kept in this browser only. Nothing goes to a server of ours.",
+    "storage_body_stream": "Your sign in, settings and places are kept in this browser only, never on a server of ours. Videos are streamed: only the part playing is held, in memory.",
     "storage_title": "Stored in this browser",
     "storage_used": "{used} used, of the {quota} this browser allows",
     "switch_decoder": "This browser could not play it directly, so TMPlayer is decoding it itself.",
+    "update_ready": "A new version of TMPlayer is ready.",
     "use_here": "Use it here"
   },
   "whatsnew": {

@@ -4,6 +4,8 @@ import { me, signOut } from '../session'
 import { api } from '../tg/rpc'
 import { t } from '../i18n'
 import { sizeScale } from './sizes'
+import { size } from './VideoList'
+import { install, installed, installPrompt, iosBrowser, keepData, kept, refused } from '../install'
 
 const THEMES: Theme[] = ['system', 'dark', 'light', 'black']
 
@@ -24,6 +26,8 @@ export function Settings() {
             </div>
             <SizeLimits />
             <Rewind />
+            <Install />
+            <Storage />
             <Account />
         </section>
     )
@@ -150,6 +154,54 @@ function Rewind() {
                     value={current()}
                     onPick={(v) => setSetting('rewindMs', v)}
                 />
+            </Show>
+        </div>
+    )
+}
+
+/** Installing: the browser's own prompt where it has one, the Share menu's steps on an iPhone or iPad; gone once installed. */
+function Install() {
+    return (
+        <Show when={!installed() && (installPrompt() || iosBrowser)}>
+            <div class="panel">
+                <Show
+                    when={installPrompt()}
+                    fallback={
+                        <>
+                            <h2 class="panel-title">{t('web.install_ios_title')}</h2>
+                            <p class="muted small">{t('web.install_ios_body')}</p>
+                            <ol class="install-steps">
+                                <li>{t('web.install_ios_step_share')}</li>
+                                <li>{t('web.install_ios_step_add')}</li>
+                            </ol>
+                            <p class="muted small">{t('web.install_ios_own_sign_in')}</p>
+                        </>
+                    }
+                >
+                    <h2 class="panel-title">{t('web.install_title')}</h2>
+                    <p class="muted small">{t('web.install_pwa_body')}</p>
+                    <button class="primary" style={{ 'align-self': 'start' }} type="button" onClick={install}>{t('web.install_button')}</button>
+                </Show>
+            </div>
+        </Show>
+    )
+}
+
+/** What the browser holds for TMPlayer, and asking it to keep that when the device runs low on space. */
+function Storage() {
+    const [estimate] = createResource(() => navigator.storage?.estimate?.().catch(() => null) ?? null)
+    return (
+        <div class="panel">
+            <h2 class="panel-title">{t('web.storage_title')}</h2>
+            <p class="muted small">{t('web.storage_body_stream')}</p>
+            <Show when={estimate()?.quota}>
+                <p class="small">{t('web.storage_used', { used: size(estimate()!.usage ?? 0), quota: size(estimate()!.quota!) })}</p>
+            </Show>
+            <Show when={kept() !== null}>
+                <p class="muted small">{kept() ? t('web.keep_storage_on') : refused() ? t('web.keep_storage_refused') : t('web.keep_storage_off')}</p>
+                <Show when={!kept()}>
+                    <button class="link" style={{ 'align-self': 'start' }} type="button" onClick={keepData}>{t('web.keep_storage')}</button>
+                </Show>
             </Show>
         </div>
     )

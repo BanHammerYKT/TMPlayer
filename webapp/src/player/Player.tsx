@@ -77,12 +77,25 @@ const STALL_MS = 15_000
 /** How long a press is held before the video plays at double speed. */
 const HOLD_MS = 450
 
+/** Local testing only: start and seek times, in the console and in `window.playerTimes`. */
+const timing =
+    location.hostname === 'localhost'
+        ? (label: string, since: number) => {
+              const ms = Math.round(performance.now() - since)
+              console.debug('[player]', label, ms, 'ms')
+              ;((window as unknown as { playerTimes?: { label: string; ms: number }[] }).playerTimes ??= []).push({ label, ms })
+          }
+        : () => {}
+
 /**
  * The item Video.js's own option groups (speed, subtitles) copy for each choice. Set as HTML: it is
  * cloned by Video.js, never drawn by Solid. The tick is drawn by CSS (.menu-check).
  */
 const RADIO_TEMPLATE =
     '<template><media-menu-radio-item class="menu-row"><span data-part="label"></span><media-menu-item-indicator force-mount class="menu-check"></media-menu-item-indicator></media-menu-radio-item></template>'
+
+/** The speed last chosen in this tab: the next episode (or any video opened after) plays at it too. */
+let chosenRate = 1
 
 /** Only one tab plays at a time: a tab that starts playing tells the others, which pause. */
 const tabs = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('tmplayer-player') : null
@@ -116,6 +129,10 @@ export function Player(props: {
     let subtitleInput!: HTMLInputElement
     const item = props.item
     const copies = playableCopies(item.copies)
+    const mounted = performance.now()
+    let loadStarted = 0
+    let framed = false
+    let seekStarted = 0
 
     let file: TgFile | null = null
     let engine: Engine | null = null
@@ -204,6 +221,8 @@ export function Player(props: {
     const load = async (src: Source, at: number, play: boolean) => {
         const gen = ++generation
         openingAt = at
+        loadStarted = performance.now()
+        framed = false
         retryOnline = false
         // A new source resets the element's speed; the one chosen carries over.
         const rate = video.playbackRate
@@ -419,6 +438,7 @@ export function Player(props: {
         savedMs = left > 0 ? left * 1000 : null
         const at = left > 0 ? (await api.resumeStart(left * 1000, rewindMs()).catch(() => left * 1000)) / 1000 : 0
         if (closed) return
+        video.playbackRate = chosenRate
         if (at > 0) {
             setStartOver(true)
             window.setTimeout(() => setStartOver(false), 10_000)
@@ -536,6 +556,12 @@ export function Player(props: {
                     playsinline
                     preload="auto"
                     onPlaying={() => {
+                        if (!framed) {
+                            framed = true
+                            timing('first frame, from the page opening', mounted)
+                            timing('first frame, from the load', loadStarted)
+                        } else if (seekStarted) timing('seek, until playing', seekStarted)
+                        seekStarted = 0
                         everPlayed = true
                         setStall(null)
                         addStoryboard()
@@ -554,7 +580,12 @@ export function Player(props: {
                         }, 60_000)
                     }}
                     onTimeUpdate={onTime}
-                    onSeeked={refreshKept}
+                    onRateChange={() => !holding() && (chosenRate = video.playbackRate)}
+                    onSeeking={() => framed && (seekStarted = performance.now())}
+                    onSeeked={() => {
+                        if (seekStarted) timing('seek, until the frame', seekStarted)
+                        refreshKept()
+                    }}
                     onError={onVideoError}
                     onEnded={() => {
                         savePosition(video.duration)
