@@ -11,6 +11,7 @@ import {
     QUALITY_HIGH,
     QuickTimeInputFormat,
     StreamTarget,
+    UnsupportedInputFormatError,
     WebMInputFormat,
     type InputAudioTrack,
     type InputVideoTrack,
@@ -23,7 +24,13 @@ export interface Probe {
     container: string
     video: InputVideoTrack | null
     audios: InputAudioTrack[]
+    /** Length in the player's seconds (from `base`). */
     duration: number
+    /**
+     * The file's first timestamp, which the player counts as 0. An MPEG-TS file starts where its
+     * broadcast clock stood (often 1.4 s or hours in); MP4 and MKV start at 0.
+     */
+    base: number
     mime: string
     /** The browser plays the file as it is, through the Service Worker. */
     native: boolean
@@ -33,13 +40,81 @@ export interface Probe {
     videoCodec: string
 }
 
-export class Unplayable extends Error {}
+/** Why a file cannot play here: the page says "needs the app" with the reason. */
+export type Why =
+    | { kind: 'format'; format: string }
+    | { kind: 'picture'; codec: string }
+    | { kind: 'no-picture' }
+    | { kind: 'no-mse' }
+
+export class Unplayable extends Error {
+    constructor(readonly why: Why) {
+        super(`unplayable: ${JSON.stringify(why)}`)
+    }
+}
 
 const debug = location.hostname === 'localhost'
 const mark = (label: string, since: number) => debug && console.debug('[remux]', label, Math.round(performance.now() - since), 'ms')
 
 const MS: typeof MediaSource | undefined = window.ManagedMediaSource ?? window.MediaSource
 const phone = matchMedia('(pointer: coarse)').matches
+
+const CODEC_NAMES: Record<string, string> = {
+    avc: 'H.264',
+    hevc: 'HEVC (H.265)',
+    av1: 'AV1',
+    vp9: 'VP9',
+    vp8: 'VP8',
+    prores: 'ProRes',
+    aac: 'AAC',
+    opus: 'Opus',
+    mp3: 'MP3',
+    vorbis: 'Vorbis',
+    flac: 'FLAC',
+    ac3: 'Dolby Digital (AC-3)',
+    eac3: 'Dolby Digital Plus (E-AC-3)',
+    dts: 'DTS',
+}
+
+/** Matroska's codec ids for what mediabunny does not read, so a message can name it. */
+const MATROSKA_NAMES: Record<string, string> = {
+    A_TRUEHD: 'Dolby TrueHD',
+    A_MLP: 'MLP',
+    A_ALAC: 'ALAC',
+    A_REAL: 'RealAudio',
+    'V_MPEG4/ISO/ASP': 'MPEG-4 Part 2 (DivX, Xvid)',
+    'V_MPEG4/ISO/SP': 'MPEG-4 Part 2',
+    'V_MPEG4/MS/V3': 'MS MPEG-4',
+    V_MPEG2: 'MPEG-2',
+    V_MPEG1: 'MPEG-1',
+    V_THEORA: 'Theora',
+    V_REAL: 'RealVideo',
+    'V_MS/VFW/FOURCC': 'Video for Windows',
+}
+
+/** A track's codec in plain words, also when mediabunny does not know it. */
+export function codecName(track: { codec: string | null; internalCodecId: unknown } | null): string {
+    if (!track) return 'unknown'
+    if (track.codec) return CODEC_NAMES[track.codec] ?? track.codec
+    const id = track.internalCodecId
+    if (typeof id === 'string') {
+        for (const [prefix, name] of Object.entries(MATROSKA_NAMES)) if (id.startsWith(prefix)) return name
+        return id.replace(/^[AV]_/, '')
+    }
+    return 'unknown'
+}
+
+/** Names the containers mediabunny does not open, from their first bytes. */
+async function sniff(file: TgFile): Promise<string> {
+    const h = await file.read(0, 12).catch(() => new Uint8Array(0))
+    const text = (from: number, to: number) => String.fromCharCode(...h.subarray(from, to))
+    if (text(0, 4) === 'RIFF' && text(8, 11) === 'AVI') return 'AVI'
+    if (h[0] === 0x30 && h[1] === 0x26 && h[2] === 0xb2 && h[3] === 0x75) return 'WMV'
+    if (text(0, 3) === 'FLV') return 'FLV'
+    if (text(0, 4) === '.RMF') return 'RealMedia'
+    if (h[0] === 0 && h[1] === 0 && h[2] === 1 && h[3] === 0xba) return 'MPEG-PS (VOB)'
+    return 'unknown'
+}
 
 /** Reads the file's header (not its name) to learn the container and codecs. */
 export async function probe(file: TgFile, durationHint: number): Promise<Probe> {
@@ -49,12 +124,27 @@ export async function probe(file: TgFile, durationHint: number): Promise<Probe> 
             getSize: () => file.size,
             read: (start, end) => file.read(start, end),
             maxCacheSize: 4 * 1024 * 1024,
+            // TgFile does the network read-ahead and keeps the chunks; this only joins small reads
+            // (an MPEG-TS file is read 188 bytes at a time, 50,000 calls a seek without it).
+            prefetchProfile: 'fileSystem',
+            // A read dropped by a seek or a close, with nothing waiting on it.
+            handleUnhandledError: () => {},
         }),
     })
-    const format = await input.getFormat()
+    let format
+    try {
+        format = await input.getFormat()
+    } catch (e) {
+        input.dispose()
+        if (e instanceof UnsupportedInputFormatError) throw new Unplayable({ kind: 'format', format: await sniff(file) })
+        throw e
+    }
     const video = await input.getPrimaryVideoTrack()
     const audios = await input.getAudioTracks()
-    const duration = (await input.getDurationFromMetadata().catch(() => null)) ?? durationHint
+    const first = await input.getFirstTimestamp().catch(() => 0)
+    const base = isFinite(first) && first > 0 ? first : 0
+    const end = await input.getDurationFromMetadata().catch(() => null)
+    const duration = end != null && end - base > 0 ? end - base : durationHint
     const mime = await input.getMimeType().catch(() => 'video/mp4')
     const isoOrWebm = format instanceof Mp4InputFormat || format instanceof QuickTimeInputFormat || format instanceof WebMInputFormat
     // QuickTime files are MP4 to every browser that plays them.
@@ -63,20 +153,99 @@ export async function probe(file: TgFile, durationHint: number): Promise<Probe> 
     const native = isoOrWebm && probeEl.canPlayType(asMp4) !== '' && !!navigator.serviceWorker?.controller
     const vcodec = (await video?.getCodecParameterString().catch(() => null)) ?? null
     const remuxable = !!MS && !!vcodec && MS.isTypeSupported(`video/mp4; codecs="${vcodec.replace(/^hev1/, 'hvc1')}"`)
-    const names: Record<string, string> = { avc: 'H.264', hevc: 'HEVC (H.265)', av1: 'AV1', vp9: 'VP9', vp8: 'VP8' }
-    const videoCodec = names[video?.codec ?? ''] ?? video?.codec ?? 'unknown'
-    return { input, container: format.name, video, audios, duration, mime: asMp4, native, remuxable, videoCodec }
+    return { input, container: format.name, video, audios, duration, base, mime: asMp4, native, remuxable, videoCodec: codecName(video) }
+}
+
+/**
+ * How this browser plays a probed file: as it is, remuxed, or not at all (the page then says it
+ * needs the app). Software decoding of the picture is left out on purpose (plan 2b).
+ */
+export function route(p: Probe): 'native' | 'remux' {
+    if (!p.video) throw new Unplayable({ kind: 'no-picture' })
+    if (p.native) return 'native'
+    if (!MS) {
+        // Old iPhones (before iOS 17.1) have no Media Source at all.
+        throw new Unplayable(p.container.includes('MP4') || p.container.includes('QuickTime') ? { kind: 'picture', codec: p.videoCodec } : { kind: 'no-mse' })
+    }
+    if (!p.remuxable) throw new Unplayable({ kind: 'picture', codec: p.videoCodec })
+    return 'remux'
+}
+
+/** The sound as the player hands it to the browser: copied, converted, or none it can play. */
+type Sound = { kind: 'copy' } | { kind: 'convert'; to: 'aac' | 'opus'; channels: number } | { kind: 'none' }
+
+let aacRegistered = false
+
+/** AC-3, E-AC-3 and DTS decoders, loaded only when a file has that sound. */
+async function registerDecoders(codec: string | null) {
+    if (codec === 'ac3' || codec === 'eac3') {
+        const { registerAc3Decoder } = await import('@mediabunny/ac3')
+        registerAc3Decoder()
+    } else if (codec === 'dts') {
+        const { registerDtsDecoder } = await import('@mediabunny/dts')
+        registerDtsDecoder()
+    }
+}
+
+/**
+ * The encoder for converted sound. AAC keeps everything the native player does with the sound on
+ * an iPhone (lock screen, AirPlay, background); the browser's own encoder first (Safari 26), else
+ * Opus where MP4 Opus plays and the browser encodes it (Chromium on Linux has no AAC encoder),
+ * else mediabunny's AAC encoder in WebAssembly.
+ */
+async function encoderFor(channels: number): Promise<{ to: 'aac' | 'opus'; channels: number } | null> {
+    const counts = channels > 2 ? [channels, 2] : [channels]
+    for (const n of counts) {
+        const config = { numberOfChannels: n, sampleRate: 48000 }
+        if (await canEncodeAudio('aac', config)) return { to: 'aac', channels: n }
+        if (MS!.isTypeSupported('audio/mp4; codecs="opus"') && (await canEncodeAudio('opus', config))) return { to: 'opus', channels: n }
+        if (!aacRegistered) {
+            const { registerAacEncoder } = await import('@mediabunny/aac-encoder')
+            registerAacEncoder()
+            aacRegistered = true
+        }
+        if (await canEncodeAudio('aac', config)) return { to: 'aac', channels: n }
+    }
+    return null
+}
+
+const sounds = new WeakMap<InputAudioTrack, Promise<Sound>>()
+
+/** Whether this browser plays a sound track, and how. Asked once per track. */
+export function soundOf(track: InputAudioTrack): Promise<Sound> {
+    let known = sounds.get(track)
+    if (!known) {
+        known = (async (): Promise<Sound> => {
+            const codec = await track.getCodecParameterString().catch(() => null)
+            if (codec && MS?.isTypeSupported(`audio/mp4; codecs="${codec}"`)) return { kind: 'copy' }
+            if (!track.codec) return { kind: 'none' }
+            await registerDecoders(track.codec)
+            if (!(await track.canDecode().catch(() => false))) return { kind: 'none' }
+            const enc = await encoderFor(Math.min(phone ? 2 : 6, track.numberOfChannels || 2))
+            return enc ? { kind: 'convert', ...enc } : { kind: 'none' }
+        })()
+        sounds.set(track, known)
+    }
+    return known
+}
+
+/** The first track (in the file's order) this browser can play the sound of, or null. */
+export async function playableSound(tracks: InputAudioTrack[]): Promise<InputAudioTrack | null> {
+    for (const t of tracks) if ((await soundOf(t)).kind !== 'none') return t
+    return null
 }
 
 export interface EngineEvents {
-    onStatus?: (text: string) => void
     onError?: (e: unknown) => void
+    /** The engine's `detail` changed (another sound track, converted or copied). */
+    onDetail?: (detail: string) => void
 }
 
 export interface Engine {
-    readonly name: string
+    readonly name: 'native' | 'remux'
     readonly detail: string
-    setAudio?(track: InputAudioTrack): void
+    /** Plays another sound track; false when this browser cannot play that one. */
+    setAudio?(track: InputAudioTrack): Promise<boolean>
     destroy(): void
 }
 
@@ -98,54 +267,101 @@ export function nativeEngine(video: HTMLVideoElement, url: string, start: number
  * Remux to fragmented MP4 in the browser: the picture is copied untouched and decoded by the
  * device's hardware, sound the browser cannot play (AC-3, E-AC-3, DTS) is converted to AAC. Fed to
  * ManagedMediaSource on iPhone and Safari, MediaSource elsewhere.
+ *
+ * Times: the `<video>` element counts from 0 at the file's first timestamp (`Probe.base`); the
+ * conversion is cut at a key frame (`trim.start`, its output starts at 0) and placed with
+ * `timestampOffset`.
  */
 export class RemuxEngine implements Engine {
     readonly name = 'remux'
     detail = 'Remuxed to MP4'
     private ms: MediaSource
+    private managed: boolean
     private sb: SourceBuffer | null = null
+    private mime = ''
     private url: string
     private gen = 0
     private conversion: Conversion | null = null
     private running: Promise<void> = Promise.resolve()
-    private audio: InputAudioTrack | null
-    private keySink: EncodedPacketSink | null
+    private keySink: EncodedPacketSink
     private destroyed = false
     private t0 = 0
     private wake: (() => void) | null = null
     private readonly onSeeking = () => this.seekTo(this.video.currentTime)
     private readonly onTick = () => this.wake?.()
 
+    /** `audio` is a track `soundOf` said plays, or null to play without sound. */
     constructor(
         private video: HTMLVideoElement,
         private p: Probe,
+        private audio: InputAudioTrack | null,
         start: number,
         private ev: EngineEvents,
     ) {
-        if (!MS) throw new Unplayable('This browser has no Media Source Extensions.')
-        if (!p.video) throw new Unplayable('This file has no picture.')
-        this.audio = p.audios[0] ?? null
+        if (!MS) throw new Unplayable({ kind: 'no-mse' })
+        if (!p.video) throw new Unplayable({ kind: 'no-picture' })
         this.keySink = new EncodedPacketSink(p.video)
-        this.ms = new MS()
-        if (window.ManagedMediaSource && this.ms instanceof window.ManagedMediaSource) video.disableRemotePlayback = true
-        this.url = URL.createObjectURL(this.ms)
-        video.src = this.url
         video.addEventListener('seeking', this.onSeeking)
         video.addEventListener('timeupdate', this.onTick)
         video.addEventListener('play', this.onTick)
+        ;[this.ms, this.url] = this.open(start)
+        this.managed = !!window.ManagedMediaSource && this.ms instanceof window.ManagedMediaSource
+        // Safari offers ManagedMediaSource only with AirPlay off, or with an AirPlay source beside it.
+        if (this.managed) video.disableRemotePlayback = true
+    }
+
+    /** A new Media Source on the element, filled from `start` once it opens. */
+    private open(start: number): [MediaSource, string] {
+        const ms = new MS!()
+        const url = URL.createObjectURL(ms)
+        this.video.src = url
+        // ManagedMediaSource says when it wants data (it may hold off on battery or a slow link).
+        ms.addEventListener('startstreaming', this.onTick)
+        ms.addEventListener(
+            'sourceopen',
+            () => {
+                if (this.destroyed || ms !== this.ms) return
+                if (this.p.duration > 0) ms.duration = this.p.duration
+                this.restart(start)
+            },
+            { once: true },
+        )
+        return [ms, url]
+    }
+
+    /**
+     * Starts over on a fresh Media Source at `t`: for another sound codec where SourceBuffer has no
+     * `changeType` (WebKitGTK; Safari has it from 14.1).
+     */
+    private reopen(t: number) {
+        const playing = !this.video.paused
+        this.gen++
+        this.wake?.()
+        this.conversion?.cancel().catch(() => {})
+        this.conversion = null
+        this.ms.removeEventListener('startstreaming', this.onTick)
+        URL.revokeObjectURL(this.url)
+        this.sb = null
+        this.mime = ''
+        ;[this.ms, this.url] = this.open(t)
         this.ms.addEventListener(
             'sourceopen',
             () => {
-                if (this.p.duration > 0) this.ms.duration = this.p.duration
-                this.restart(start)
+                if (t > 0) this.video.currentTime = t
+                if (playing) this.video.play().catch(() => {})
             },
             { once: true },
         )
     }
 
-    setAudio(track: InputAudioTrack) {
+    async setAudio(track: InputAudioTrack): Promise<boolean> {
+        if (track === this.audio) return true
+        if ((await soundOf(track)).kind === 'none') return false
+        if (this.destroyed) return false
         this.audio = track
-        this.restart(this.video.currentTime)
+        if (this.sb && !('changeType' in SourceBuffer.prototype)) this.reopen(this.video.currentTime)
+        else this.restart(this.video.currentTime)
+        return true
     }
 
     destroy() {
@@ -156,6 +372,7 @@ export class RemuxEngine implements Engine {
         this.video.removeEventListener('seeking', this.onSeeking)
         this.video.removeEventListener('timeupdate', this.onTick)
         this.video.removeEventListener('play', this.onTick)
+        this.ms.removeEventListener('startstreaming', this.onTick)
         this.video.removeAttribute('src')
         this.video.load()
         URL.revokeObjectURL(this.url)
@@ -184,14 +401,13 @@ export class RemuxEngine implements Engine {
             await previous?.cancel().catch(() => {})
             mark(`seek ${t.toFixed(1)}: cancelled`, t0)
             await before.catch(() => {})
-            mark('previous done', t0)
             if (gen !== this.gen || this.destroyed) return
             await this.clearBuffer()
-            mark('buffer cleared', t0)
             if (gen !== this.gen) return
-            const key = await this.keySink!.getKeyPacket(t, { metadataOnly: true }).catch(() => null)
-            const from = key?.timestamp ?? 0
-            mark(`key frame ${from.toFixed(2)}`, t0)
+            const key = await this.keySink.getKeyPacket(t + this.p.base, { metadataOnly: true }).catch(() => null)
+            // Before the first key frame (or none found): from the start.
+            const from = Math.max(key?.timestamp ?? this.p.base, this.p.base)
+            mark(`key frame ${(from - this.p.base).toFixed(2)}`, t0)
             if (gen !== this.gen) return
             this.t0 = t0
             await this.run(gen, from)
@@ -218,15 +434,16 @@ export class RemuxEngine implements Engine {
             format: new Mp4OutputFormat({ fastStart: 'fragmented', minimumFragmentDuration: 1 }),
             target: new StreamTarget(
                 new WritableStream<StreamTargetChunk>({
+                    // A superseded run's chunks are dropped, not refused: an errored stream makes mediabunny's own cancel throw.
                     write: async (chunk) => {
-                        if (gen !== this.gen) throw new DOMException('superseded', 'AbortError')
+                        if (gen !== this.gen) return
                         // Fragmented output is written in order; anything that rewrites earlier bytes is skipped.
                         if (chunk.position < written) return
                         written = chunk.position + chunk.data.length
                         if (chunk.position === 0) relabelHevc(chunk.data)
-                        const sb = await this.sourceBuffer(output, from)
+                        const sb = await this.sourceBuffer(output, from - this.p.base)
                         await this.roomAhead(gen)
-                        if (gen !== this.gen) throw new DOMException('superseded', 'AbortError')
+                        if (gen !== this.gen) return
                         await this.append(sb, chunk.data)
                         if (this.t0) {
                             mark(`first append ${chunk.data.length} B`, this.t0)
@@ -240,7 +457,7 @@ export class RemuxEngine implements Engine {
             input: this.p.input,
             output,
             video: (track) => (track === this.p.video ? {} : { discard: true }),
-            audio: (track) => (track === this.audio ? audioOptions : { discard: true }),
+            audio: (track) => (track === this.audio && audioOptions ? audioOptions : { discard: true }),
             trim: { start: from },
             copy: { shiftTolerance: 0.25 },
             tags: {},
@@ -249,10 +466,9 @@ export class RemuxEngine implements Engine {
         mark('conversion ready', this.t0)
         if (gen !== this.gen) return
         if (!conversion.isValid || !conversion.utilizedTracks.some((t) => t === this.p.video)) {
-            throw new Unplayable('The picture in this file cannot be played in this browser.')
+            throw new Unplayable({ kind: 'picture', codec: this.p.videoCodec })
         }
         this.conversion = conversion
-        this.ev.onStatus?.('')
         await conversion.execute()
         if (gen === this.gen && this.ms.readyState === 'open' && this.sb) {
             await this.idle(this.sb)
@@ -260,47 +476,59 @@ export class RemuxEngine implements Engine {
         }
     }
 
-    /** Copy the sound when the browser plays it in MP4, else convert it to AAC (or Opus). */
+    /** The chosen track copied when the browser plays it in MP4, else converted; null for no sound. */
     private async audioPlan() {
+        const plan = await this.soundPlan()
+        this.ev.onDetail?.(this.detail)
+        return plan
+    }
+
+    private async soundPlan() {
         const track = this.audio
-        if (!track) return {}
-        const codec = await track.getCodecParameterString()
-        if (codec && MS!.isTypeSupported(`audio/mp4; codecs="${codec}"`)) {
-            this.detail = `Remuxed to MP4, sound copied (${track.codec})`
+        if (!track) {
+            this.detail = 'Remuxed to MP4, no sound'
+            return null
+        }
+        const sound = await soundOf(track)
+        if (sound.kind === 'none') return null
+        if (sound.kind === 'copy') {
+            this.detail = `Remuxed to MP4, sound copied (${codecName(track)})`
             return {}
         }
-        if (track.codec === 'ac3' || track.codec === 'eac3') {
-            const { registerAc3Decoder } = await import('@mediabunny/ac3')
-            registerAc3Decoder()
-        } else if (track.codec === 'dts') {
-            const { registerDtsDecoder } = await import('@mediabunny/dts')
-            registerDtsDecoder()
-        }
-        const target = (await canEncodeAudio('aac')) ? 'aac' : 'opus'
-        this.detail = `Remuxed to MP4, sound converted ${track.codec} to ${target}`
+        this.detail = `Remuxed to MP4, sound converted from ${codecName(track)} to ${sound.to.toUpperCase()}`
         return {
-            codec: target,
-            numberOfChannels: Math.min(phone ? 2 : 6, track.numberOfChannels || 2),
+            codec: sound.to,
+            numberOfChannels: sound.channels,
             sampleRate: 48000,
             quality: QUALITY_HIGH,
             forceTranscode: true,
         } as const
     }
 
-    private async sourceBuffer(output: Output, from: number): Promise<SourceBuffer> {
+    private async sourceBuffer(output: Output, offset: number): Promise<SourceBuffer> {
+        const mime = (await output.getMimeType()).replace(/hev1\./g, 'hvc1.')
         if (!this.sb) {
-            const mime = (await output.getMimeType()).replace(/hev1\./g, 'hvc1.')
-            if (!MS!.isTypeSupported(mime)) throw new Unplayable(`This browser cannot play ${mime}.`)
+            if (!MS!.isTypeSupported(mime)) throw new Unplayable({ kind: 'picture', codec: this.p.videoCodec })
             this.sb = this.ms.addSourceBuffer(mime)
             this.sb.mode = 'segments'
+            this.mime = mime
         }
         await this.idle(this.sb)
+        // Another sound track can mean another codec (AC-3 converted to Opus, then AAC copied).
+        if (mime !== this.mime) {
+            this.sb.changeType(mime)
+            this.mime = mime
+        }
         // Output timestamps start at zero from the key frame; place them where they belong.
-        if (this.sb.timestampOffset !== from) this.sb.timestampOffset = from
+        if (this.sb.timestampOffset !== offset) this.sb.timestampOffset = offset
         return this.sb
     }
 
-    /** Keeps 30 s (phone) to 60 s ahead of the playhead, and lets the buffer behind go. */
+    /**
+     * Keeps 30 s (phone) to 60 s ahead of the playhead, and lets the buffer behind go. A
+     * ManagedMediaSource that stopped streaming gets nothing more until it asks again, once 10 s
+     * are in hand (so the first frames always go in).
+     */
     private async roomAhead(gen: number) {
         const limit = phone ? 30 : 60
         for (;;) {
@@ -309,7 +537,8 @@ export class RemuxEngine implements Engine {
             const t = this.video.currentTime
             let end = t
             for (let i = 0; i < sb.buffered.length; i++) if (t >= sb.buffered.start(i) - 1 && t <= sb.buffered.end(i)) end = sb.buffered.end(i)
-            if (end - t < limit) return
+            const held = this.managed && (this.ms as MediaSource & { streaming?: boolean }).streaming === false && end - t >= 10
+            if (end - t < limit && !held) return
             await new Promise<void>((resolve) => {
                 this.wake = resolve
                 setTimeout(resolve, 1000)

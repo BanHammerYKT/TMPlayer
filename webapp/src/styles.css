@@ -105,13 +105,14 @@ h1, h2, h3, p { margin: 0; }
 .row-title { font-size: 22px; line-height: 28px; font-weight: 400; margin: 8px 0 12px; }
 
 /* Controls */
-button.primary {
+button.primary, a.button.primary {
   background: var(--accent); color: var(--on-accent); border: 0; border-radius: 999px;
   min-height: 44px; padding: 10px 24px; font-size: 14px; line-height: 20px; font-weight: 500;
   transition: transform var(--fast) var(--ease), opacity var(--fast);
 }
+a.button.primary { display: inline-flex; align-items: center; text-decoration: none; }
 button.primary:disabled { opacity: .5; cursor: default; }
-button.primary:active:not(:disabled), .danger-button:active { transform: scale(.96); }
+button.primary:active:not(:disabled), a.button.primary:active, .danger-button:active { transform: scale(.96); }
 button.link { background: none; border: 0; color: var(--accent); padding: 8px 0; }
 a.link { color: var(--accent); text-decoration: none; display: inline-block; padding: 8px 0; }
 .danger-button {
@@ -404,6 +405,14 @@ button.chip { background: rgba(255,255,255,.14); border: 0; border-radius: 999px
 @keyframes spin { to { transform: rotate(360deg); } }
 .player-error { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 16px; padding: 24px; text-align: center; background: rgba(0,0,0,.6); }
 .player-error p { max-width: 520px; margin: 0; }
+.needs-app { background: rgba(0,0,0,.85); }
+/* Nothing to play: only Back stays. */
+.player.blocked .controls { display: none; }
+.needs-app h2 { font-size: 22px; line-height: 28px; font-weight: 400; }
+.needs-app .actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.needs-app .actions button:not(.primary) { background: none; border: 1px solid rgba(255,255,255,.4); border-radius: 999px; min-height: 44px; padding: 10px 24px; font-size: 14px; font-weight: 500; }
+.player-notice { position: absolute; left: 50%; top: 72px; transform: translateX(-50%); width: min(560px, calc(100% - 32px)); display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-radius: var(--r-m); background: rgba(0,0,0,.75); border: 1px solid rgba(255,255,255,.2); }
+.player-notice p { flex: 1; margin: 0; font-size: 14px; line-height: 20px; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
 
 /* Long lists: only the rows near the screen are drawn, each placed where it would be. */

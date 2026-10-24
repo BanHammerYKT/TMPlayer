@@ -11,12 +11,15 @@ importers:
       '@hugeicons/core-free-icons':
         specifier: 4.3.5
         version: 4.3.5
+      '@mediabunny/aac-encoder':
+        specifier: 1.62.1
+        version: 1.62.1(mediabunny@1.62.1)
       '@mediabunny/ac3':
-        specifier: 1.62.0
-        version: 1.62.0(mediabunny@1.62.0)
+        specifier: 1.62.1
+        version: 1.62.1(mediabunny@1.62.1)
       '@mediabunny/dts':
-        specifier: 1.62.0
-        version: 1.62.0(mediabunny@1.62.0)
+        specifier: 1.62.1
+        version: 1.62.1(mediabunny@1.62.1)
       '@mtcute/web':
         specifier: 0.32.6
         version: 0.32.6
@@ -36,8 +39,8 @@ importers:
         specifier: 6.3.0
         version: 6.3.0
       mediabunny:
-        specifier: 1.62.0
-        version: 1.62.0
+        specifier: 1.62.1
+        version: 1.62.1
       solid-js:
         specifier: 1.9.17
         version: 1.9.17
@@ -178,13 +181,18 @@ packages:
   '@lit/reactive-element@2.1.2':
     resolution: {integrity: sha512-pbCDiVMnne1lYUIaYNN5wrwQXDtHaYtg7YEFPeW+hws6U47WeFvISGUWekPGKWOP1ygrs0ef0o1VJMk1exos5A==}
 
-  '@mediabunny/ac3@1.62.0':
-    resolution: {integrity: sha512-9EyY1hsZFd5iYlhQVMH+YlFx3aLbZki/YN/ynCKOokMHTJ7X78slPPU1sMS4orgajYK0i24341r2z8Z8r3iUhg==}
+  '@mediabunny/aac-encoder@1.62.1':
+    resolution: {integrity: sha512-3fiZYAX95d+TDp2vu0sXMYputLm2+W21fZQMUWTf9awKhsRC/wko9OXj4GLLmGKMRryvI9Ocv9HzhhHVRYWopQ==}
     peerDependencies:
       mediabunny: ^1.0.0
 
-  '@mediabunny/dts@1.62.0':
-    resolution: {integrity: sha512-xXbF05aRTPeg8Iz4yf9xwXTqgRakEggO5j7i1b9k9O39BjZOaiCjH8ar9uK9bbkUev1cwTQVyYsr5IxQnVOaNA==}
+  '@mediabunny/ac3@1.62.1':
+    resolution: {integrity: sha512-UCSfIyR57epO6xPsCuKaTTUwb9lv9EeI2MjHrXoRcgH3u13qq+IifnKkrA/xAoB+JnhtF8jcgalH4w+QTuN3ZQ==}
+    peerDependencies:
+      mediabunny: ^1.0.0
+
+  '@mediabunny/dts@1.62.1':
+    resolution: {integrity: sha512-/hKlPSTEJZySt0YbmyqLT9M3wJihhG+i9O1yH/g511Jvk1JwQyG3/bPlIlGEmKroSOuQxcv5MJHZLbQ/acC/zg==}
     peerDependencies:
       mediabunny: ^1.0.0
 
@@ -604,8 +612,8 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
-  mediabunny@1.62.0:
-    resolution: {integrity: sha512-D8E8BDxjCyqyrGj074jLRQNgilDW5izJu8o9pg7THMYMIZBL1Fao5hOtdDPDfA+nSnk68tMa8IaCJmz8hSpJpw==}
+  mediabunny@1.62.1:
+    resolution: {integrity: sha512-lYzeerDwo9QLhBCipqQDXOSV7InvaIFplllZQviPO5rPwH+IUr8M1uvumk1olIUgMRGkPiInRriv25WFErUgMw==}
 
   merge-anything@5.1.7:
     resolution: {integrity: sha512-eRtbOb1N5iyH0tkQDAoQ4Ipsp/5qSR79Dzrz8hEPxRX10RWWR/iQXdoKmBSRCThY1Fh5EhISDtpSc93fpxUniQ==}
@@ -920,13 +928,17 @@ snapshots:
     dependencies:
       '@lit-labs/ssr-dom-shim': 1.6.0
 
-  '@mediabunny/ac3@1.62.0(mediabunny@1.62.0)':
+  '@mediabunny/aac-encoder@1.62.1(mediabunny@1.62.1)':
     dependencies:
-      mediabunny: 1.62.0
+      mediabunny: 1.62.1
 
-  '@mediabunny/dts@1.62.0(mediabunny@1.62.0)':
+  '@mediabunny/ac3@1.62.1(mediabunny@1.62.1)':
     dependencies:
-      mediabunny: 1.62.0
+      mediabunny: 1.62.1
+
+  '@mediabunny/dts@1.62.1(mediabunny@1.62.1)':
+    dependencies:
+      mediabunny: 1.62.1
 
   '@mtcute/core@0.32.6':
     dependencies:
@@ -1226,7 +1238,7 @@ snapshots:
     dependencies:
       yallist: 3.1.1
 
-  mediabunny@1.62.0:
+  mediabunny@1.62.1:
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13

@@ -1,8 +1,8 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import type { InputAudioTrack } from 'mediabunny'
 import { openFile, streams } from '../stream/reader'
-import { nativeEngine, probe, RemuxEngine, Unplayable, type Engine, type Probe } from './engines'
-import { errorText } from '../tg/rpc'
+import { codecName, nativeEngine, playableSound, probe, RemuxEngine, route, Unplayable, type Engine, type Probe, type Why } from './engines'
+import { t } from '../i18n'
 import { getResume, saveResume as storeResume } from '../store'
 import type { VideoItem } from '../tg/types'
 
@@ -31,6 +31,9 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
     const [duration, setDuration] = createSignal(item.duration)
     const [buffered, setBuffered] = createSignal(0)
     const [error, setError] = createSignal<string | null>(null)
+    const [needsApp, setNeedsApp] = createSignal<Why | null>(null)
+    /** A line over the picture about the sound (none playable here, or a track that cannot play). */
+    const [notice, setNotice] = createSignal('')
     const [shown, setShown] = createSignal(true)
     const [muted, setMuted] = createSignal(false)
     const [audios, setAudios] = createSignal<InputAudioTrack[]>([])
@@ -61,12 +64,11 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
             if (info.duration > 0) setDuration(info.duration)
             setAudios(info.audios)
             setAudio(info.audios[0] ?? null)
-            if (info.native) {
+            if (route(info) === 'native') {
                 const url = `/stream/${encodeURIComponent(item.key)}?size=${item.size}&mime=${encodeURIComponent(info.mime.split(';')[0])}`
                 engine = nativeEngine(video, url, resumeAt)
             } else {
-                engine = new RemuxEngine(video, info, resumeAt, { onError: fail })
-                if (resumeAt) video.currentTime = resumeAt
+                engine = await remux(info, resumeAt)
             }
             setSwitchable(!!engine.setAudio)
             setDetails(`${info.container}, ${info.mime.replace(/^[^;]*;\s*/, '')}. ${engine.detail}`)
@@ -76,21 +78,32 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
         }
     }
 
+    /** The remux engine with the first sound track this browser plays; without sound when none does. */
+    const remux = async (p: Probe, at: number): Promise<Engine> => {
+        const sound = await playableSound(p.audios)
+        if (!sound && p.audios.length) setNotice(t('web.no_sound', { codec: codecName(p.audios[0]) }))
+        setAudio(sound)
+        const e = new RemuxEngine(video, p, sound, at, { onError: fail, onDetail: (d) => setDetails(`${p.container}. ${d}`) })
+        if (at) video.currentTime = at
+        return e
+    }
+
     const fail = (e: unknown) => {
         console.error('[player]', e)
         setWaiting(false)
-        if (e instanceof Unplayable) setError(e.message)
-        else setError(`Could not play this video: ${errorText(e)}`)
+        if (e instanceof Unplayable) setNeedsApp(e.why)
+        else setError(t('player.error_other'))
     }
 
     // A native element that refuses the file hands over to the remux engine at the same place.
-    const onVideoError = () => {
+    const onVideoError = async () => {
         if (engine?.name !== 'native' || !info) return
         const at = video.currentTime
         engine.destroy()
+        engine = null
         try {
-            engine = new RemuxEngine(video, info, at, { onError: fail })
-            if (at) video.currentTime = at
+            if (!info.remuxable) throw new Unplayable({ kind: 'picture', codec: info.videoCodec })
+            engine = await remux(info, at)
             setSwitchable(true)
             setDetails(`${info.container}. ${engine.detail} (the browser refused it as it is)`)
             video.play().catch(() => {})
@@ -98,6 +111,15 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
             fail(e)
         }
     }
+
+    const whyText = (why: Why) =>
+        why.kind === 'format'
+            ? t('web.needs_app_format', { format: why.format === 'unknown' ? '?' : why.format })
+            : why.kind === 'picture'
+              ? t('web.needs_app_picture', { codec: why.codec })
+              : why.kind === 'no-mse'
+                ? t('web.needs_app_no_mse')
+                : t('web.needs_app_codec')
 
     let pauseTimer = 0
     const sync = () => {
@@ -185,12 +207,15 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
         poke()
     }
 
-    const pickAudio = (track: InputAudioTrack) => {
+    const pickAudio = async (track: InputAudioTrack) => {
         setMenu(false)
-        if (track === audio()) return
+        if (track === audio() || !engine?.setAudio) return
+        if (!(await engine.setAudio(track))) {
+            setNotice(t('web.sound_unplayable', { codec: codecName(track) }))
+            return
+        }
+        setNotice('')
         setAudio(track)
-        engine?.setAudio?.(track)
-        if (engine) setDetails((d) => d.replace(/Remuxed.*$/, engine!.detail))
     }
 
     const trackLabel = (t: InputAudioTrack, i: number) => {
@@ -202,7 +227,7 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
     const pct = (t: number) => (duration() > 0 ? `${Math.min(100, (t / duration()) * 100)}%` : '0%')
 
     return (
-        <div class="player" classList={{ idle: !shown() }} ref={root} tabIndex={-1} onPointerMove={poke} onPointerDown={poke}>
+        <div class="player" classList={{ idle: !shown(), blocked: !!needsApp() }} ref={root} tabIndex={-1} onPointerMove={poke} onPointerDown={poke}>
             <video
                 ref={video}
                 playsinline
@@ -235,13 +260,36 @@ export function Player(props: { item: VideoItem; onClose: () => void }) {
                 onClick={toggle}
                 onDblClick={fullscreen}
             />
-            <Show when={waiting() && !error()}>
+            <Show when={waiting() && !error() && !needsApp()}>
                 <div class="spinner" aria-label="Loading" />
             </Show>
             <Show when={error()}>
                 <div class="player-error" role="alert">
                     <p>{error()}</p>
                     <button class="primary" onClick={close}>Back</button>
+                </div>
+            </Show>
+            <Show when={needsApp()}>
+                {(why) => (
+                    <div class="player-error needs-app" role="alert">
+                        <h2>{t('web.needs_app_title')}</h2>
+                        <p>{whyText(why())}</p>
+                        <p class="muted small">{t('web.app_body')}</p>
+                        <div class="actions">
+                            <a class="button primary" href="https://tmplayer.org/#download" target="_blank" rel="noopener">
+                                {t('web.needs_app_get')}
+                            </a>
+                            <button onClick={close}>{t('common.back')}</button>
+                        </div>
+                    </div>
+                )}
+            </Show>
+            <Show when={notice() && !needsApp() && !error()}>
+                <div class="player-notice" role="status">
+                    <p>{notice()}</p>
+                    <button class="icon" onClick={() => setNotice('')} aria-label={t('common.close')}>
+                        <svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z" /></svg>
+                    </button>
                 </div>
             </Show>
             <div class="top-bar">
