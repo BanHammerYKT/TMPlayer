@@ -246,3 +246,32 @@ export interface RpcError {
     code?: number
     seconds?: number
 }
+
+/** An episode as the watch page lists it: its code ("S01E03"), its own name when the file gives one, and what plays. */
+export interface EpisodeRef {
+    code: string
+    name: string | null
+    item: VideoItem
+}
+
+/** What the watch page shows round the player, from the chat's videos by the app's rules (WebRules' steps). */
+export interface WatchInfo {
+    /** The name a card would give it: the show's for an episode. */
+    title: string
+    /** Set for an episode of a show. */
+    episode: { code: string; name: string | null; show: string } | null
+    previous: VideoItem | null
+    previousCode: string | null
+    next: VideoItem | null
+    nextCode: string | null
+    /** The show's seasons, when it is an episode; empty otherwise. */
+    seasons: { number: number; episodes: EpisodeRef[] }[]
+    /** Other cards of the chat, newest first, when it is not an episode. */
+    more: Tile[]
+    fileName: string
+    width: number
+    height: number
+    chatTitle: string
+    /** The chat restricts saving content. */
+    protected: boolean
+}

@@ -17,7 +17,7 @@ export function length(s: number): string {
     if (!s) return ''
     const h = Math.floor(s / 3600)
     const m = Math.round((s % 3600) / 60)
-    return h ? `${h} h ${m} min` : `${m} min`
+    return h ? `${h} h ${m} min` : `${Math.max(1, m)} min`
 }
 
 export const watchPath = (v: Pick<VideoItem, 'chatId' | 'messageId'>) => `/watch/${v.chatId}/${v.messageId}`
@@ -106,12 +106,13 @@ const intent = (v: VideoItem) => {
 }
 
 /** One portrait card, which opens the video's page. */
-export function Card(props: { card: CardData; progress?: number }) {
+export function Card(props: { card: CardData; progress?: number; replace?: boolean }) {
     return (
         <A
             class="card"
             href={watchPath(props.card.item)}
             state={{ video: props.card.item }}
+            replace={props.replace}
             onPointerEnter={() => intent(props.card.item)}
             onPointerLeave={() => clearTimeout(hoverTimer)}
             onFocus={() => intent(props.card.item)}

@@ -141,10 +141,39 @@ export function saveResume(r: Omit<Resume, 'time'>) {
     if (r.length > 0 && r.position > r.length - 30) {
         remove(`resume:${key}`)
         write(`watched:${key}`, Date.now())
+        keepLast({ key, watched: Date.now() })
     } else if (r.position > 10) {
-        write(`resume:${key}`, { ...r, position: Math.floor(r.position), time: Date.now() })
+        const resume = { ...r, position: Math.floor(r.position), time: Date.now() }
+        write(`resume:${key}`, resume)
+        keepLast({ key, resume })
     }
 }
+
+// The latest save is also kept in localStorage, which writes at once: a save made as the page
+// closes (Back off the site, a closed tab) may never reach IndexedDB. It is folded back in when
+// the app next starts.
+const LAST_KEY = 'tmplayer-last-position'
+type Last = { key: string; resume?: Resume; watched?: number }
+
+function keepLast(last: Last) {
+    try {
+        localStorage.setItem(LAST_KEY, JSON.stringify(last))
+    } catch {}
+}
+
+function foldLast() {
+    let last: Last | null = null
+    try {
+        last = JSON.parse(localStorage.getItem(LAST_KEY) ?? 'null') as Last | null
+    } catch {}
+    if (!last?.key) return
+    if (last.resume) write(`resume:${last.key}`, last.resume)
+    else if (last.watched) {
+        remove(`resume:${last.key}`)
+        write(`watched:${last.key}`, last.watched)
+    }
+}
+foldLast()
 
 export function dropResume(chatId: number, messageId: number) {
     remove(`resume:${id(chatId, messageId)}`)
@@ -210,6 +239,9 @@ export async function cachedThumb(key: string, fetch: () => Promise<ArrayBuffer>
 /** Sign out: settings, positions, watched, stars and thumbnails go; the theme falls back to the system's. */
 export async function clearAll() {
     memory.clear()
+    try {
+        localStorage.removeItem(LAST_KEY)
+    } catch {}
     if (db) await clear(db).catch(() => {})
     await globalThis.caches?.delete(THUMBS).catch(() => {})
     setSettings({ ...DEFAULTS })

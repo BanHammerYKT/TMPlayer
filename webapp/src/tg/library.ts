@@ -6,7 +6,7 @@ import type { Message, Peer, TelegramClient } from '@mtcute/web'
 import { rules, type Shelf, type ShelfTile, type Video } from '../rules'
 import { chatProtects, itemOf, rawOf, thumbnails, videoId } from './media'
 import { forgetSponsored, loadSponsored } from './sponsored'
-import type { ChatItem, ChatPage, ChatView, Found, ListView, SponsoredItem, Tile, VideoItem } from './types'
+import type { ChatItem, ChatPage, ChatView, Found, ListView, SponsoredItem, Tile, VideoItem, WatchInfo } from './types'
 
 const PAGE = 100
 const VIDEO_FILTER = { _: 'inputMessagesFilterVideo' } as const
@@ -52,6 +52,7 @@ export function forgetAll() {
     dialogsSoFar = []
     homeStates.clear()
     searches.clear()
+    watchKept.clear()
     forgetSponsored()
 }
 
@@ -358,4 +359,84 @@ export async function searchAll(tg: TelegramClient, query: string, view: ListVie
     const { videos, items } = await across(tg, query)
     const shelf = r.shelf(videos, 'Newest', view.minBytes, view.maxBytes, view.watched, view.started)
     return { tiles: tilesOf(shelf, items, view), hiddenBySize: shelf.hiddenBySize }
+}
+
+// The watch page
+
+/** A chat's state for the watch page: the opened chat's, Home's, else its first page read now. */
+async function stateFor(tg: TelegramClient, chatId: number): Promise<ChatState> {
+    let s = chats.get(chatId) ?? homeStates.get(chatId)
+    if (!s) {
+        s = await fresh(tg, chatId)
+        chats.set(chatId, s)
+        while (chats.size > KEEP_CHATS) chats.delete(chats.keys().next().value!)
+    } else if (s.loading) await s.loading
+    return s
+}
+
+/** A message beyond the pages read so far (opened by its address), added through the rules; null when it is gone or not a video. */
+async function addMessage(tg: TelegramClient, s: ChatState, messageId: number): Promise<Video | null> {
+    const r = await rules()
+    const [msg] = (await tg.getMessages(s.id, messageId)) as (Message | null)[]
+    const raw = msg && rawOf(msg, s.protected)
+    if (!msg || !raw) return null
+    const [v] = r.screen([raw]).videos
+    const item = v && itemOf(msg, v.title)
+    if (!v || !item) return null
+    s.videos.set(v.id, v)
+    s.items.set(v.id, item)
+    s.version++
+    return v
+}
+
+const watchKept = new Map<string, { version: number; view: string; info: WatchInfo }>()
+
+/**
+ * The watch page's parts for one video: its episodes and the ones either side (the app's
+ * EpisodeNeighbours, through WebRules' `steps`), or the chat's other cards when it is not an
+ * episode. `steps` arranges the whole chat, so the answer is kept until the chat or the view changes.
+ */
+export async function watchInfo(tg: TelegramClient, chatId: number, messageId: number, view: ChatView): Promise<WatchInfo | null> {
+    const r = await rules()
+    rulesNow = r
+    const s = await stateFor(tg, chatId)
+    const id = `${chatId}:${messageId}`
+    const current = s.videos.get(id) ?? (await addMessage(tg, s, messageId))
+    if (!current) return null
+    const viewKey = JSON.stringify(view)
+    const kept = watchKept.get(id)
+    if (kept && kept.version === s.version && kept.view === viewKey) return kept.info
+    const steps = r.steps(current, [...s.videos.values()])
+    const item = (v: Video | null | undefined) => (v ? (s.items.get(v.id) ?? null) : null)
+    const seasons = (steps.series?.seasons ?? []).map((season) => ({
+        number: season.number,
+        episodes: season.episodes.flatMap((e) => {
+            const it = s.items.get(e.video.id)
+            return it ? [{ code: e.code, name: e.video.id === id ? (steps.current?.name ?? null) : null, item: it }] : []
+        }),
+    }))
+    let more: Tile[] = []
+    if (!seasons.length) {
+        more = arrange(s, { ...view, sort: 'Newest', query: '' })
+            .tiles.filter((t) => videoId(t.item) !== id)
+            .slice(0, 12)
+    }
+    const info: WatchInfo = {
+        title: steps.current?.show ?? r.tileTitle(current),
+        episode: steps.current ? { code: steps.current.code, name: steps.current.name ?? null, show: steps.current.show } : null,
+        previous: item(steps.previous),
+        previousCode: steps.previousLabel?.code ?? null,
+        next: item(steps.next),
+        nextCode: steps.nextLabel?.code ?? null,
+        seasons,
+        more,
+        fileName: current.fileName,
+        width: current.width,
+        height: current.height,
+        chatTitle: s.title,
+        protected: s.protected,
+    }
+    watchKept.set(id, { version: s.version, view: viewKey, info })
+    while (watchKept.size > 20) watchKept.delete(watchKept.keys().next().value!)
+    return info
 }

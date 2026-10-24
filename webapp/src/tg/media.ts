@@ -9,6 +9,9 @@ export interface FileLoc {
     location: tl.TypeInputFileLocation
     dcId: number
     size: number
+    /** The message it came in, to ask for it again when Telegram says its file reference expired. */
+    chatId: number
+    messageId: number
 }
 
 /** Every file the page has been told about, by key; refreshed each time a list names it again. */
@@ -16,18 +19,20 @@ export const files = new Map<string, FileLoc>()
 /** Video thumbnails, chat pictures and sponsored messages' pictures, by key. */
 export const thumbnails = new Map<string, FileLocation>()
 
-function docRef(d: tl.RawDocument): FileRef {
+function docRef(d: tl.RawDocument, msg: Message): FileRef {
     const key = `doc${d.id.toString()}`
     files.set(key, {
         location: { _: 'inputDocumentFileLocation', id: d.id, accessHash: d.accessHash, fileReference: d.fileReference, thumbSize: '' },
         dcId: d.dcId,
         size: d.size,
+        chatId: msg.chat.id,
+        messageId: msg.id,
     })
     return { key, size: d.size }
 }
 
 /** The copies and storyboard Telegram made for a video posted as a video (its `alt_documents`). */
-function alternatives(media: tl.TypeMessageMedia | undefined): { copies: VideoCopy[]; storyboard: Storyboard | null } {
+function alternatives(msg: Message, media: tl.TypeMessageMedia | undefined): { copies: VideoCopy[]; storyboard: Storyboard | null } {
     const alts = media?._ === 'messageMediaDocument' ? (media.altDocuments ?? []) : []
     const copies: VideoCopy[] = []
     let sprite: FileRef | null = null
@@ -36,9 +41,9 @@ function alternatives(media: tl.TypeMessageMedia | undefined): { copies: VideoCo
         if (a._ !== 'document') continue
         if (a.mimeType === 'video/mp4') {
             const v = a.attributes.find((t): t is tl.RawDocumentAttributeVideo => t._ === 'documentAttributeVideo')
-            copies.push({ ...docRef(a), width: v?.w ?? 0, height: v?.h ?? 0, codec: v?.videoCodec ?? null })
-        } else if (a.mimeType === 'application/x-tgstoryboard') sprite = docRef(a)
-        else if (a.mimeType === 'application/x-tgstoryboardmap') map = docRef(a)
+            copies.push({ ...docRef(a, msg), width: v?.w ?? 0, height: v?.h ?? 0, codec: v?.videoCodec ?? null })
+        } else if (a.mimeType === 'application/x-tgstoryboard') sprite = docRef(a, msg)
+        else if (a.mimeType === 'application/x-tgstoryboardmap') map = docRef(a, msg)
     }
     copies.sort((a, b) => b.height - a.height || (a.codec === 'avc1' ? -1 : 1))
     return { copies, storyboard: sprite && map ? { sprite, map } : null }
@@ -68,6 +73,8 @@ export function itemOf(msg: Message, title: string): VideoItem | null {
         location: (typeof m.location === 'function' ? m.location() : m.location) as tl.TypeInputFileLocation,
         dcId: m.dcId ?? 2,
         size,
+        chatId: msg.chat.id,
+        messageId: msg.id,
     })
     const thumb = m.getThumbnail('m') ?? m.thumbnails[0] ?? null
     if (thumb) thumbnails.set(thumb.uniqueFileId, thumb)
@@ -82,7 +89,7 @@ export function itemOf(msg: Message, title: string): VideoItem | null {
         chat: msg.chat.displayName,
         date: msg.date.getTime(),
         thumb: thumb?.uniqueFileId ?? null,
-        ...alternatives(raw?.media),
+        ...alternatives(msg, raw?.media),
         canBeSaved: !raw?.noforwards && !chatProtects(msg),
     }
 }

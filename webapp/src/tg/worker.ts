@@ -4,10 +4,10 @@
 import { BaseTelegramClient, SentCode as MtSentCode, TelegramClient, User, type Message, type tl } from '@mtcute/web'
 import { rules } from '../rules'
 import { homePage } from './home'
-import { chatList, chatPage, forgetAll, rankChats, searchAll } from './library'
+import { chatList, chatPage, forgetAll, rankChats, searchAll, watchInfo } from './library'
 import { clickSponsored, reportSponsored, viewSponsored } from './sponsored'
-import { files, thumbnails, toItem } from './media'
-import type { ChatItem, ChatPage, ChatsEvent, ChatView, Country, Found, HomePage, HomeView, ListView, Me, QrEvent, RpcError, SentCode, SponsoredReport, VideoItem } from './types'
+import { files, itemOf, thumbnails, toItem } from './media'
+import type { ChatItem, ChatPage, ChatsEvent, ChatView, Country, Found, HomePage, HomeView, ListView, Me, QrEvent, RpcError, SentCode, SponsoredReport, VideoItem, WatchInfo } from './types'
 
 // `VITE_TG_TEST=1 pnpm dev` signs in on Telegram's test servers (numbers 99966XYYYY, the code
 // is X five times), with its own storage, to try the sign in steps without a real account.
@@ -297,6 +297,22 @@ export const api = {
         return msg ? toItem(msg as Message) : null
     },
 
+    /** The watch page's parts round the player: episodes and the ones either side, or more from the chat. Null when the message is gone. */
+    async watch(_: Ctx, chatId: number, messageId: number, view: ChatView): Promise<WatchInfo | null> {
+        return watchInfo(tg, chatId, messageId, view)
+    },
+
+    /** Where a video saved at `savedMs` opens, and what to keep when it is left at `positionMs` (the app's ResumeRewind). */
+    async resumeStart(_: Ctx, savedMs: number, rewindMs: number | null): Promise<number> {
+        const r = await rules()
+        return r.resumeStart(savedMs, r.rewindSetting(rewindMs))
+    },
+
+    async resumeKept(_: Ctx, savedMs: number | null, positionMs: number, rewindMs: number | null): Promise<number> {
+        const r = await rules()
+        return r.resumeKept(savedMs, positionMs, r.rewindSetting(rewindMs))
+    },
+
     /** Whether this worker knows where a file is (a page reloaded on a list item's state may outlive it). */
     async known(_: Ctx, key: string): Promise<boolean> {
         return files.has(key)
@@ -310,8 +326,9 @@ export const api = {
 
     /** Bytes [offset, offset + limit) of a file, `limit` being a power of two that does not cross 1 MiB. */
     async chunk(ctx: Ctx, key: string, offset: number, limit: number): Promise<ArrayBuffer> {
-        const f = files.get(key)
+        let f = files.get(key)
         if (!f) throw new Error('gone')
+        let refreshed = false
         for (;;) {
             try {
                 const res = await tg.call(
@@ -324,6 +341,14 @@ export const api = {
             } catch (e) {
                 // mtcute names it FILE_MIGRATE_%d and keeps the number apart.
                 const err = e as { text?: string; newDc?: number }
+                if (err.text?.startsWith('FILE_REFERENCE_') && !refreshed) {
+                    // Telegram's file references run out after a while: the message read again carries a new one.
+                    refreshed = true
+                    const [msg] = await tg.getMessages(f.chatId, f.messageId)
+                    if (!msg || !itemOf(msg as Message, '')) throw new Error('gone')
+                    f = files.get(key)!
+                    continue
+                }
                 if (err.text !== 'FILE_MIGRATE_%d' || !err.newDc) throw e
                 f.dcId = err.newDc
             }
