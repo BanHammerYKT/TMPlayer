@@ -4,13 +4,21 @@
 // memory. Sign out clears all of it.
 import { createSignal } from 'solid-js'
 import { clear, createStore, del, entries, get, set, type UseStore } from 'idb-keyval'
+import type { Sort } from './tg/types'
 
 export type Theme = 'system' | 'dark' | 'light' | 'black'
 
 export interface Settings {
     theme: Theme
-    /** Largest video shown in lists, in bytes; null shows every size. */
-    sizeLimit: number | null
+    /**
+     * The app's size limits (SizeFilter), in bytes: smaller videos are left out of every list,
+     * and larger ones unless the top is at its ceiling, which means no limit.
+     */
+    sizeMin: number
+    sizeMax: number
+    sort: Sort
+    /** Taken off a saved position when a video resumes, in milliseconds; null for the app's default. */
+    rewindMs: number | null
 }
 
 export interface Resume {
@@ -24,7 +32,10 @@ export interface Resume {
     time: number
 }
 
-const DEFAULTS: Settings = { theme: 'system', sizeLimit: null }
+const MB = 1024 * 1024
+/** SizeFilter.DEFAULT_MIN and DEFAULT_MAX: 50 MB up, no top. */
+export const SIZE_DEFAULTS = { sizeMin: 50 * MB, sizeMax: 8 * 1024 * MB }
+const DEFAULTS: Settings = { theme: 'system', ...SIZE_DEFAULTS, sort: 'Newest', rewindMs: null }
 const THEME_KEY = 'tmplayer-theme'
 
 let db: UseStore | null = null
@@ -59,6 +70,10 @@ function remove(key: string) {
 }
 
 async function all<T>(prefix: string): Promise<T[]> {
+    return [...(await allEntries<T>(prefix)).values()]
+}
+
+async function allEntries<T>(prefix: string): Promise<Map<string, T>> {
     const out = new Map<string, T>()
     if (db) {
         try {
@@ -66,7 +81,7 @@ async function all<T>(prefix: string): Promise<T[]> {
         } catch {}
     }
     for (const [k, v] of memory) if (k.startsWith(prefix)) out.set(k, v as T)
-    return [...out.values()]
+    return out
 }
 
 // Settings
@@ -99,8 +114,9 @@ function applyTheme(theme: Theme) {
 }
 
 export async function loadSettings() {
-    const saved = await read<Partial<Settings>>('settings')
+    const [saved, stars] = await Promise.all([read<Partial<Settings>>('settings'), starred()])
     setSettings({ ...DEFAULTS, ...saved })
+    setStarredIds(new Set(stars))
     applyTheme(settings().theme)
 }
 
@@ -139,15 +155,31 @@ export async function resumes(): Promise<Resume[]> {
     return (await all<Resume>('resume:')).sort((a, b) => b.time - a.time)
 }
 
+/** Video ids ("chatId:messageId") finished, for the Unwatched order and a show's next episode. */
+export async function watchedIds(): Promise<string[]> {
+    return [...(await allEntries('watched:')).keys()].map((k) => k.slice('watched:'.length))
+}
+
 export async function isWatched(chatId: number, messageId: number): Promise<boolean> {
     return (await read(`watched:${id(chatId, messageId)}`)) !== undefined
 }
 
 // Starred chats
 
+/** The starred chats, live, for every star drawn. */
+const [starredIds, setStarredIds] = createSignal<ReadonlySet<number>>(new Set())
+export { starredIds }
+
 export function setStarred(chatId: number, on: boolean) {
-    if (on) write(`star:${chatId}`, { chatId, time: Date.now() })
-    else remove(`star:${chatId}`)
+    const next = new Set(starredIds())
+    if (on) {
+        next.add(chatId)
+        write(`star:${chatId}`, { chatId, time: Date.now() })
+    } else {
+        next.delete(chatId)
+        remove(`star:${chatId}`)
+    }
+    setStarredIds(next)
 }
 
 export async function starred(): Promise<number[]> {
@@ -175,5 +207,6 @@ export async function clearAll() {
     if (db) await clear(db).catch(() => {})
     await globalThis.caches?.delete(THUMBS).catch(() => {})
     setSettings({ ...DEFAULTS })
+    setStarredIds(new Set<number>())
     applyTheme(DEFAULTS.theme)
 }

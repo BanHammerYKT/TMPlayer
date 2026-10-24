@@ -4,17 +4,22 @@ import { api, errorText } from './tg/rpc'
 import { entryState, me, setMe, signOut } from './session'
 import { loadSettings } from './store'
 import { Home } from './screens/Home'
-import { Search } from './screens/Search'
-import { Chats } from './screens/Chats'
-import { Chat } from './screens/Chat'
-import { Settings } from './screens/Settings'
 import { Nav } from './ui/Nav'
 
-// Sign in (with its QR code) and the watch page (with the player and its remuxer) load when needed;
-// the watch page is fetched while idle once signed in.
+// Home comes with the first load. Sign in (with its QR code), the watch page (with the player and
+// its remuxer) and the other pages load when needed; once signed in they are fetched while idle.
 const SignIn = lazy(() => import('./screens/SignIn').then((m) => ({ default: m.SignIn })))
 const loadWatch = () => import('./screens/Watch').then((m) => ({ default: m.Watch }))
 const Watch = lazy(loadWatch)
+const loadChats = () => import('./screens/Chats').then((m) => ({ default: m.Chats }))
+const loadChat = () => import('./screens/Chat').then((m) => ({ default: m.Chat }))
+const loadSearch = () => import('./screens/Search').then((m) => ({ default: m.Search }))
+const loadSettingsPage = () => import('./screens/Settings').then((m) => ({ default: m.Settings }))
+const Chats = lazy(loadChats)
+const Chat = lazy(loadChat)
+const Search = lazy(loadSearch)
+const Settings = lazy(loadSettingsPage)
+const later = [loadChats, loadChat, loadSearch, loadSettingsPage, loadWatch]
 
 // Safari has no requestIdleCallback.
 const idle = (fn: () => void) => ('requestIdleCallback' in window ? requestIdleCallback(fn) : setTimeout(fn, 1500))
@@ -47,7 +52,7 @@ function Shell(props: ParentProps) {
             const next = new URLSearchParams(location.search).get('next')
             navigate(next?.startsWith('/') ? next : '/', { replace: true, state: entryState() })
         }
-        if (user) idle(loadWatch)
+        if (user) idle(() => later.forEach((load) => load()))
     })
 
     const signedIn = () => me() && location.pathname !== '/signin'

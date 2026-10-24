@@ -403,3 +403,96 @@ button.chip { background: rgba(255,255,255,.14); border: 0; border-radius: 999px
 .player-error { position: absolute; inset: 0; display: grid; place-items: center; align-content: center; gap: 16px; padding: 24px; text-align: center; background: rgba(0,0,0,.6); }
 .player-error p { max-width: 520px; margin: 0; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+
+/* Long lists: only the rows near the screen are drawn, each placed where it would be. */
+.vgrid { position: relative; width: 100%; }
+.vrow { position: absolute; top: 0; left: 0; right: 0; margin: 0; }
+.vrow.cards { grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); row-gap: 0; padding-bottom: 16px; }
+@media (min-width: 600px) { .vrow.cards { padding-bottom: 20px; } }
+@media (min-width: 840px) { .vrow.cards { padding-bottom: 24px; } }
+.vrow.chats { display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); column-gap: 24px; list-style: none; padding: 0; }
+.vrow.chats > li { min-width: 0; }
+
+/* A chat row: the link fills it, the star sits at its end. */
+.chat-row { padding: 0; gap: 4px; }
+.chat-link { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; padding: 8px; color: inherit; text-decoration: none; border-radius: var(--r-m); }
+.chat-pin { color: var(--muted); flex: none; margin-left: auto; }
+.chat-picture { flex: none; display: grid; border-radius: 50%; overflow: hidden; }
+.chat-picture > * { grid-area: 1 / 1; width: 100%; height: 100%; }
+.chat-picture img { object-fit: cover; animation: fade 200ms ease-out; }
+.chat-picture .initial { font-size: inherit; }
+.initial.saved { background: var(--accent); color: var(--on-accent); }
+.star.on { color: var(--caution); }
+.star .icon .icon-fill { fill: currentColor; }
+
+/* The chat's own buttons at the far end of its bar. */
+.page-bar .title-pill { flex: 0 1 auto; }
+.bar-actions { margin-left: auto; display: flex; gap: 8px; flex: none; }
+.bar-actions:empty { display: none; }
+.round-button:disabled { opacity: .5; cursor: default; }
+.round-button[aria-pressed="true"] { color: var(--accent); }
+.round-button.spinning .icon { animation: spin 800ms linear infinite; }
+@media (max-width: 599px) {
+  .bar-actions { gap: 6px; }
+  .page-bar { gap: 8px; }
+  .page-bar .round-button { width: 40px; height: 40px; }
+}
+
+/* Small menus that open under their button (Sort). */
+.menu-box { position: relative; }
+.pop-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 6; min-width: 220px; padding: 6px;
+  background: var(--menu); border: 1px solid var(--line); border-radius: var(--r-l); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; animation: pop 150ms var(--ease);
+}
+@keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+.pop-title { padding: 8px 12px 4px; font-size: 12px; line-height: 16px; color: var(--muted); font-weight: 500; }
+.pop-menu button {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 0 12px;
+  background: none; border: 0; border-radius: var(--r-s); text-align: start; transition: background var(--fast);
+}
+.pop-menu button:hover, .pop-menu button:focus-visible { background: var(--surface-high); }
+.pop-menu button.on { color: var(--accent); font-weight: 500; }
+
+/* Lines above and below a list. */
+.notice { margin: 0 0 12px; }
+.error-notice { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.inline-link { color: var(--accent); text-decoration: none; }
+.inline-link:hover { text-decoration: underline; }
+.list-foot { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; min-height: 40px; text-align: center; }
+.archives { margin: 8px 0 16px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-l); }
+.archives summary { cursor: pointer; font-weight: 500; }
+.archives ul { margin: 8px 0 0; padding-left: 20px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* The size limits: two thumbs on one track, the span between them in the accent. */
+.size-readout { display: flex; justify-content: space-between; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dual-range { position: relative; height: 32px; }
+.dual-track {
+  position: absolute; left: 10px; right: 10px; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px;
+  background: linear-gradient(to right, var(--surface-high) var(--from), var(--accent) var(--from), var(--accent) var(--to), var(--surface-high) var(--to));
+}
+.dual-range input { position: absolute; inset: 0; width: 100%; margin: 0; background: none; -webkit-appearance: none; appearance: none; pointer-events: none; }
+.dual-range input::-webkit-slider-runnable-track { background: transparent; height: 32px; }
+.dual-range input::-moz-range-track { background: transparent; }
+.dual-range input::-webkit-slider-thumb {
+  -webkit-appearance: none; pointer-events: auto; width: 20px; height: 20px; margin-top: 6px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface); cursor: grab; transition: transform var(--fast);
+}
+.dual-range input::-moz-range-thumb { pointer-events: auto; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); cursor: grab; }
+.dual-range input:active::-webkit-slider-thumb { transform: scale(1.15); }
+.dual-range input.above { z-index: 1; }
+.dual-range input:focus-visible { outline: none; }
+.dual-range input:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dual-range input:focus-visible::-moz-range-thumb { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A question before something that cannot be undone. */
+.confirm {
+  width: min(400px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--line); border-radius: var(--r-xl);
+  background: var(--dialog); color: var(--fg);
+}
+.confirm[open] { display: flex; flex-direction: column; gap: 16px; }
+.confirm::backdrop { background: rgb(0 0 0 / .5); }
+.confirm h2 { font-size: 24px; line-height: 32px; font-weight: 400; }
+.confirm-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 16px; }
+button.primary.danger { background: var(--error); color: var(--bg); }
+@media (prefers-reduced-motion: reduce) { .round-button.spinning .icon { animation-duration: 2s; } .pop-menu { animation: none; } }

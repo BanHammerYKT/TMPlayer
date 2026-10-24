@@ -3,8 +3,9 @@
 // mtcute itself.
 import { BaseTelegramClient, SentCode as MtSentCode, TelegramClient, User, type Message, type tl } from '@mtcute/web'
 import { rules } from '../rules'
-import { files, merge, thumbnails, toItem } from './media'
-import type { ChatItem, Country, Me, QrEvent, RpcError, SentCode, VideoItem } from './types'
+import { chatList, chatPage, forgetAll, rankChats, searchAll } from './library'
+import { files, thumbnails, toItem } from './media'
+import type { ChatItem, ChatPage, ChatsEvent, ChatView, Country, Found, Me, QrEvent, RpcError, SentCode, VideoItem } from './types'
 
 // `VITE_TG_TEST=1 pnpm dev` signs in on Telegram's test servers (numbers 99966XYYYY, the code
 // is X five times), with its own storage, to try the sign in steps without a real account.
@@ -100,8 +101,6 @@ const loginSetup = (phone: string, hash: string): tl.RawEmailVerifyPurposeLoginS
 
 let countryList: Country[] | null = null
 
-const VIDEO_FILTER = { _: 'inputMessagesFilterVideo' } as const
-const DOC_FILTER = { _: 'inputMessagesFilterDocument' } as const
 const warmedDcs = new Set<number>()
 
 /** Bytes cut out of a larger buffer, as their own buffer so they can be handed over without a copy. */
@@ -224,31 +223,50 @@ export const api = {
         await tg.logOut().catch(() => {})
         files.clear()
         thumbnails.clear()
+        forgetAll()
         warmedDcs.clear()
     },
 
-    async chats(_: Ctx, limit: number): Promise<ChatItem[]> {
-        const out: ChatItem[] = []
-        for await (const d of tg.iterDialogs({ limit })) out.push({ id: d.peer.id, title: d.peer.displayName })
-        return out
+    /** Every chat outside the archive, pinned first; pages of it arrive as `ChatsEvent`s while it loads. */
+    async chats(ctx: Ctx, refresh: boolean): Promise<ChatItem[]> {
+        return chatList(tg, refresh, (chats) => ctx.emit({ chats } satisfies ChatsEvent))
     },
 
-    /** Videos across every chat, posted as videos and as files, asked for in parallel. */
-    async search(_: Ctx, query: string): Promise<VideoItem[]> {
-        const [videos, docs] = await Promise.all([
-            tg.searchGlobal({ query, filter: VIDEO_FILTER, limit: query ? 60 : 100 }),
-            tg.searchGlobal({ query, filter: DOC_FILTER, limit: query ? 60 : 100 }),
-        ])
-        return merge([...videos, ...docs])
+    /** Ids of the chats whose names answer `query`, best first. */
+    async rankChats(_: Ctx, query: string): Promise<number[]> {
+        return rankChats(query)
     },
 
-    async chatVideos(_: Ctx, chatId: number): Promise<{ title: string; items: VideoItem[] }> {
-        const [peer, videos, docs] = await Promise.all([
-            tg.getPeer(chatId),
-            tg.searchMessages({ chatId, filter: VIDEO_FILTER, limit: 100 }),
-            tg.searchMessages({ chatId, filter: DOC_FILTER, limit: 100 }),
-        ])
-        return { title: peer.displayName, items: merge([...videos, ...docs]) }
+    /** A chat's grid as the app arranges it (see library.ts for the modes). */
+    async chat(_: Ctx, chatId: number, view: ChatView, mode: 'open' | 'more' | 'refresh' | 'view'): Promise<ChatPage> {
+        return chatPage(tg, chatId, view, mode)
+    },
+
+    /** Videos across every chat within the size limits, newest first. */
+    async search(_: Ctx, query: string, minBytes: number, maxBytes: number): Promise<Found> {
+        return searchAll(tg, query, minBytes, maxBytes)
+    },
+
+    /** The size slider's stops (no minimum, 50 MB, then every 100 MB to no limit), where each sits and its label. */
+    async sizeScale(_: Ctx): Promise<{ min: number; max: number; stops: { bytes: number; at: number; label: string }[] }> {
+        const r = await rules()
+        const l = r.sizeLimits()
+        const sizes = new Set([l.floor, l.defaultMin])
+        for (let b = l.step; b <= l.ceiling; b += l.step) sizes.add(b)
+        sizes.add(l.ceiling)
+        const stops = [...sizes].sort((a, b) => a - b).map((bytes) => ({ bytes, at: r.sizeFraction(bytes), label: r.sizeLabel(bytes) }))
+        return { min: l.defaultMin, max: l.defaultMax, stops }
+    },
+
+    /** "You'll see videos from 50 MB upwards." */
+    async sizeRange(_: Ctx, minBytes: number, maxBytes: number): Promise<string> {
+        return (await rules()).sizeRange(minBytes, maxBytes)
+    },
+
+    /** Settings' rewind choices in milliseconds, 0 for off, and the default. */
+    async rewindChoices(_: Ctx): Promise<{ choices: number[]; fallback: number }> {
+        const r = await rules()
+        return { choices: r.rewindChoices(), fallback: r.rewindSetting(null) }
     },
 
     /** One message's video, for a watch page opened by its address. Null when it is gone or not a video. */

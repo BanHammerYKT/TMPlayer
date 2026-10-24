@@ -5,13 +5,73 @@ import strings from 'virtual:strings'
 
 const dict = flatten(strings)
 
-// The catalog writes placeholders as `{name}`, ICU style. Plural forms are not read here yet: a
-// string with one would need the ICU formatter, so the page picks strings without.
-const fill = ((text: string, args?: Record<string, string | number>) =>
-    args ? text.replace(/\{(\w+)\}/g, (whole, key: string) => (key in args ? String(args[key]) : whole)) : text) as TemplateResolver
+type Args = Record<string, string | number>
+
+const plurals = new Intl.PluralRules('en')
+const numbers = new Intl.NumberFormat('en')
+
+/** Where the `}` closing a `{` opened just before `from` is. */
+function closing(text: string, from: number): number {
+    let depth = 1
+    for (let i = from; i < text.length; i++) {
+        if (text[i] === '{') depth++
+        else if (text[i] === '}' && --depth === 0) return i
+    }
+    return text.length
+}
+
+/**
+ * The catalog's ICU subset, as the apps' Translator reads it: `{name}`, and `{count, plural, one
+ * {# video} other {# videos}}` (with `=0` cases) and `{form, select, tv {...} other {...}}`,
+ * nested. A whole MessageFormat library would weigh more than the page's strings.
+ */
+function format(text: string, args: Args, hash?: string): string {
+    let out = ''
+    for (let i = 0; i < text.length; ) {
+        const c = text[i]
+        if (c === '#' && hash !== undefined) {
+            out += hash
+            i++
+            continue
+        }
+        if (c !== '{') {
+            out += c
+            i++
+            continue
+        }
+        const end = closing(text, i + 1)
+        const inner = text.slice(i + 1, end)
+        i = end + 1
+        const head = /^\s*(\w+)\s*(?:,\s*(plural|select)\s*,)?/.exec(inner)!
+        const [whole, name, kind] = head
+        if (!kind) {
+            out += name in args ? String(args[name]) : `{${inner}}`
+            continue
+        }
+        // The cases: `key {message}` pairs.
+        const cases = new Map<string, string>()
+        for (let j = whole.length; j < inner.length; ) {
+            const m = /^\s*(=?\w+)\s*\{/.exec(inner.slice(j))
+            if (!m) break
+            const open = j + m[0].length
+            const close = closing(inner, open)
+            cases.set(m[1], inner.slice(open, close))
+            j = close + 1
+        }
+        const value = args[name]
+        if (kind === 'plural') {
+            const n = Number(value)
+            const pick = cases.get(`=${n}`) ?? cases.get(plurals.select(n)) ?? cases.get('other') ?? ''
+            out += format(pick, args, numbers.format(n))
+        } else out += format(cases.get(String(value)) ?? cases.get('other') ?? '', args, hash)
+    }
+    return out
+}
+
+const fill = ((text: string, args?: Args) => (args || text.includes('{') ? format(text, args ?? {}) : text)) as TemplateResolver
 
 /** `t('login.qr_title')`, `t('login.delivery_sms', { number })`. */
-export const t = translator(() => dict, fill) as (key: keyof typeof dict, args?: Record<string, string | number>) => string
+export const t = translator(() => dict, fill) as (key: keyof typeof dict, args?: Args) => string
 
 /** A wait in the largest unit that fits it, as the app's Failures.waitPhrase: "42 seconds", "5 minutes". */
 export function waitPhrase(seconds: number): string {

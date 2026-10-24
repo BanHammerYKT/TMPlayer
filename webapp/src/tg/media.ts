@@ -1,6 +1,7 @@
 // Worker only: turns Telegram messages into the page's plain items and remembers where each file's
 // bytes are, so the page can ask for them by key.
-import type { Message, Thumbnail, tl } from '@mtcute/web'
+import type { ChatPhotoSize, Message, Thumbnail, tl } from '@mtcute/web'
+import type { RawVideo, Video } from '../rules'
 import type { FileRef, Storyboard, VideoCopy, VideoItem } from './types'
 
 /** Where a Telegram document's bytes are. */
@@ -12,7 +13,8 @@ export interface FileLoc {
 
 /** Every file the page has been told about, by key; refreshed each time a list names it again. */
 export const files = new Map<string, FileLoc>()
-export const thumbnails = new Map<string, Thumbnail>()
+/** Video thumbnails and chat pictures, by key. */
+export const thumbnails = new Map<string, Thumbnail | ChatPhotoSize>()
 
 function docRef(d: tl.RawDocument): FileRef {
     const key = `doc${d.id.toString()}`
@@ -53,6 +55,13 @@ export function toItem(msg: Message): VideoItem | null {
     if (m.type === 'document' && !m.mimeType.startsWith('video/') && !VIDEO_NAME.test(m.fileName ?? '')) return null
     const name = m.fileName?.replace(/\.[^.]+$/, '').replace(/[._]+/g, ' ').trim()
     const caption = msg.text.split('\n')[0]?.trim()
+    return itemOf(msg, name || caption || 'Video')
+}
+
+/** The page's item for a message already known to hold a video, under [title], its file noted. */
+export function itemOf(msg: Message, title: string): VideoItem | null {
+    const m = msg.media
+    if (!m || (m.type !== 'video' && m.type !== 'document')) return null
     const key = m.uniqueFileId
     const size = m.fileSize ?? 0
     files.set(key, {
@@ -68,7 +77,7 @@ export function toItem(msg: Message): VideoItem | null {
         chatId: msg.chat.id,
         messageId: msg.id,
         duration: m.type === 'video' ? m.duration : 0,
-        title: name || caption || 'Video',
+        title,
         chat: msg.chat.displayName,
         date: msg.date.getTime(),
         thumb: thumb?.uniqueFileId ?? null,
@@ -76,15 +85,35 @@ export function toItem(msg: Message): VideoItem | null {
     }
 }
 
-/** Items from several searches: each file once, newest first. */
-export function merge(messages: Message[]): VideoItem[] {
-    const seen = new Set<string>()
-    const out: VideoItem[] = []
-    for (const msg of messages) {
-        const item = toItem(msg)
-        if (!item || seen.has(item.key)) continue
-        seen.add(item.key)
-        out.push(item)
+/**
+ * A message as the app's rules read one (WebRules' RawVideo), or null when it holds no video or
+ * file. `chatProtected` is the chat's "restrict saving content".
+ */
+export function rawOf(msg: Message, chatProtected: boolean): RawVideo | null {
+    const m = msg.media
+    if (!m || (m.type !== 'video' && m.type !== 'document')) return null
+    const raw = msg.raw._ === 'message' ? msg.raw : null
+    const media = raw?.media?._ === 'messageMediaDocument' ? raw.media : null
+    const reply = raw?.replyTo?._ === 'messageReplyHeader' ? raw.replyTo : null
+    return {
+        chatId: msg.chat.id,
+        messageId: msg.id,
+        kind: m.type === 'video' ? (m.isRound ? 'round' : m.isAnimation ? 'animation' : 'video') : 'document',
+        fileName: m.fileName ?? null,
+        mimeType: m.mimeType ?? null,
+        caption: msg.text || null,
+        size: m.fileSize ?? 0,
+        duration: m.type === 'video' ? m.duration : 0,
+        width: m.type === 'video' ? m.width : 0,
+        height: m.type === 'video' ? m.height : 0,
+        date: Math.floor(msg.date.getTime() / 1000),
+        topicId: reply?.forumTopic ? (reply.replyToTopId ?? reply.replyToMsgId ?? 0) : 0,
+        albumId: msg.groupedId ? msg.groupedId.toString() : null,
+        canBeSaved: !chatProtected && !raw?.noforwards,
+        selfDestructs: !!media?.ttlSeconds,
+        withheld: !!raw?.restrictionReason?.length || !!raw?.fromScheduled,
     }
-    return out.sort((a, b) => b.date - a.date)
 }
+
+/** Two videos are the same file listed twice: the page keys its items by message. */
+export const videoId = (v: Pick<Video, 'chatId' | 'messageId'>) => `${v.chatId}:${v.messageId}`

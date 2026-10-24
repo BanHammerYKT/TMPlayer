@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { defineConfig, type Plugin } from 'vite'
 import solid from 'vite-plugin-solid'
+import { PAGE_STRINGS } from './strings.config'
 
 // The app's own api_id and hash: from the environment in CI, else from the repo's local.properties
 // (the same secrets the Gradle builds read). Never a sample one.
@@ -19,13 +20,6 @@ function secret(name: string): string {
 
 const CATALOG = new URL('../core/src/commonMain/resources/i18n/en.json', import.meta.url)
 
-/**
- * The catalog sections the page itself shows (src/i18n.ts), as `virtual:strings`: a few KB in
- * place of the whole 180 KB file. The worker still fetches the whole catalog for the rules.
- * Add a section here and to `PageStrings` in env.d.ts when a page needs one.
- */
-const PAGE_SECTIONS = ['auth', 'errors', 'login']
-
 function pageStrings(): Plugin {
     const id = 'virtual:strings'
     return {
@@ -35,7 +29,14 @@ function pageStrings(): Plugin {
             if (source !== `\0${id}`) return null
             this.addWatchFile(CATALOG.pathname)
             const all = JSON.parse(readFileSync(CATALOG, 'utf8'))
-            return `export default ${JSON.stringify(Object.fromEntries(PAGE_SECTIONS.map((k) => [k, all[k]])))}`
+            const out: Record<string, Record<string, unknown>> = {}
+            for (const entry of PAGE_STRINGS) {
+                const [section, key] = entry.split('.')
+                const from = all[section]
+                if (from === undefined || (key && from[key] === undefined)) this.error(`en.json has no ${entry}`)
+                out[section] = key ? { ...out[section], [key]: from[key] } : from
+            }
+            return `export default ${JSON.stringify(out)}`
         },
     }
 }

@@ -2387,6 +2387,7 @@
     "sign_out_loses": "Favourites, history and the watched list go with it. Downloads stay unless you say otherwise",
     "sign_out_message": "You'll be signed out and taken back to the sign-in screen. Recently played videos, your favourites, your watched list and everything you were part way through go with it.",
     "sign_out_title": "Sign out of Telegram?",
+    "signed_in_as": "Signed in as {name}",
     "signing_out": "Signing out…",
     "size_limits": "Video size limits",
     "size_limits_note": "{range} This keeps short clips out of the list.",
@@ -2591,12 +2592,14 @@
     "title": "Sign out of Telegram?"
   },
   "size": {
+    "largest": "Largest size",
     "no_limit": "No limit",
     "no_minimum": "No minimum",
     "range_all": "You'll see every video in the chat, whatever its size.",
     "range_between": "You'll see videos between {min} and {max}.",
     "range_from": "You'll see videos from {min} upwards.",
-    "range_up_to": "You'll see videos up to {max}."
+    "range_up_to": "You'll see videos up to {max}.",
+    "smallest": "Smallest size"
   },
   "sleep": {
     "end_of_video": "End of this video",

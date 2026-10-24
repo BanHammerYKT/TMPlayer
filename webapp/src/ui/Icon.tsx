@@ -2,7 +2,7 @@
 // A place that is chosen (the nav bar's) fills its glyph in the way the app's SelectableIcon does:
 // the outline's shapes filled, the inner detail (a door, a speech bubble's lines) cut out of it.
 import { createUniqueId, For, Show } from 'solid-js'
-import { Home03Icon, Message01Icon, Search01Icon, Settings01Icon } from '@hugeicons/core-free-icons'
+import { Home03Icon, Message01Icon, Search01Icon, Settings01Icon, StarIcon } from '@hugeicons/core-free-icons'
 
 type Part = readonly [string, Readonly<Record<string, string | number>>]
 export type IconData = readonly Part[]
@@ -22,6 +22,7 @@ const FILLS = new Map<IconData, Fill>([
     [Message01Icon, { body: [1], cut: 0 }],
     [Settings01Icon, { body: [0], cut: 1, cutFilled: true }],
     [Search01Icon, { body: [0, 1] }],
+    [StarIcon, { body: [0] }],
 ])
 
 const d = (icon: IconData, i: number) => String(icon[i][1].d)

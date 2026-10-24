@@ -143,4 +143,17 @@ class WebRulesTest {
         assertEquals(limits.ceiling, sizeAt(1.0))
         assertTrue(sizeMatches(0.0, limits.defaultMin, limits.ceiling))
     }
+
+    @Test
+    fun `archives are named with their kind and volumes told apart`() {
+        val zip = archive("Harbour Notes S01.zip", null)!!
+        isPlain(zip)
+        assertEquals("ZIP", zip.kind)
+        assertFalse(zip.volume)
+        assertTrue(zip.reason.isNotBlank())
+        assertTrue(archive("Harbour.Notes.part2.rar", null)!!.volume)
+        assertEquals("7z", archive("notes", "application/x-7z-compressed")!!.kind)
+        assertNull(archive("Harbour.Notes.S01E02.mkv", "video/x-matroska"))
+        assertTrue(sizeLabel(50 * mb).isNotBlank())
+    }
 }

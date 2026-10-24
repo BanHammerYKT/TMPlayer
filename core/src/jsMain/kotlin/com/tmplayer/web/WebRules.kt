@@ -3,6 +3,8 @@
 
 package com.tmplayer.web
 
+import com.tmplayer.data.ArchiveKind
+import com.tmplayer.data.Archives
 import com.tmplayer.data.ContentProtection
 import com.tmplayer.data.EpisodeNeighbours
 import com.tmplayer.data.EpisodeTag
@@ -156,6 +158,16 @@ interface Parsed {
     val code: String?
 }
 
+/** A compressed file in a chat, listed as one that cannot be played. */
+interface Archive {
+    /** "ZIP", "RAR", "7z" or "archive". */
+    val kind: String
+    /** One volume of several, which needs its fellows. */
+    val volume: Boolean
+    /** Why it is not played, in the provided catalog's words. */
+    val reason: String
+}
+
 interface SizeLimits {
     val floor: Double
     val ceiling: Double
@@ -285,6 +297,20 @@ fun sizeAt(fraction: Double): Double = SizeFilter.snap(SizeFilter.bytesAt(fracti
 
 /** "Any size", "50 MB and up" and the like, in the provided catalog's words. */
 fun sizeRange(minBytes: Double, maxBytes: Double): String = SizeFilter.describe(minBytes.toLong(), maxBytes.toLong())
+
+/** "50 MB", "1.5 GB", or the slider's ends ("No minimum", "No limit"), as the apps label a size limit. */
+fun sizeLabel(bytes: Double): String = SizeFilter.label(bytes.toLong())
+
+/** Whether [fileName] (or [mimeType]) is an archive, and what kind, as a chat lists it; null when not. */
+fun archive(fileName: String, mimeType: String?): Archive? {
+    val kind: ArchiveKind = Archives.kindOf(fileName, mimeType.orEmpty()) ?: return null
+    val volume = Archives.isVolume(fileName)
+    return plain(
+        "kind" to kind.label,
+        "volume" to volume,
+        "reason" to if (volume) L.gridArchiveVolumeReason(kind.label) else L.gridArchiveReason(kind.label),
+    )
+}
 
 /** MediaMapper's rules, for a message the worker read instead of TDLib. */
 private fun mapped(raw: RawVideo): MediaItem? {

@@ -6,7 +6,8 @@ import { ArrowLeft02Icon } from '@hugeicons/core-free-icons'
 import { Icon } from './Icon'
 import { back } from '../session'
 
-export function PageBar(props: { title: string; picture?: JSX.Element }) {
+/** `actions`, round buttons, sit at the far end, as the chat's own bar has Star, Sort, Search and Refresh. */
+export function PageBar(props: { title: string; picture?: JSX.Element; actions?: JSX.Element }) {
     const navigate = useNavigate()
     return (
         <div class="page-bar">
@@ -17,6 +18,7 @@ export function PageBar(props: { title: string; picture?: JSX.Element }) {
                 {props.picture}
                 <span>{props.title}</span>
             </div>
+            <div class="bar-actions">{props.actions}</div>
         </div>
     )
 }

@@ -2,17 +2,21 @@ import { createEffect, createResource, createSignal, on, onCleanup, Show } from 
 import { useSearchParams } from '@solidjs/router'
 import { api, errorText } from '../tg/rpc'
 import { Search01Icon } from '@hugeicons/core-free-icons'
+import { t } from '../i18n'
+import { settings } from '../store'
 import { Icon } from '../ui/Icon'
-import { VideoList } from './VideoList'
+import { HiddenBySize, videoCard, VideoList } from './VideoList'
 
 /** Videos across every chat. The words are in the address (`?q=`), so Back returns to the same results. */
 export function Search() {
     const [params, setParams] = useSearchParams<{ q?: string }>()
     const [text, setText] = createSignal(params.q ?? '')
     const [results] = createResource(
-        () => params.q?.trim() || false,
-        (q) => api.search(q),
-        { initialValue: [] },
+        () => {
+            const q = params.q?.trim()
+            return q ? ([q, settings().sizeMin, settings().sizeMax] as const) : false
+        },
+        ([q, min, max]) => api.search(q, min, max),
     )
     let debounce = 0
     let typing = false
@@ -29,23 +33,25 @@ export function Search() {
     }
     // Back or Forward to other words puts them in the box, unless the box is being typed in.
     createEffect(on(() => params.q, (q) => !typing && setText(q ?? ''), { defer: true }))
+    const found = () => (params.q?.trim() && !results.error ? results.latest : undefined)
     return (
         <>
-            <h1 class="page-title">Search</h1>
+            <h1 class="page-title">{t('common.search')}</h1>
             <label class="search-field">
                 <Icon icon={Search01Icon} size={20} />
-                <input type="search" placeholder="Search videos in your chats" aria-label="Search videos in your chats" value={text()} onInput={(e) => onType(e.currentTarget.value)} autofocus />
+                <input type="search" placeholder={t('search.field_hint')} aria-label={t('search.field_hint')} value={text()} onInput={(e) => onType(e.currentTarget.value)} autofocus />
             </label>
             <Show when={results.error}>
                 <p class="error">{errorText(results.error)}</p>
             </Show>
-            <Show when={results.loading && !results.error && !results.latest.length}>
-                <p class="muted">Looking…</p>
+            <Show when={results.loading && !found()}>
+                <p class="muted">{t('browse.finding_videos')}</p>
             </Show>
-            <Show when={params.q?.trim() && !results.loading && !results.error && !results().length}>
-                <p class="muted">No videos found.</p>
+            <HiddenBySize count={found()?.hiddenBySize ?? 0} />
+            <Show when={found() && !results.loading && !found()!.items.length}>
+                <p class="muted">{t('search.none', { query: params.q!.trim() })}</p>
             </Show>
-            <VideoList items={params.q?.trim() && !results.error ? results.latest : []} />
+            <VideoList cards={found()?.items.map((v) => videoCard(v)) ?? []} />
         </>
     )
 }

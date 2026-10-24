@@ -20,6 +20,7 @@
     "@mtcute/web": "0.32.6",
     "@solid-primitives/i18n": "2.2.1",
     "@solidjs/router": "1.0.0",
+    "@tanstack/solid-virtual": "3.13.49",
     "@videojs/html": "10.1.0",
     "idb-keyval": "6.3.0",
     "mediabunny": "1.62.0",
