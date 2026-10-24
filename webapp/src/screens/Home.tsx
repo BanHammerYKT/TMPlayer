@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Index, on, onCleanup, Show } from 'sol
 import { A } from '@solidjs/router'
 import { ArrowLeft01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
 import { call, errorText } from '../tg/rpc'
+import { onBackOnline } from '../net'
 import { t } from '../i18n'
 import { dropResume, progress, resumes, settings, starredIds } from '../store'
 import { Icon } from '../ui/Icon'
@@ -50,6 +51,8 @@ export function Home() {
     }
     // Asked again when the size limits or the stars change, as every list is.
     createEffect(on(() => [settings().sizeMin, settings().sizeMax, [...starredIds()].join()], load))
+    // Lost on the way: asked again once the connection is back.
+    onBackOnline(() => (error() || !last()?.settled) && load())
 
     const page = () => last()
     const firstRun = () => page()?.settled && !page()!.rows.length

@@ -2,3 +2,6 @@ node_modules/
 dist/
 # The app's rules, compiled from :core by pnpm rules
 src/rules/core/
+# Playwright output
+test-results/
+playwright-report/

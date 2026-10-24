@@ -1,6 +1,7 @@
 import { createEffect, createSignal, ErrorBoundary, lazy, Match, onMount, Show, Switch, type ParentProps } from 'solid-js'
 import { A, Route, Router, useLocation, useNavigate } from '@solidjs/router'
-import { api, errorText } from './tg/rpc'
+import { api, errorText, sessionHere, useHere } from './tg/rpc'
+import { online } from './net'
 import { entryState, me, setMe, signOut } from './session'
 import { loadSettings } from './store'
 import { Home } from './screens/Home'
@@ -12,7 +13,7 @@ import { t } from './i18n'
 // its remuxer) and the other pages load when needed; once signed in they are fetched while idle.
 const SignIn = lazy(() => import('./screens/SignIn').then((m) => ({ default: m.SignIn })))
 // The watch page brings the player's code with it, so the first Play waits for neither.
-const loadWatch = () => import('./screens/Watch').then((m) => (m.loadPlayer(), { default: m.Watch }))
+const loadWatch = () => import('./screens/Watch').then((m) => (m.loadPlayer().catch(() => {}), { default: m.Watch }))
 const Watch = lazy(loadWatch)
 const loadChats = () => import('./screens/Chats').then((m) => ({ default: m.Chats }))
 const loadChat = () => import('./screens/Chat').then((m) => ({ default: m.Chat }))
@@ -55,7 +56,8 @@ function Shell(props: ParentProps) {
             const next = new URLSearchParams(location.search).get('next')
             navigate(next?.startsWith('/') ? next : '/', { replace: true, state: entryState() })
         }
-        if (user) idle(() => later.forEach((load) => load()))
+        // Fetched ahead only: one that fails now (offline) is fetched again when its page opens.
+        if (user) idle(() => later.forEach((load) => load().catch(() => {})))
     })
 
     const signedIn = () => me() && location.pathname !== '/signin'
@@ -67,7 +69,7 @@ function Shell(props: ParentProps) {
                 <Match when={error()}>
                     <div class="boot">
                         <p class="error">{error()}</p>
-                        <button class="primary" onClick={() => window.location.reload()}>Try again</button>
+                        <button class="primary" onClick={() => window.location.reload()}>{t('common.try_again')}</button>
                     </div>
                 </Match>
                 <Match when={me() === null && location.pathname === '/signin'}>{props.children}</Match>
@@ -90,7 +92,13 @@ function Shell(props: ParentProps) {
                 </Match>
             </Switch>
             <Show when={!playing()}>
-                <UpdateNotice />
+                {/* Reload cannot fetch a new version offline: the notice waits for the connection. */}
+                <Show when={!online()} fallback={<UpdateNotice />}>
+                    <p class="offline-line" role="status">{t('web.offline')}</p>
+                </Show>
+            </Show>
+            <Show when={sessionHere() === 'elsewhere'}>
+                <OtherTab />
             </Show>
         </>
     )
@@ -114,8 +122,20 @@ export function App() {
 function NotFound() {
     return (
         <div class="boot">
-            <p>There is nothing at this address.</p>
-            <A class="link" href="/">Home</A>
+            <p>{t('web.not_found')}</p>
+            <A class="link" href="/">{t('browse.tab_home')}</A>
+        </div>
+    )
+}
+
+/** Another tab of TMPlayer holds the Telegram session; this one takes it on "Use it here", or once that tab closes. */
+function OtherTab() {
+    return (
+        <div class="other-tab" role="alertdialog" aria-labelledby="other-tab-title">
+            <img class="boot-mark" src="/icon.svg" alt="" width="64" height="64" />
+            <h1 id="other-tab-title">{t('web.other_tab_title')}</h1>
+            <p class="muted">{t('web.other_tab_body')}</p>
+            <button class="primary" type="button" onClick={useHere}>{t('web.use_here')}</button>
         </div>
     )
 }

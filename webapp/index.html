@@ -20,6 +20,12 @@
     html[data-theme=black] body{background:#000}
   </style>
   <script>try{var t=localStorage.getItem('tmplayer-theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+  <style>#old{max-width:420px;margin:0 auto;padding:48px 16px;font:16px/24px system-ui,sans-serif;text-align:center}#old a{color:#4fb3ff}</style>
+  <script>
+    // A browser older than the app's code (ES2022, module workers, BigInt) gets a sentence, not a blank page.
+    (function(){var ok=false;try{new Function('class A{static{}}');ok=!!([].at&&window.structuredClone&&window.BigInt&&window.Worker&&Promise.allSettled)}catch(e){}
+    if(ok)return;document.documentElement.dataset.old='1';document.addEventListener('DOMContentLoaded',function(){document.getElementById('app').innerHTML='<div id="old"><h1>%TOO_OLD_TITLE%</h1><p>%TOO_OLD_BODY%</p><p><a href="https://tmplayer.org/#download">%APP_GET%</a></p></div>'})})()
+  </script>
 </head>
 <body>
   <div id="app"><div id="boot"><img src="/icon.svg" alt="TMPlayer"></div></div>

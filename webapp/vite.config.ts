@@ -43,6 +43,32 @@ function pageStrings(): Plugin {
     }
 }
 
+/** index.html's words for a browser too old to run the app, from the catalog, before any script of ours loads. */
+function tooOldStrings(): Plugin {
+    const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/'/g, '&#39;')
+    return {
+        name: 'tmplayer-too-old',
+        transformIndexHtml(html) {
+            const web = JSON.parse(readFileSync(CATALOG, 'utf8')).web
+            return html
+                .replace('%TOO_OLD_TITLE%', escape(web.too_old_title))
+                .replace('%TOO_OLD_BODY%', escape(web.too_old_body))
+                .replace('%APP_GET%', escape(web.app_get))
+        },
+    }
+}
+
+/** A release build needs the app's own api_id: one without it could never sign in. */
+function needsApiId(): Plugin {
+    return {
+        name: 'tmplayer-api-id',
+        apply: 'build',
+        buildStart() {
+            if (!Number(secret('TG_API_ID')) || !secret('TG_API_HASH')) this.error('TG_API_ID and TG_API_HASH are missing: set them in the environment or local.properties.')
+        },
+    }
+}
+
 /** Built files the service worker leaves for later: the sound decoders, fetched only for some videos. */
 const NOT_IN_SHELL = /^mediabunny-(ac3|aac-encoder|dts)-|\.map$/
 
@@ -71,7 +97,7 @@ function offlineShell(): Plugin {
 }
 
 export default defineConfig({
-    plugins: [solid(), pageStrings(), offlineShell()],
+    plugins: [solid(), pageStrings(), tooOldStrings(), needsApiId(), offlineShell()],
     define: {
         __TG_API_ID__: JSON.stringify(Number(secret('TG_API_ID')) || 0),
         __TG_API_HASH__: JSON.stringify(secret('TG_API_HASH')),

@@ -4,7 +4,8 @@ import { ArrowDown01Icon, Cancel01Icon, ViewIcon, ViewOffSlashIcon } from '@huge
 import { api, call } from '../tg/rpc'
 import { setMe } from '../session'
 import { iosBrowser } from '../install'
-import { clock, t, waitPhrase } from '../i18n'
+import { clock, t } from '../i18n'
+import { failure } from '../errors'
 import { Icon } from '../ui/Icon'
 import * as phoneRules from './phone'
 import type { Country, Me, QrEvent, SentCode } from '../tg/types'
@@ -20,30 +21,6 @@ type Step =
 
 /** Codes typed as a row of digits; a word or a phrase sent by text is typed as it is. */
 const typedAsDigits = (type: string) => type !== 'sms_word' && type !== 'sms_phrase'
-
-/** What went wrong, in the app's words (Failures.kt), and how long Telegram asked to wait. */
-function failure(e: unknown): { text: string; wait?: number } | null {
-    const err = e as { name?: string; text?: string; message?: string; seconds?: number }
-    if (err?.name === 'AbortError') return null
-    const raw = err?.text ?? err?.message ?? String(e)
-    const seconds = err?.seconds ?? Number(/FLOOD_WAIT_(\d+)/.exec(raw)?.[1] ?? NaN)
-    if (raw.includes('FLOOD') && seconds > 0) return { text: t('errors.flood_wait', { wait: waitPhrase(seconds) }), wait: seconds }
-    const known: [RegExp, Parameters<typeof t>[0]][] = [
-        [/PHONE_NUMBER_INVALID|PHONE_NUMBER_FLOOD/, 'errors.phone_invalid'],
-        [/PHONE_NUMBER_BANNED/, 'errors.phone_banned'],
-        [/PHONE_NUMBER_UNOCCUPIED/, 'errors.no_account'],
-        [/PHONE_CODE_INVALID|PHONE_CODE_EMPTY|EMAIL_CODE_INVALID|CODE_INVALID/, 'errors.wrong_code'],
-        [/PHONE_CODE_EXPIRED|EMAIL_VERIFY_EXPIRED|AUTH_RESTART/, 'errors.code_expired'],
-        [/PASSWORD_HASH_INVALID/, 'errors.wrong_password'],
-        [/EMAIL_INVALID|EMAIL_NOT_ALLOWED/, 'errors.email_invalid'],
-        [/SEND_CODE_UNAVAILABLE/, 'errors.code_unavailable'],
-        [/PAYMENT_REQUIRED|Payment is required/i, 'errors.premium_sign_in'],
-        [/timeout|timed out|connection|network|websocket|fetch|offline/i, 'errors.offline'],
-    ]
-    const hit = known.find(([pattern]) => pattern.test(raw))
-    if (!hit) console.warn('[signin] unmapped', raw)
-    return { text: t(hit ? hit[1] : 'errors.no_answer') }
-}
 
 /**
  * Sign in, as the app does it: on a phone the number first (the QR code needs a second device),

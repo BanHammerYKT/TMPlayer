@@ -5,10 +5,12 @@ import { markEntry } from './session'
 import { registerWorker } from './install'
 import './styles.css'
 
-markEntry()
-serveStreams()
-registerWorker()
-
-const root = document.getElementById('app')!
-root.textContent = ''
-render(() => <App />, root)
+// index.html has said the browser is too old: nothing more starts.
+if (!document.documentElement.dataset.old) {
+    markEntry()
+    serveStreams()
+    registerWorker()
+    const root = document.getElementById('app')!
+    root.textContent = ''
+    render(() => <App />, root)
+}

@@ -1,9 +1,9 @@
 // The page's side of the Telegram worker: calls by name, answers by message. Only types come from
 // the worker file, so mtcute never lands in the page's bundle.
+import { createSignal } from 'solid-js'
 import type { Api, Ctx } from './worker'
 import type { RpcError } from './types'
-
-const worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'telegram' })
+import { failure } from '../errors'
 
 type Out =
     | { id: number; value: unknown }
@@ -18,21 +18,87 @@ interface Pending {
 
 const pending = new Map<number, Pending>()
 let nextId = 0
+let worker: Worker | null = null
+let started!: (w: Worker) => void
+/** The worker once this tab holds the session; calls made before wait for it. */
+const ready = new Promise<Worker>((r) => (started = r))
 
-worker.onmessage = async (ev: MessageEvent<Out>) => {
-    const msg = ev.data
-    const call = pending.get(msg.id)
-    if (!call) return
-    if ('event' in msg) {
-        const answer = await call.onEvent?.(msg.event)
-        if (msg.ask != null) worker.postMessage({ reply: msg.id, ask: msg.ask, value: answer })
-        return
+function start() {
+    const w = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module', name: 'telegram' })
+    w.onmessage = async (ev: MessageEvent<Out>) => {
+        const msg = ev.data
+        const call = pending.get(msg.id)
+        if (!call) return
+        if ('event' in msg) {
+            const answer = await call.onEvent?.(msg.event)
+            if (msg.ask != null) w.postMessage({ reply: msg.id, ask: msg.ask, value: answer })
+            return
+        }
+        pending.delete(msg.id)
+        if ('error' in msg) {
+            if (msg.error.code === 401) onUnauthorized?.()
+            call.reject(Object.assign(new Error(msg.error.message), msg.error))
+        } else call.resolve(msg.value)
     }
-    pending.delete(msg.id)
-    if ('error' in msg) {
-        if (msg.error.code === 401) onUnauthorized?.()
-        call.reject(Object.assign(new Error(msg.error.message), msg.error))
-    } else call.resolve(msg.value)
+    worker = w
+    started(w)
+}
+
+/**
+ * Whether this tab uses the Telegram session: 'waiting' while it asks, 'elsewhere' while another
+ * tab of TMPlayer holds it. Two tabs on one session would write over each other's state, so only
+ * one runs the worker (the Web Locks API; a browser without it just runs).
+ */
+const [sessionHere, setSessionHere] = createSignal<'waiting' | 'here' | 'elsewhere'>('waiting')
+export { sessionHere }
+
+const LOCK = 'tmplayer-telegram'
+const STEAL = 'tmplayer-use-here'
+
+function claim() {
+    const locks = navigator.locks
+    if (!locks) {
+        start()
+        return setSessionHere('here')
+    }
+    let steal = false
+    try {
+        steal = sessionStorage.getItem(STEAL) === '1'
+        sessionStorage.removeItem(STEAL)
+    } catch {}
+    const hold = () => {
+        if (!worker) start()
+        setSessionHere('here')
+        // Held for as long as the tab is open, unless another tab takes it.
+        return new Promise<void>(() => {})
+    }
+    locks
+        .request(LOCK, steal ? { steal: true } : { ifAvailable: true }, (lock) => {
+            if (lock) return hold()
+            setSessionHere('elsewhere')
+            // Taken as soon as the other tab closes; the calls made meanwhile then run.
+            locks.request(LOCK, hold)
+            return undefined
+        })
+        .catch(() => {
+            // "Use it here" in another tab took the session: this one stops at once.
+            worker?.terminate()
+            worker = null
+            for (const [, p] of pending) p.reject(new DOMException('session moved to another tab', 'AbortError'))
+            pending.clear()
+            document.querySelectorAll('video').forEach((v) => v.pause())
+            setSessionHere('elsewhere')
+            locks.request(LOCK, () => (location.reload(), new Promise<void>(() => {})))
+        })
+}
+claim()
+
+/** "Use it here": this tab takes the session from the other one, which stops. */
+export function useHere() {
+    try {
+        sessionStorage.setItem(STEAL, '1')
+    } catch {}
+    location.reload()
 }
 
 let onUnauthorized: (() => void) | null = null
@@ -60,12 +126,12 @@ export function call<M extends keyof Api>(method: M, args: Args<Api[M]>, opts: C
             'abort',
             () => {
                 if (!pending.delete(id)) return
-                worker.postMessage({ abort: id })
+                worker?.postMessage({ abort: id })
                 reject(new DOMException('aborted', 'AbortError'))
             },
             { once: true },
         )
-        worker.postMessage({ id, method, args })
+        ready.then((w) => pending.has(id) && w.postMessage({ id, method, args }))
     })
 }
 
@@ -77,8 +143,7 @@ export const api = new Proxy({} as { [M in keyof Api]: (...args: Args<Api[M]>) =
 // Local testing only: the calls in the console.
 if (location.hostname === 'localhost') (window as unknown as { api: typeof api }).api = api
 
+/** An error in the app's words: Telegram's flood waits and a lost connection among them. */
 export function errorText(e: unknown): string {
-    const err = e as Partial<RpcError>
-    if (err?.text?.startsWith('FLOOD_WAIT') && err.seconds) return `Telegram asks to wait ${err.seconds} s.`
-    return err?.text ?? err?.message ?? String(e)
+    return failure(e)?.text ?? ''
 }

@@ -1,6 +1,7 @@
 import { createEffect, createResource, createSignal, on, onCleanup, Show } from 'solid-js'
 import { useSearchParams } from '@solidjs/router'
 import { api, errorText } from '../tg/rpc'
+import { onBackOnline } from '../net'
 import { Search01Icon } from '@hugeicons/core-free-icons'
 import { t } from '../i18n'
 import { progress, settings } from '../store'
@@ -11,13 +12,14 @@ import { HiddenBySize, tileCard, VideoList } from './VideoList'
 export function Search() {
     const [params, setParams] = useSearchParams<{ q?: string }>()
     const [text, setText] = createSignal(params.q ?? '')
-    const [results] = createResource(
+    const [results, { refetch }] = createResource(
         () => {
             const q = params.q?.trim()
             return q ? ([q, settings().sizeMin, settings().sizeMax] as const) : false
         },
         async ([q, minBytes, maxBytes]) => api.search(q, { minBytes, maxBytes, ...(await progress()) }),
     )
+    onBackOnline(() => results.error && refetch())
     let debounce = 0
     let typing = false
     onCleanup(() => clearTimeout(debounce))
@@ -42,7 +44,10 @@ export function Search() {
                 <input type="search" placeholder={t('search.field_hint')} aria-label={t('search.field_hint')} value={text()} onInput={(e) => onType(e.currentTarget.value)} autofocus />
             </label>
             <Show when={results.error}>
-                <p class="error">{errorText(results.error)}</p>
+                <div class="notice error-notice">
+                    <p class="error">{errorText(results.error)}</p>
+                    <button class="link" type="button" onClick={refetch}>{t('common.try_again')}</button>
+                </div>
             </Show>
             <Show when={results.loading && !found()}>
                 <p class="muted">{t('browse.finding_videos')}</p>

@@ -2,6 +2,7 @@ import { createEffect, createResource, createSignal, on, onCleanup, Show } from 
 import { A, useSearchParams } from '@solidjs/router'
 import { PinIcon, Search01Icon, StarIcon } from '@hugeicons/core-free-icons'
 import { api, call, errorText } from '../tg/rpc'
+import { onBackOnline } from '../net'
 import { t } from '../i18n'
 import { setStarred, starredIds } from '../store'
 import { Icon } from '../ui/Icon'
@@ -25,7 +26,8 @@ export const chatName = (c: { title: string; self: boolean }) => (c.self ? t('ch
 export function Chats() {
     const [params, setParams] = useSearchParams<{ q?: string }>()
     const [partial, setPartial] = createSignal<ChatItem[]>([])
-    const [chats] = createResource(() => call('chats', [false], { onEvent: (e) => void setPartial((e as ChatsEvent).chats) }))
+    const [chats, { refetch }] = createResource(() => call('chats', [false], { onEvent: (e) => void setPartial((e as ChatsEvent).chats) }))
+    onBackOnline(() => chats.error && refetch())
     const list = () => (chats.error ? partial() : (chats() ?? partial()))
     const [text, setText] = createSignal(params.q ?? '')
     const query = () => params.q?.trim() ?? ''
@@ -63,7 +65,10 @@ export function Chats() {
                 <input type="search" placeholder={t('chats.search')} aria-label={t('chats.search')} value={text()} onInput={(e) => onType(e.currentTarget.value)} />
             </label>
             <Show when={chats.error}>
-                <p class="error">{errorText(chats.error)}</p>
+                <div class="notice error-notice">
+                    <p class="error">{errorText(chats.error)}</p>
+                    <button class="link" type="button" onClick={refetch}>{t('common.try_again')}</button>
+                </div>
             </Show>
             <Show when={chats.loading && !list().length}>
                 <p class="muted">{t('browse.loading_chats')}</p>

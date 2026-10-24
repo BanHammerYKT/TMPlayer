@@ -1,5 +1,5 @@
 import { createResource, createSignal, For, Show } from 'solid-js'
-import { settings, setSetting, SIZE_DEFAULTS, type Theme } from '../store'
+import { settings, setSetting, SIZE_DEFAULTS, storageWorks, type Theme } from '../store'
 import { me, signOut } from '../session'
 import { api } from '../tg/rpc'
 import { t } from '../i18n'
@@ -194,6 +194,9 @@ function Storage() {
         <div class="panel">
             <h2 class="panel-title">{t('web.storage_title')}</h2>
             <p class="muted small">{t('web.storage_body_stream')}</p>
+            <Show when={!storageWorks()}>
+                <p class="small caution-text">{t('web.storage_unavailable')}</p>
+            </Show>
             <Show when={estimate()?.quota}>
                 <p class="small">{t('web.storage_used', { used: size(estimate()!.usage ?? 0), quota: size(estimate()!.quota!) })}</p>
             </Show>

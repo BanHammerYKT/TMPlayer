@@ -2,6 +2,7 @@ import { createEffect, createResource, createSignal, For, on, onCleanup, Show } 
 import { useParams, useSearchParams } from '@solidjs/router'
 import { Cancel01Icon, RefreshIcon, Search01Icon, Sorting01Icon, Tick02Icon } from '@hugeicons/core-free-icons'
 import { call, errorText } from '../tg/rpc'
+import { onBackOnline } from '../net'
 import { t } from '../i18n'
 import { progress as readProgress, settings, setSetting } from '../store'
 import { Icon } from '../ui/Icon'
@@ -24,14 +25,6 @@ const SORTS: { value: Sort; key: Parameters<typeof t>[0] }[] = [
 
 /** Pages in a row that brought no new card before the list stops paging by itself and offers a button. */
 const IDLE_PAGES = 3
-
-/** Telegram's answer for a chat that cannot be read, in the app's words. */
-export function chatError(e: unknown): string {
-    const text = (e as Partial<RpcError>)?.text ?? ''
-    if (/^CHANNEL_PRIVATE|^CHAT_FORBIDDEN|^USER_BANNED_IN_CHANNEL/.test(text)) return t('errors.channel_private')
-    if (/^PEER_ID_INVALID|^CHANNEL_INVALID|^CHAT_ID_INVALID|^USERNAME_NOT_OCCUPIED/.test(text)) return t('errors.chat_gone')
-    return errorText(e)
-}
 
 /**
  * One chat's videos as the app arranges them: shows, copies and pieces folded together by its
@@ -94,6 +87,12 @@ export function Chat() {
             run('open')
         }),
     )
+    // A page lost with the connection loads once it is back.
+    onBackOnline(() => {
+        if (busy()) return
+        if (error() && !page()) run('open')
+        else if (moreFailed()) run('more')
+    })
     // Another order, size limits or words: the same videos arranged again, in the worker.
     createEffect(on(() => JSON.stringify(view()), () => page() && run('view'), { defer: true }))
 
@@ -196,7 +195,7 @@ export function Chat() {
             </Show>
             <Show when={error()}>
                 <div class="notice error-notice">
-                    <p class="error">{chatError(error())}</p>
+                    <p class="error">{errorText(error())}</p>
                     <button class="link" type="button" onClick={() => run(page() ? 'refresh' : 'open')}>{t('common.try_again')}</button>
                 </div>
             </Show>

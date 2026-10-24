@@ -47,26 +47,41 @@ try {
 /** The session's copy of everything, so a browser without storage still works until it closes. */
 const memory = new Map<string, unknown>()
 
+/** False once the browser refused to keep something (a private window, a full disk): Settings says so. */
+const [storageWorks, setStorageWorks] = createSignal(db !== null)
+export { storageWorks }
+
+/**
+ * Runs a storage call so that any failure arrives as a rejection: idb-keyval opens the database
+ * on first use, and a browser that refuses it (Firefox's private windows) throws right there.
+ */
+const stored = <T>(op: (db: UseStore) => Promise<T>): Promise<T> => (db ? Promise.resolve(db).then(op) : Promise.reject(new Error('no storage')))
+
 async function read<T>(key: string): Promise<T | undefined> {
     if (memory.has(key)) return memory.get(key) as T
     if (!db) return undefined
     try {
-        const v = await get<T>(key, db)
+        const v = await stored((s) => get<T>(key, s))
         if (v !== undefined) memory.set(key, v)
         return v
     } catch {
+        setStorageWorks(false)
         return undefined
     }
 }
 
 function write(key: string, value: unknown) {
     memory.set(key, value)
-    if (db) set(key, value, db).catch((e) => console.warn('[store] not saved', key, e))
+    if (db)
+        stored((s) => set(key, value, s)).catch((e) => {
+            console.warn('[store] not saved', key, e)
+            setStorageWorks(false)
+        })
 }
 
 function remove(key: string) {
     memory.delete(key)
-    if (db) del(key, db).catch(() => {})
+    if (db) stored((s) => del(key, s)).catch(() => {})
 }
 
 async function all<T>(prefix: string): Promise<T[]> {
@@ -77,7 +92,7 @@ async function allEntries<T>(prefix: string): Promise<Map<string, T>> {
     const out = new Map<string, T>()
     if (db) {
         try {
-            for (const [k, v] of await entries<string, T>(db)) if (String(k).startsWith(prefix)) out.set(String(k), v)
+            for (const [k, v] of await stored((s) => entries<string, T>(s))) if (String(k).startsWith(prefix)) out.set(String(k), v)
         } catch {}
     }
     for (const [k, v] of memory) if (k.startsWith(prefix)) out.set(k, v as T)
@@ -242,7 +257,7 @@ export async function clearAll() {
     try {
         localStorage.removeItem(LAST_KEY)
     } catch {}
-    if (db) await clear(db).catch(() => {})
+    if (db) await stored(clear).catch(() => {})
     await globalThis.caches?.delete(THUMBS).catch(() => {})
     setSettings({ ...DEFAULTS })
     setStarredIds(new Set<number>())
