@@ -691,7 +691,7 @@ class ChatRepository(private val td: TdlClient) {
          * opens often rather than to be browsed three hundred deep, and every id in it costs a
          * `getChat` on the cold-start path that the main list is already paying for.
          */
-        const val ARCHIVE_LIMIT = 100
+        const val ARCHIVE_LIMIT = 1000
         private const val CHAT_PAGE = 100
 
         /** Topics read per `getForumTopics` call; Telegram's own cap is 100. */
