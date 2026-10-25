@@ -420,6 +420,8 @@ internal fun BrowseScreen(
         .collectAsState(initial = ChatSort.Recent)
     val showArchivedChats by remember(browseSettings) { browseSettings.showArchivedChats }
         .collectAsState(initial = false)
+    val showSpecialChats by remember(browseSettings) { browseSettings.showSpecialChats }
+        .collectAsState(initial = false)
     val pickHistorySort: (ChatSort) -> Unit = { panelScope.launch { browseSettings.setHistorySort(it.name) } }
     val showsContinue = tab.listsVideos && historyTab == HistoryTab.Continue
     // History's Continue tab, with the copies of one film or episode as one card, as on Home.
@@ -478,7 +480,7 @@ internal fun BrowseScreen(
                         ) { pickSort(chatSort.toggled) },
                     )
                 }
-                chatPageChips(folders, mainListPosition).forEach { chip ->
+                chatPageChips(folders, showSpecialChats, mainListPosition).forEach { chip ->
                     when (chip) {
                         is ChatPageChip.Filter -> add(
                             ChipSpec(chip.filter.name, chip.label, chip.icon, selected = chip.isSelected(section, chatFilter)) {

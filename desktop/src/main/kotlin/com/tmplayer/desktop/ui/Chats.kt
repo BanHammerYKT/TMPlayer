@@ -111,6 +111,7 @@ fun ChatsPage(
     val ui by model.state.collectAsState()
     val favourites by state.settings.favorites.collectAsState(initial = emptySet())
     val showArchivedChats by state.settings.showArchivedChats.collectAsState(initial = false)
+    val showSpecialChats by state.settings.showSpecialChats.collectAsState(initial = true)
     val folders by Td.folders.collectAsState()
     var query by rememberSaveable(favouritesOnly) { mutableStateOf("") }
     val toast = rememberToast()
@@ -126,7 +127,7 @@ fun ChatsPage(
     // Telegram's order), then the filters no folder already is: one row the Chats page and every
     // folder page share.
     val mainListPosition by Td.mainListPosition.collectAsState()
-    val chips = remember(folders, mainListPosition) { chatPageChips(folders, mainListPosition) }
+    val chips = remember(folders, showSpecialChats, mainListPosition) { chatPageChips(folders, showSpecialChats, mainListPosition) }
     val section = if (favouritesOnly) {
         BrowseSection.of(BrowseTab.Favorites)
     } else {

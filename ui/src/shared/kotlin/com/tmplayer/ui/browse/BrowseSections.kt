@@ -326,11 +326,15 @@ private fun filterOf(folder: ChatFolderSummary): ChatFilter? {
  * Channels, Groups, People, Archived) that no folder already is, so there is never a second
  * "Unread"; Archived is always there, since a Telegram folder never lists the archive.
  */
-fun chatPageChips(folders: List<ChatFolderSummary>, mainListPosition: Int = 0): List<ChatPageChip> {
+fun chatPageChips(
+    folders: List<ChatFolderSummary>,
+    showSpecialChats: Boolean = true,
+    mainListPosition: Int = 0,
+): List<ChatPageChip> {
     val tabs: MutableList<ChatPageChip> = folders.mapTo(ArrayList()) { ChatPageChip.Folder(BrowseSection.Folder(it.id, it.title), it.icon) }
     tabs.add(mainListPosition.coerceIn(0, tabs.size), ChatPageChip.Filter(ChatFilter.All))
     val covered = folders.mapNotNull(::filterOf).toSet()
-    val extras = ChatFilter.entries.filter { it != ChatFilter.All && it !in covered }.map { ChatPageChip.Filter(it) }
+    val extras = if (showSpecialChats) ChatFilter.entries.filter { it != ChatFilter.All && it !in covered }.map { ChatPageChip.Filter(it) } else emptyList()
     return tabs + extras
 }
 

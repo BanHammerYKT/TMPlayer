@@ -297,6 +297,7 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
     val rememberSearches by settings.rememberSearches.collectAsState(initial = true)
     val resumeSync by settings.resumeSync.collectAsState(initial = false)
     val showArchivedChats by settings.showArchivedChats.collectAsState(initial = false)
+    val showSpecialChats by settings.showSpecialChats.collectAsState(initial = true)
     val newVideoAlerts by settings.newVideoAlerts.collectAsState(initial = false)
     val history by settings.continueWatching.collectAsState(initial = emptyList())
     // Only those the kids lock shows, as the Favourites section counts them.
@@ -404,6 +405,16 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
     ) { on ->
         scope.launch {
             settings.setShowArchivedChats(on)
+        }
+    }
+    Toggle(
+        s.settingsShowSpecialChats,
+        if (showSpecialChats) s.settingsShowSpecialChatsOn else s.settingsShowSpecialChatsOff,
+        showSpecialChats,
+        icon = TmIcons.Archive,
+    ) { on ->
+        scope.launch {
+            settings.setShowSpecialChats(on)
         }
     }
     // Hidden chats: each one with Show, and Show all for several; the empty list says how one gets here.
