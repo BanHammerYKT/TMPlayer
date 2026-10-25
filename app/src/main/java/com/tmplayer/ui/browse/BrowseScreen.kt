@@ -418,6 +418,8 @@ internal fun BrowseScreen(
     // History's order, one for its three lists: most recent first, or by title (ChatSort's two).
     val historySort by remember(browseSettings) { browseSettings.historySort.map(ChatSort::decode) }
         .collectAsState(initial = ChatSort.Recent)
+    val showArchivedChats by remember(browseSettings) { browseSettings.showArchivedChats }
+        .collectAsState(initial = false)
     val pickHistorySort: (ChatSort) -> Unit = { panelScope.launch { browseSettings.setHistorySort(it.name) } }
     val showsContinue = tab.listsVideos && historyTab == HistoryTab.Continue
     // History's Continue tab, with the copies of one film or episode as one card, as on Home.
@@ -540,8 +542,8 @@ internal fun BrowseScreen(
             // "No chats yet" offers Refresh: the list may still be on its way after a sign in.
             onAction = { onRetry() },
         ) { data ->
-            val visible = remember(data.chats, tab, favorites, query, chatFilter, chatSort) {
-                filterChats(data.chats, tab, favorites, query, chatFilter, chatSort)
+            val visible = remember(data.chats, tab, favorites, query, showArchivedChats, chatFilter, chatSort) {
+                filterChats(data.chats, tab, favorites, query, showArchivedChats, chatFilter, chatSort)
             }
 
             // The signed in account, for the picture in the heading's top right corner.
@@ -845,7 +847,7 @@ internal fun BrowseScreen(
                         HistoryTab.Watched -> watchedHistory.size
                         HistoryTab.WatchLater -> watchLater.size
                     }
-                    else -> chats?.let { filterChats(it, section, favorites, query, chatFilter, chatSort).size } ?: 0
+                    else -> chats?.let { filterChats(it, section, favorites, query, showArchivedChats, chatFilter, chatSort).size } ?: 0
                 }
             },
             // Home is rows of tiles whatever the arrangement, and refreshes with a pull; a list of

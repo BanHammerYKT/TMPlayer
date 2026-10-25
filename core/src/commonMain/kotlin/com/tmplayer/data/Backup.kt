@@ -181,6 +181,7 @@ object Backups {
         "save_mobile_data" to Kind.BOOL,
         "screen_orientation" to Kind.TEXT,
         "show_remaining_time" to Kind.BOOL,
+        "show_archived_chats" to Kind.BOOL,
         "skip_silence" to Kind.BOOL,
         "sponsor_reminders" to Kind.BOOL,
         "subtitle_bold" to Kind.BOOL,

@@ -2,8 +2,6 @@ package com.tmplayer.ui.settings
 
 import com.tmplayer.ui.components.FastScroller
 import com.tmplayer.ui.components.keepTopInSight
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
@@ -21,7 +19,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxWithConstraintsScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -65,7 +62,6 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch as M3Switch
 import androidx.compose.material3.Text as M3Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import com.tmplayer.ui.components.FloatingBackButton
@@ -130,7 +126,6 @@ import com.tmplayer.data.DiskSpace
 import com.tmplayer.data.LocalDownloads
 import com.tmplayer.data.MeteredPolicy
 import com.tmplayer.data.Notice
-import com.tmplayer.data.OfflineDownloads
 import com.tmplayer.data.RestorePlan
 import com.tmplayer.data.ResumeRewind
 import com.tmplayer.data.SettingsStore
@@ -142,7 +137,6 @@ import com.tmplayer.data.ThemeChoice
 import com.tmplayer.data.UiScale
 import com.tmplayer.data.UpdateWords
 import com.tmplayer.data.Updates
-import com.tmplayer.data.WatchCache
 import com.tmplayer.data.WatchNextPublisher
 import com.tmplayer.data.TvChannelsPublisher
 import com.tmplayer.data.WatchedStore
@@ -185,7 +179,6 @@ import com.tmplayer.ui.update.LinkQrDialog
 import com.tmplayer.ui.update.UpdateDialog
 import com.tmplayer.ui.update.openLink
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -329,6 +322,7 @@ fun SettingsScreen(
     val storedFavorites by settings.favorites.collectAsStateWithLifecycle(initialValue = emptySet())
     // The chats hidden from their menus (see HiddenChats), for Library's Hidden chats list.
     val hiddenChats by settings.hiddenChats.collectAsStateWithLifecycle(initialValue = emptyList())
+    val showArchivedChats by settings.showArchivedChats.collectAsStateWithLifecycle(initialValue = false)
     val allowedChats by com.tmplayer.data.ChatGate.allowed.collectAsStateWithLifecycle()
     val favorites = remember(storedFavorites, allowedChats) { com.tmplayer.data.KidsLock.favourites(storedFavorites, allowedChats) }
     val liveFolders by Td.folders.collectAsStateWithLifecycle()
@@ -1243,6 +1237,19 @@ fun SettingsScreen(
                                 settings.setResumeSync(on)
                                 // The switch and its line say it is on; nothing more to say.
                                 if (on) com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
+                            }
+                        },
+                    )
+                }
+                item {
+                    ToggleRow(
+                        title = s.settingsShowArchivedChats,
+                        subtitle = if (showArchivedChats) s.settingsShowArchivedChatsOn else s.settingsShowArchivedChatsOff,
+                        icon = TmIcons.Archive,
+                        checked = showArchivedChats,
+                        onToggle = {
+                            scope.launch {
+                                settings.setShowArchivedChats(!showArchivedChats)
                             }
                         },
                     )

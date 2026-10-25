@@ -26,6 +26,7 @@ import java.io.File
 
 private val FAVORITES = stringSetPreferencesKey("favorite_chats")
 private val HIDDEN_CHATS = stringPreferencesKey("hidden_chats") // HiddenChats.KEY
+private val SHOW_ARCHIVED_CHATS = booleanPreferencesKey("show_archived_folder")
 private val PLAYER_HINT_SEEN = booleanPreferencesKey("player_hint_seen")
 private val FIRST_VIDEO_TIP_DISMISSED = booleanPreferencesKey("first_video_tip_dismissed")
 private val TV_BROWSE_HINT_SEEN = booleanPreferencesKey("tv_browse_hint_seen")
@@ -1325,6 +1326,12 @@ class SettingsStore(private val prefs: DataStore<Preferences>) : AllowedChatsSou
 
     suspend fun markPlayerHintSeen() {
         prefs.edit { it[PLAYER_HINT_SEEN] = true }
+    }
+
+    val showArchivedChats: Flow<Boolean> = read { it[SHOW_ARCHIVED_CHATS] ?: false }
+
+    suspend fun setShowArchivedChats(value: Boolean) {
+        prefs.edit { it[SHOW_ARCHIVED_CHATS] = value }
     }
 
     /**

@@ -296,6 +296,7 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
     val lastChatId by settings.lastChatId.collectAsState(initial = 0L)
     val rememberSearches by settings.rememberSearches.collectAsState(initial = true)
     val resumeSync by settings.resumeSync.collectAsState(initial = false)
+    val showArchivedChats by settings.showArchivedChats.collectAsState(initial = false)
     val newVideoAlerts by settings.newVideoAlerts.collectAsState(initial = false)
     val history by settings.continueWatching.collectAsState(initial = emptyList())
     // Only those the kids lock shows, as the Favourites section counts them.
@@ -393,6 +394,16 @@ internal fun LibraryRows(state: ShellState, version: String, chatList: List<com.
             settings.setResumeSync(on)
             // The switch and its line say it is on; nothing more to say.
             if (on) com.tmplayer.data.ResumeSync.syncSoon(settings, afterMs = 0)
+        }
+    }
+    Toggle(
+        s.settingsShowArchivedChats,
+        if (showArchivedChats) s.settingsShowArchivedChatsOn else s.settingsShowArchivedChatsOff,
+        showArchivedChats,
+        icon = TmIcons.Archive,
+    ) { on ->
+        scope.launch {
+            settings.setShowArchivedChats(on)
         }
     }
     // Hidden chats: each one with Show, and Show all for several; the empty list says how one gets here.

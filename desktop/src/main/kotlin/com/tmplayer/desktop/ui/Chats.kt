@@ -110,6 +110,7 @@ fun ChatsPage(
     val s = LocalStrings.current
     val ui by model.state.collectAsState()
     val favourites by state.settings.favorites.collectAsState(initial = emptySet())
+    val showArchivedChats by state.settings.showArchivedChats.collectAsState(initial = false)
     val folders by Td.folders.collectAsState()
     var query by rememberSaveable(favouritesOnly) { mutableStateOf("") }
     val toast = rememberToast()
@@ -195,8 +196,8 @@ fun ChatsPage(
             LaunchedEffect(data.chats) { state.noteChatTitles(data.chats) }
             val filter = state.chatFilter
             val sort = state.chatSort
-            val visible = remember(data.chats, section, favourites, query, filter, sort) {
-                filterChats(data.chats, section, favourites, query, filter, sort)
+            val visible = remember(data.chats, section, favourites, query, showArchivedChats, filter, sort) {
+                filterChats(data.chats, section, favourites, query, showArchivedChats, filter, sort)
             }
             if (visible.isEmpty()) {
                 EmptyNote(

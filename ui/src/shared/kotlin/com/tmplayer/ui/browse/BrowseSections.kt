@@ -351,6 +351,7 @@ fun filterChats(
     section: BrowseSection,
     favorites: Set<Long>,
     query: String,
+    showArchivedChats: Boolean,
     filter: ChatFilter = ChatFilter.All,
     sort: ChatSort = ChatSort.Recent,
 ): List<ChatSummary> {
@@ -358,10 +359,11 @@ fun filterChats(
     // the exception: starring is this app's own act, and a deliberately starred chat should not
     // vanish because it was archived in Telegram.
     val archived = section.isChats && filter == ChatFilter.Archived
+    val all = section.isChats && filter == ChatFilter.All
     val listed = when {
         archived -> chats.filter { it.isArchived }
         section == BrowseSection.of(BrowseTab.Favorites) -> chats
-        else -> chats.filterNot { it.isArchived }
+        else -> if (showArchivedChats && !all) chats else chats.filterNot { it.isArchived }
     }
     val bySection = when (section) {
         is BrowseSection.Folder -> listed.filter { section.id in it.folderIds }
